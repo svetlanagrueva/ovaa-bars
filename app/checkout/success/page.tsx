@@ -17,8 +17,9 @@ export default function CheckoutSuccessPage() {
 
   useEffect(() => {
     let cancelled = false
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     const confirm = async () => {
-      if (!orderId) {
+      if (!orderId || !uuidRegex.test(orderId)) {
         setStatus("error")
         return
       }

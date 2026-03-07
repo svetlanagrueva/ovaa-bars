@@ -159,5 +159,5 @@ export function getProductBySlug(slug: string): Product | undefined {
 }
 
 export function formatPrice(priceInCents: number): string {
-  return `${(priceInCents / 100).toFixed(2)} лв.`
+  return (priceInCents / 100).toFixed(2).replace(".", ",") + " лв."
 }

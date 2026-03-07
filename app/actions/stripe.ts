@@ -1,9 +1,11 @@
 "use server"
 
+import { headers } from "next/headers"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
-import { PRODUCTS } from "@/lib/products"
+import { PRODUCTS, formatPrice } from "@/lib/products"
 import { Resend } from "resend"
+import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE, COD_FEE, MAX_QUANTITY } from "@/lib/constants"
 
 interface CartItem {
   productId: string
@@ -33,7 +35,6 @@ interface CheckoutData {
   cartItems: CartItem[]
   customerInfo: CustomerInfo
   deliveryMethod: string
-  shippingPrice: number
   needsInvoice?: boolean
   invoiceInfo?: InvoiceInfo
 }
@@ -42,42 +43,171 @@ interface CODOrderData {
   cartItems: CartItem[]
   customerInfo: CustomerInfo
   deliveryMethod: string
-  shippingPrice: number
-  codFee: number
   needsInvoice?: boolean
   invoiceInfo?: InvoiceInfo
 }
 
-export async function createCheckoutSession(data: CheckoutData) {
-  const { cartItems, customerInfo, deliveryMethod, shippingPrice, needsInvoice, invoiceInfo } = data
+const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office", "econt-address"]
+const MAX_FIELD_LENGTH = 500
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
 
-  // Validate cart items and calculate total on server
-  const lineItems = cartItems.map((item) => {
-    const product = PRODUCTS.find((p) => p.id === item.productId)
+// Simple in-memory rate limiter for COD orders (per IP)
+const codRateLimit = new Map<string, number[]>()
+const COD_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
+const COD_RATE_LIMIT_MAX = 3 // max 3 COD orders per IP per hour
+
+function checkCODRateLimit(ip: string) {
+  const now = Date.now()
+  const timestamps = (codRateLimit.get(ip) || []).filter(
+    (t) => now - t < COD_RATE_LIMIT_WINDOW_MS
+  )
+  if (timestamps.length >= COD_RATE_LIMIT_MAX) {
+    throw new Error("Too many orders. Please try again later.")
+  }
+  timestamps.push(now)
+  codRateLimit.set(ip, timestamps)
+
+  // Periodically purge stale entries to prevent memory leak
+  if (codRateLimit.size > 1000) {
+    for (const [key, ts] of codRateLimit) {
+      const active = ts.filter((t) => now - t < COD_RATE_LIMIT_WINDOW_MS)
+      if (active.length === 0) codRateLimit.delete(key)
+      else codRateLimit.set(key, active)
+    }
+  }
+}
+
+function validateDeliveryMethod(method: string): string {
+  if (!VALID_DELIVERY_METHODS.includes(method)) {
+    throw new Error("Invalid delivery method")
+  }
+  return method
+}
+
+function validateCustomerInfo(info: CustomerInfo) {
+  const required: Array<[string, string]> = [
+    [info.firstName, "First name"],
+    [info.lastName, "Last name"],
+    [info.email, "Email"],
+    [info.phone, "Phone"],
+    [info.city, "City"],
+  ]
+
+  for (const [value, label] of required) {
+    if (!value || value.trim().length === 0) {
+      throw new Error(`${label} is required`)
+    }
+  }
+
+  if (!EMAIL_REGEX.test(info.email)) {
+    throw new Error("Invalid email format")
+  }
+
+  if (!PHONE_REGEX.test(info.phone)) {
+    throw new Error("Invalid phone format")
+  }
+
+  // Enforce length limits on all string fields
+  const fields: Array<[string, string]> = [
+    [info.firstName, "First name"],
+    [info.lastName, "Last name"],
+    [info.email, "Email"],
+    [info.phone, "Phone"],
+    [info.city, "City"],
+    [info.address, "Address"],
+    [info.postalCode, "Postal code"],
+    [info.notes, "Notes"],
+  ]
+
+  for (const [value, label] of fields) {
+    if (value && value.length > MAX_FIELD_LENGTH) {
+      throw new Error(`${label} is too long`)
+    }
+  }
+}
+
+function validateCartItems(cartItems: CartItem[]) {
+  if (!Array.isArray(cartItems) || cartItems.length === 0) {
+    throw new Error("Cart is empty")
+  }
+
+  // Deduplicate by productId — sum quantities for duplicates
+  const deduped = new Map<string, number>()
+  for (const item of cartItems) {
+    const qty = deduped.get(item.productId) || 0
+    deduped.set(item.productId, qty + item.quantity)
+  }
+
+  return Array.from(deduped.entries()).map(([productId, quantity]) => {
+    const product = PRODUCTS.find((p) => p.id === productId)
     if (!product) {
-      throw new Error(`Product not found: ${item.productId}`)
+      throw new Error(`Product not found: ${productId}`)
+    }
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
+      throw new Error(`Invalid quantity for ${product.name}: ${quantity}`)
     }
     return {
-      price_data: {
-        currency: "bgn",
-        product_data: {
-          name: product.name,
-          description: product.shortDescription,
-        },
-        unit_amount: product.priceInCents,
-      },
-      quantity: item.quantity,
+      product,
+      productId,
+      productName: product.name,
+      quantity,
+      priceInCents: product.priceInCents,
     }
   })
+}
 
-  // Add shipping as a line item if not free
+function calculateShipping(subtotal: number): number {
+  return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE
+}
+
+function getDeliveryLabel(deliveryMethod: string): string {
+  switch (deliveryMethod) {
+    case "speedy-office": return "До офис на Speedy"
+    case "speedy-address": return "Speedy до адрес"
+    case "econt-office": return "До офис на Еконт"
+    case "econt-address": return "Еконт до адрес"
+    default: return deliveryMethod
+  }
+}
+
+function getCarrierName(deliveryMethod: string): string {
+  return deliveryMethod.startsWith("speedy") ? "Speedy" : "Еконт"
+}
+
+export async function createCheckoutSession(data: CheckoutData) {
+  const { cartItems, customerInfo, needsInvoice, invoiceInfo } = data
+
+  validateCustomerInfo(customerInfo)
+  const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
+  const validatedItems = validateCartItems(cartItems)
+
+  const subtotal = validatedItems.reduce(
+    (sum, item) => sum + item.priceInCents * item.quantity,
+    0
+  )
+  const shippingPrice = calculateShipping(subtotal)
+  const totalAmount = subtotal + shippingPrice
+
+  const lineItems = validatedItems.map((item) => ({
+    price_data: {
+      currency: "bgn",
+      product_data: {
+        name: item.product.name,
+        description: item.product.shortDescription,
+      },
+      unit_amount: item.product.priceInCents,
+    },
+    quantity: item.quantity,
+  }))
+
   if (shippingPrice > 0) {
     lineItems.push({
       price_data: {
         currency: "bgn",
         product_data: {
-          name: "Доставка (Speedy)",
-          description: deliveryMethod === "speedy-office" ? "До офис на Speedy" : "До адрес",
+          name: `Доставка (${getCarrierName(deliveryMethod)})`,
+          description: getDeliveryLabel(deliveryMethod),
         },
         unit_amount: shippingPrice,
       },
@@ -85,23 +215,14 @@ export async function createCheckoutSession(data: CheckoutData) {
     })
   }
 
-  // Create order in database
   const supabase = await createClient()
-  
-  const orderItems = cartItems.map((item) => {
-    const product = PRODUCTS.find((p) => p.id === item.productId)!
-    return {
-      productId: item.productId,
-      productName: product.name,
-      quantity: item.quantity,
-      priceInCents: product.priceInCents,
-    }
-  })
 
-  const totalAmount = orderItems.reduce(
-    (sum, item) => sum + item.priceInCents * item.quantity,
-    0
-  ) + shippingPrice
+  const orderItems = validatedItems.map((item) => ({
+    productId: item.productId,
+    productName: item.productName,
+    quantity: item.quantity,
+    priceInCents: item.priceInCents,
+  }))
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -113,6 +234,7 @@ export async function createCheckoutSession(data: CheckoutData) {
       city: customerInfo.city,
       address: customerInfo.address || "",
       postal_code: customerInfo.postalCode || "",
+      notes: customerInfo.notes || "",
       logistics_partner: deliveryMethod,
       items: orderItems,
       total_amount: totalAmount,
@@ -133,7 +255,6 @@ export async function createCheckoutSession(data: CheckoutData) {
     throw new Error("Failed to create order")
   }
 
-  // Create Stripe checkout session
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
 
@@ -149,16 +270,27 @@ export async function createCheckoutSession(data: CheckoutData) {
     },
   })
 
+  // Store the Stripe session ID on the order for later verification
+  await supabase
+    .from("orders")
+    .update({ stripe_session_id: session.id })
+    .eq("id", order.id)
+
   return { url: session.url }
 }
 
 export async function confirmOrder(orderId: string) {
+  // Validate orderId is a UUID
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) {
+    throw new Error("Invalid order ID")
+  }
+
   const supabase = await createClient()
 
-  // Check current order status first to prevent duplicate confirmations
   const { data: existingOrder, error: fetchError } = await supabase
     .from("orders")
-    .select()
+    .select("id, status, payment_method, stripe_session_id")
     .eq("id", orderId)
     .single()
 
@@ -166,26 +298,22 @@ export async function confirmOrder(orderId: string) {
     throw new Error("Order not found")
   }
 
-  // Already confirmed — return early
   if (existingOrder.status === "confirmed") {
-    return existingOrder
+    return { status: "confirmed" as const }
   }
 
   // For card payments, verify the Stripe session before confirming
   if (existingOrder.payment_method === "card") {
-    const sessions = await stripe.checkout.sessions.list({
-      limit: 1,
-    })
-    const session = sessions.data.find(
-      (s) => s.metadata?.orderId === orderId && s.payment_status === "paid"
-    )
-    if (!session) {
+    if (!existingOrder.stripe_session_id) {
+      throw new Error("Payment not verified")
+    }
+    const session = await stripe.checkout.sessions.retrieve(existingOrder.stripe_session_id)
+    if (session.payment_status !== "paid") {
       throw new Error("Payment not verified")
     }
   }
 
-  // Update order status
-  const { data: order, error: updateError } = await supabase
+  const { data: updatedOrder, error: updateError } = await supabase
     .from("orders")
     .update({ status: "confirmed" })
     .eq("id", orderId)
@@ -193,85 +321,58 @@ export async function confirmOrder(orderId: string) {
     .select()
     .single()
 
-  if (updateError) {
+  if (updateError || !updatedOrder) {
+    // Another request (e.g. webhook) may have already confirmed this order.
+    // Re-check status before treating as an error.
+    const { data: recheckOrder } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", orderId)
+      .single()
+
+    if (recheckOrder?.status === "confirmed") {
+      return { status: "confirmed" as const }
+    }
+
     console.error("Failed to update order:", updateError)
     throw new Error("Failed to confirm order")
   }
 
-  // Send confirmation email (non-blocking)
-  try {
-    if (process.env.RESEND_API_KEY) {
-      const resend = new Resend(process.env.RESEND_API_KEY)
-      
-      const orderItems = order.items as Array<{
-        productName: string
-        quantity: number
-        priceInCents: number
-      }>
+  // Send confirmation email only after successful status update
+  sendConfirmationEmail(updatedOrder)
 
-      const itemsList = orderItems
-        .map((item) => `${item.productName} x ${item.quantity} - ${(item.priceInCents * item.quantity / 100).toFixed(2)} лв.`)
-        .join("\n")
-
-      const deliveryLabel = order.logistics_partner?.startsWith("speedy") 
-        ? (order.logistics_partner === "speedy-office" ? "До офис на Speedy" : "Speedy до адрес")
-        : (order.logistics_partner === "econt-office" ? "До офис на Еконт" : "Еконт до адрес")
-
-      await resend.emails.send({
-        from: "Ovva Sculpt <onboarding@resend.dev>",
-        to: order.email,
-        subject: `Order #${order.id.slice(0, 8)} - Confirmation`,
-        text: `
-Hi ${order.first_name},
-
-Thank you for your order!
-
-Order details:
-${itemsList}
-
-Total: ${(order.total_amount / 100).toFixed(2)} лв.
-
-Delivery: ${deliveryLabel}
-City: ${order.city}
-${order.address ? `Address: ${order.address}` : ""}
-
-You will receive a notification when your order is shipped.
-
-Best,
-Ovva Sculpt Team
-        `.trim(),
-      })
-    }
-  } catch {
-    // Email sending failed - log but don't block order confirmation
-    // In production, verify your domain at resend.com/domains to send to all recipients
-  }
-
-  return order
+  return { status: "confirmed" as const }
 }
 
 export async function createCODOrder(data: CODOrderData) {
-  const { cartItems, customerInfo, deliveryMethod, shippingPrice, codFee, needsInvoice, invoiceInfo } = data
+  const { cartItems, customerInfo, needsInvoice, invoiceInfo } = data
 
-  const supabase = await createClient()
-  
-  const orderItems = cartItems.map((item) => {
-    const product = PRODUCTS.find((p) => p.id === item.productId)
-    if (!product) {
-      throw new Error(`Product not found: ${item.productId}`)
-    }
-    return {
-      productId: item.productId,
-      productName: product.name,
-      quantity: item.quantity,
-      priceInCents: product.priceInCents,
-    }
-  })
+  validateCustomerInfo(customerInfo)
+  const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
 
-  const totalAmount = orderItems.reduce(
+  // Rate limit COD orders to prevent spam
+  const headerStore = await headers()
+  const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
+  checkCODRateLimit(ip)
+
+  const validatedItems = validateCartItems(cartItems)
+
+  const subtotal = validatedItems.reduce(
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
-  ) + shippingPrice + codFee
+  )
+  const shippingPrice = calculateShipping(subtotal)
+  const codFee = COD_FEE
+  const totalAmount = subtotal + shippingPrice + codFee
+
+  const supabase = await createClient()
+
+  const orderItems = validatedItems.map((item) => ({
+    productId: item.productId,
+    productName: item.productName,
+    quantity: item.quantity,
+    priceInCents: item.priceInCents,
+  }))
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -283,10 +384,11 @@ export async function createCODOrder(data: CODOrderData) {
       city: customerInfo.city,
       address: customerInfo.address || "",
       postal_code: customerInfo.postalCode || "",
+      notes: customerInfo.notes || "",
       logistics_partner: deliveryMethod,
       items: orderItems,
       total_amount: totalAmount,
-      status: "confirmed", // COD orders are immediately confirmed
+      status: "confirmed",
       payment_method: "cod",
       needs_invoice: needsInvoice || false,
       invoice_company_name: invoiceInfo?.companyName || null,
@@ -303,51 +405,106 @@ export async function createCODOrder(data: CODOrderData) {
     throw new Error("Failed to create order")
   }
 
-  // Send confirmation email (non-blocking)
-  try {
-    if (process.env.RESEND_API_KEY) {
-      const resend = new Resend(process.env.RESEND_API_KEY)
-      
-      const itemsList = orderItems
-        .map((item) => `${item.productName} x ${item.quantity} - ${(item.priceInCents * item.quantity / 100).toFixed(2)} лв.`)
-        .join("\n")
-
-      const deliveryLabel = deliveryMethod.startsWith("speedy") 
-        ? (deliveryMethod === "speedy-office" ? "До офис на Speedy" : "Speedy до адрес")
-        : (deliveryMethod === "econt-office" ? "До офис на Еконт" : "Еконт до адрес")
-
-      await resend.emails.send({
-        from: "Ovva Sculpt <onboarding@resend.dev>",
-        to: order.email,
-        subject: `Order #${order.id.slice(0, 8)} - Confirmation`,
-        text: `
-Hi ${order.first_name},
-
-Thank you for your order!
-
-Order details:
-${itemsList}
-
-Shipping: ${shippingPrice === 0 ? "Free" : (shippingPrice / 100).toFixed(2) + " лв."}
-Cash on delivery fee: ${(codFee / 100).toFixed(2)} лв.
-
-Total to pay on delivery: ${(order.total_amount / 100).toFixed(2)} лв.
-
-Delivery method: ${deliveryLabel}
-City: ${order.city}
-${order.address ? `Address: ${order.address}` : ""}
-
-You will receive a notification when your order is shipped.
-
-Best,
-Ovva Sculpt Team
-        `.trim(),
-      })
-    }
-  } catch {
-    // Email sending failed - log but don't block order completion
-    // In production, verify your domain at resend.com/domains to send to all recipients
-  }
+  // Send confirmation email
+  sendCODConfirmationEmail(order, shippingPrice, codFee, deliveryMethod)
 
   return { success: true, orderId: order.id }
+}
+
+// Non-blocking email helpers
+
+function sendConfirmationEmail(order: Record<string, unknown>) {
+  if (!process.env.RESEND_API_KEY) return
+
+  const resend = new Resend(process.env.RESEND_API_KEY)
+  const orderItems = order.items as Array<{
+    productName: string
+    quantity: number
+    priceInCents: number
+  }>
+
+  const itemsList = orderItems
+    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+    .join("\n")
+
+  const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
+
+  resend.emails.send({
+    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+    to: order.email as string,
+    subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
+    text: `
+Здравейте ${order.first_name},
+
+Благодарим Ви за поръчката!
+
+Детайли на поръчката:
+${itemsList}
+
+Обща сума: ${formatPrice(order.total_amount as number)}
+
+Доставка: ${deliveryLabel}
+Град: ${order.city}
+${order.address ? `Адрес: ${order.address}` : ""}
+
+Ще получите известие, когато поръчката Ви бъде изпратена.
+
+Поздрави,
+Екипът на Ovva Sculpt
+    `.trim(),
+  }).catch(() => {
+    // Email sending failed — don't block order confirmation
+  })
+}
+
+function sendCODConfirmationEmail(
+  order: Record<string, unknown>,
+  shippingPrice: number,
+  codFee: number,
+  deliveryMethod: string,
+) {
+  if (!process.env.RESEND_API_KEY) return
+
+  const resend = new Resend(process.env.RESEND_API_KEY)
+  const orderItems = order.items as Array<{
+    productName: string
+    quantity: number
+    priceInCents: number
+  }>
+
+  const itemsList = orderItems
+    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+    .join("\n")
+
+  const deliveryLabel = getDeliveryLabel(deliveryMethod)
+
+  resend.emails.send({
+    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+    to: order.email as string,
+    subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
+    text: `
+Здравейте ${order.first_name},
+
+Благодарим Ви за поръчката!
+
+Детайли на поръчката:
+${itemsList}
+
+Доставка: ${shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}
+Наложен платеж: ${formatPrice(codFee)}
+
+Сума за плащане при доставка: ${formatPrice(order.total_amount as number)}
+
+Начин на доставка: ${deliveryLabel}
+Град: ${order.city}
+${order.address ? `Адрес: ${order.address}` : ""}
+
+Ще получите известие, когато поръчката Ви бъде изпратена.
+
+Поздрави,
+Екипът на Ovva Sculpt
+    `.trim(),
+  }).catch(() => {
+    // Email sending failed — don't block order completion
+  })
 }

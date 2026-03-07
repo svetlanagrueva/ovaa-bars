@@ -1,8 +1,8 @@
 import type { Metadata } from "next"
 
 export const metadata: Metadata = {
-  title: "Общи условия - ProteinBG",
-  description: "Общи условия за ползване на уебсайта и услугите на ProteinBG.",
+  title: "Общи условия - Ovva Sculpt",
+  description: "Общи условия за ползване на уебсайта и услугите на Ovva Sculpt.",
 }
 
 export default function TermsPage() {
@@ -16,8 +16,8 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-semibold text-foreground">1. Общи положения</h2>
             <p className="mt-4">
-              Настоящите Общи условия уреждат отношенията между ProteinBG (наричан по-долу 
-              &quot;Продавач&quot;) и потребителите на уебсайта proteinbg.com (наричани по-долу &quot;Купувач&quot;) 
+              Настоящите Общи условия уреждат отношенията между Ovva Sculpt (наричан по-долу 
+              &quot;Продавач&quot;) и потребителите на уебсайта ovvasculpt.com (наричани по-долу &quot;Купувач&quot;) 
               във връзка с покупката на продукти чрез електронния магазин.
             </p>
           </section>
@@ -26,7 +26,7 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-foreground">2. Поръчки</h2>
             <div className="mt-4 space-y-4">
               <p>
-                Поръчките се правят чрез уебсайта proteinbg.com. След завършване на поръчката, 
+                Поръчките се правят чрез уебсайта ovvasculpt.com. След завършване на поръчката, 
                 Купувачът получава имейл с потвърждение, съдържащ детайли за поръчката.
               </p>
               <p>
@@ -83,7 +83,7 @@ export default function TermsPage() {
               </p>
               <p>
                 За да упражни правото си на отказ, Купувачът трябва да уведоми Продавача чрез 
-                имейл на info@proteinbg.com. Продуктите трябва да бъдат върнати в оригиналната 
+                имейл на info@ovvasculpt.com. Продуктите трябва да бъдат върнати в оригиналната 
                 си опаковка, без да са отваряни или използвани.
               </p>
             </div>
@@ -95,7 +95,7 @@ export default function TermsPage() {
               <p>
                 При получаване на дефектен или повреден продукт, Купувачът има право да предяви 
                 рекламация в срок от 14 дни от получаването. Рекламациите се подават на 
-                info@proteinbg.com с прикачени снимки на повредата.
+                info@ovvasculpt.com с прикачени снимки на повредата.
               </p>
             </div>
           </section>
@@ -105,7 +105,7 @@ export default function TermsPage() {
             <p className="mt-4">
               При въпроси относно тези Общи условия, моля свържете се с нас на:
               <br />
-              Имейл: info@proteinbg.com
+              Имейл: info@ovvasculpt.com
               <br />
               Телефон: +359 888 123 456
             </p>

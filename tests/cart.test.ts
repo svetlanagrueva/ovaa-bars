@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { useCartStore } from "@/lib/store/cart"
 import { PRODUCTS } from "@/lib/products"
+import { MAX_QUANTITY } from "@/lib/constants"
 
 const darkChocolate = PRODUCTS[0]
 const raspberry = PRODUCTS[1]
@@ -33,11 +34,41 @@ describe("cart store", () => {
       expect(useCartStore.getState().items).toHaveLength(2)
     })
 
-    it("caps quantity at 10", () => {
-      for (let i = 0; i < 12; i++) {
+    it("caps quantity at MAX_QUANTITY", () => {
+      for (let i = 0; i < MAX_QUANTITY + 2; i++) {
         useCartStore.getState().addItem(darkChocolate)
       }
-      expect(useCartStore.getState().items[0].quantity).toBe(10)
+      expect(useCartStore.getState().items[0].quantity).toBe(MAX_QUANTITY)
+    })
+  })
+
+  describe("addItemWithQuantity", () => {
+    it("adds item with specified quantity", () => {
+      useCartStore.getState().addItemWithQuantity(darkChocolate, 5)
+      expect(useCartStore.getState().items[0].quantity).toBe(5)
+    })
+
+    it("caps at MAX_QUANTITY", () => {
+      useCartStore.getState().addItemWithQuantity(darkChocolate, MAX_QUANTITY + 5)
+      expect(useCartStore.getState().items[0].quantity).toBe(MAX_QUANTITY)
+    })
+
+    it("adds to existing quantity", () => {
+      useCartStore.getState().addItemWithQuantity(darkChocolate, 3)
+      useCartStore.getState().addItemWithQuantity(darkChocolate, 4)
+      expect(useCartStore.getState().items[0].quantity).toBe(7)
+    })
+
+    it("caps total at MAX_QUANTITY when adding to existing", () => {
+      useCartStore.getState().addItemWithQuantity(darkChocolate, 8)
+      useCartStore.getState().addItemWithQuantity(darkChocolate, 5)
+      expect(useCartStore.getState().items[0].quantity).toBe(MAX_QUANTITY)
+    })
+
+    it("does nothing when already at MAX_QUANTITY", () => {
+      useCartStore.getState().addItemWithQuantity(darkChocolate, MAX_QUANTITY)
+      useCartStore.getState().addItemWithQuantity(darkChocolate, 1)
+      expect(useCartStore.getState().items[0].quantity).toBe(MAX_QUANTITY)
     })
   })
 
@@ -77,9 +108,9 @@ describe("cart store", () => {
       expect(useCartStore.getState().items).toHaveLength(0)
     })
 
-    it("caps quantity at 10", () => {
+    it("caps quantity at MAX_QUANTITY", () => {
       useCartStore.getState().addItem(darkChocolate)
-      useCartStore.getState().updateQuantity(darkChocolate.id, 15)
+      useCartStore.getState().updateQuantity(darkChocolate.id, MAX_QUANTITY + 5)
       expect(useCartStore.getState().items[0].quantity).toBe(1)
     })
   })

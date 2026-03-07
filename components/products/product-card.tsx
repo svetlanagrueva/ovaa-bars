@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useCartStore } from "@/lib/store/cart"
-import type { Product } from "@/lib/products"
+import { formatPrice, type Product } from "@/lib/products"
 
 interface ProductCardProps {
   product: Product
@@ -15,10 +15,6 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const addItem = useCartStore((state) => state.addItem)
-
-  const formatPrice = (cents: number) => {
-    return (cents / 100).toFixed(2).replace(".", ",") + " лв."
-  }
 
   return (
     <Card className="group overflow-hidden transition-shadow hover:shadow-lg">

@@ -8,6 +8,12 @@ vi.mock("resend", () => ({
   },
 }))
 
+vi.mock("next/headers", () => ({
+  headers: vi.fn(() => Promise.resolve({
+    get: (name: string) => name === "x-forwarded-for" ? "127.0.0.1" : null,
+  })),
+}))
+
 describe("sendContactMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -29,7 +35,7 @@ describe("sendContactMessage", () => {
     expect(result).toEqual({ success: true })
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "info@proteinbg.com",
+        to: "info@ovvasculpt.com",
         replyTo: "ivan@test.com",
         subject: "Contact: Въпрос",
       })
