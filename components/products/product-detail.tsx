@@ -3,7 +3,8 @@
 import { useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { Plus, Minus, Check, ShoppingBag, ArrowRight } from "lucide-react"
+import { Plus, Minus, Check, ShoppingBag, ShoppingCart, ArrowRight } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useCartStore } from "@/lib/store/cart"
@@ -23,6 +24,14 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
 
   const handleAddToCart = () => {
     addItemWithQuantity(product, quantity)
+    toast(product.name, {
+      description: `${quantity > 1 ? quantity + " x " : ""}Добавено в количката`,
+      icon: <ShoppingCart className="h-4 w-4" />,
+      action: {
+        label: "Количка",
+        onClick: () => window.location.href = "/cart",
+      },
+    })
   }
 
   return (

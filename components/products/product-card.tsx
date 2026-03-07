@@ -2,7 +2,8 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { Plus, ArrowRight } from "lucide-react"
+import { Plus, ArrowRight, ShoppingCart } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -64,7 +65,21 @@ export function ProductCard({ product }: ProductCardProps) {
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
-          <Button onClick={() => addItem(product)} size="sm" className="gap-2">
+          <Button
+            onClick={() => {
+              addItem(product)
+              toast(product.name, {
+                description: "Добавено в количката",
+                icon: <ShoppingCart className="h-4 w-4" />,
+                action: {
+                  label: "Количка",
+                  onClick: () => window.location.href = "/cart",
+                },
+              })
+            }}
+            size="sm"
+            className="gap-2"
+          >
             <Plus className="h-4 w-4" />
             Добави
           </Button>
