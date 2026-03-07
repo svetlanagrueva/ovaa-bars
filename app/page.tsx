@@ -40,7 +40,7 @@ export default function HomePage() {
             <div className="relative aspect-[4/5] lg:aspect-square">
               <Image
                 src="/images/hero-bg.jpg"
-                alt="Ovva Sculpt protein bars"
+                alt="Ovva Sculpt протеинови барове"
                 fill
                 className="object-cover"
                 priority
