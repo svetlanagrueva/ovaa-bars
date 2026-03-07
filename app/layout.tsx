@@ -49,7 +49,7 @@ export default function RootLayout({
           {children}
         </main>
         <Footer />
-        <Toaster position="bottom-right" duration={4000} />
+        <Toaster position="bottom-right" duration={3000} closeButton />
         <Analytics />
       </body>
     </html>
