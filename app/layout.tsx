@@ -1,18 +1,16 @@
 import React from "react"
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Geist } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { Header } from '@/components/layout/header'
 import { Footer } from '@/components/layout/footer'
 import './globals.css'
 
-const _geist = Geist({ subsets: ["latin"] });
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'Ovva Sculpt - Clean Label Protein Bars',
-  description: 'Premium egg white protein bars - high protein, no added sugar, no whey. Complete animal protein with all essential amino acids for everyday use.',
-  generator: 'v0.app',
+  title: 'Ovva Sculpt - Протеинови Барове с Яйчен Белтък',
+  description: 'Протеинови барове с яйчен белтък - високо съдържание на протеин, без добавена захар, без суроватка. Пълноценен животински протеин с всички есенциални аминокиселини.',
   icons: {
     icon: [
       {
@@ -39,7 +37,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="bg">
-      <body className={`font-sans antialiased`}>
+      <body className={`${geist.className} antialiased`}>
         <Header />
         <main className="min-h-screen">
           {children}

@@ -51,7 +51,7 @@ export function Header() {
               <ShoppingCart className="h-4 w-4" />
               {mounted && totalItems > 0 ? (
                 <span className="font-medium">
-                  {totalItems} {totalItems === 1 ? "продукт" : "продукта"}
+                  {totalItems} {totalItems === 1 ? "продукт" : totalItems >= 2 && totalItems <= 4 ? "продукта" : "продукти"}
                 </span>
               ) : (
                 <span className="hidden sm:inline">Количка</span>

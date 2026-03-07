@@ -3,6 +3,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import type { Product } from "@/lib/products"
+import { MAX_QUANTITY } from "@/lib/constants"
 
 export interface CartItem {
   product: Product
@@ -12,6 +13,7 @@ export interface CartItem {
 interface CartState {
   items: CartItem[]
   addItem: (product: Product) => void
+  addItemWithQuantity: (product: Product, quantity: number) => void
   removeItem: (productId: string) => void
   updateQuantity: (productId: string, quantity: number) => void
   clearCart: () => void
@@ -23,48 +25,55 @@ export const useCartStore = create<CartState>()(
   persist(
     (set, get) => ({
       items: [],
-      
+
       addItem: (product: Product) => {
+        get().addItemWithQuantity(product, 1)
+      },
+
+      addItemWithQuantity: (product: Product, qty: number) => {
         const items = get().items
         const existingItem = items.find((item) => item.product.id === product.id)
+        const currentQty = existingItem?.quantity ?? 0
+        const newQty = Math.min(MAX_QUANTITY, currentQty + qty)
+
+        if (newQty === currentQty) return
 
         if (existingItem) {
-          if (existingItem.quantity >= 10) return
           set({
             items: items.map((item) =>
               item.product.id === product.id
-                ? { ...item, quantity: item.quantity + 1 }
+                ? { ...item, quantity: newQty }
                 : item
             ),
           })
         } else {
-          set({ items: [...items, { product, quantity: 1 }] })
+          set({ items: [...items, { product, quantity: Math.min(MAX_QUANTITY, qty) }] })
         }
       },
-      
+
       removeItem: (productId: string) => {
         set({ items: get().items.filter((item) => item.product.id !== productId) })
       },
-      
+
       updateQuantity: (productId: string, quantity: number) => {
         if (quantity <= 0) {
           get().removeItem(productId)
           return
         }
-        if (quantity > 10) return
+        if (quantity > MAX_QUANTITY) return
         set({
           items: get().items.map((item) =>
             item.product.id === productId ? { ...item, quantity } : item
           ),
         })
       },
-      
+
       clearCart: () => set({ items: [] }),
-      
+
       getTotalItems: () => {
         return get().items.reduce((total, item) => total + item.quantity, 0)
       },
-      
+
       getTotalPrice: () => {
         return get().items.reduce(
           (total, item) => total + item.product.priceInCents * item.quantity,
@@ -73,7 +82,7 @@ export const useCartStore = create<CartState>()(
       },
     }),
     {
-      name: "protein-bg-cart",
+      name: "ovva-sculpt-cart",
     }
   )
 )

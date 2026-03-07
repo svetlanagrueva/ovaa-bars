@@ -28,3 +28,25 @@ Continue building your app on:
 2. Deploy your chats from the v0 interface
 3. Changes are automatically pushed to this repository
 4. Vercel deploys the latest version from this repository
+
+## Setup
+Supabase setup
+1. Go to https://supabase.com and create a free project                                                                                                                       
+2. Go to SQL Editor → paste the contents of supabase-schema.sql → click Run
+3. Go to Project Settings → API and copy:
+  - Project URL → paste into NEXT_PUBLIC_SUPABASE_URL in .env.local
+  - service_role secret key → paste into SUPABASE_SERVICE_ROLE_KEY
+
+Stripe setup
+1. Go to https://dashboard.stripe.com/apikeys
+2. Copy the Secret key (starts with sk_test_) → paste into STRIPE_SECRET_KEY
+
+Run the app
+
+```
+nvm use 22
+npm install
+npm run dev
+```
+
+Then open http://localhost:3000.

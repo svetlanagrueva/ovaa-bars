@@ -7,6 +7,8 @@ import { Minus, Plus, Trash2, ShoppingBag, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useCartStore } from "@/lib/store/cart"
+import { formatPrice } from "@/lib/products"
+import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE } from "@/lib/constants"
 
 export default function CartPage() {
   const [mounted, setMounted] = useState(false)
@@ -16,12 +18,8 @@ export default function CartPage() {
     setMounted(true)
   }, [])
 
-  const formatPrice = (cents: number) => {
-    return (cents / 100).toFixed(2).replace(".", ",") + " лв."
-  }
-
   const totalPrice = getTotalPrice()
-  const shippingPrice = totalPrice >= 5000 ? 0 : 599 // Free shipping over 50 BGN
+  const shippingPrice = totalPrice >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE
   const finalPrice = totalPrice + shippingPrice
 
   if (!mounted) {
@@ -145,9 +143,9 @@ export default function CartPage() {
                   {shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}
                 </span>
               </div>
-              {totalPrice < 5000 && (
+              {totalPrice < FREE_SHIPPING_THRESHOLD && (
                 <p className="text-xs text-muted-foreground">
-                  Добавете още {formatPrice(5000 - totalPrice)} за безплатна доставка
+                  Добавете още {formatPrice(FREE_SHIPPING_THRESHOLD - totalPrice)} за безплатна доставка
                 </p>
               )}
               <div className="border-t border-border pt-3">

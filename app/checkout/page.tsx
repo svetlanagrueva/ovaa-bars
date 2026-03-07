@@ -1,11 +1,10 @@
 "use client"
 
 import React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, Building2, FileText } from "lucide-react"
+import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -13,7 +12,9 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useCartStore } from "@/lib/store/cart"
+import { formatPrice } from "@/lib/products"
 import { createCheckoutSession, createCODOrder } from "@/app/actions/stripe"
+import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE, COD_FEE } from "@/lib/constants"
 
 interface CustomerInfo {
   firstName: string
@@ -38,6 +39,7 @@ export default function CheckoutPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [paymentMethod, setPaymentMethod] = useState("card")
   const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
   const [needsInvoice, setNeedsInvoice] = useState(false)
@@ -62,24 +64,21 @@ export default function CheckoutPage() {
     invoiceAddress: "",
   })
 
-  const [error, setError] = useState<string | null>(null)
-  const [finalPrice, setFinalPrice] = useState(0)
-
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  const formatPrice = (cents: number) => {
-    return (cents / 100).toFixed(2).replace(".", ",") + " лв."
-  }
+  // Redirect to cart if empty (in useEffect, not during render)
+  useEffect(() => {
+    if (mounted && items.length === 0) {
+      router.push("/cart")
+    }
+  }, [mounted, items.length, router])
 
   const totalPrice = getTotalPrice()
-  const shippingPrice = totalPrice >= 5000 ? 0 : 599
-  const codFee = paymentMethod === "cod" ? 200 : 0
-
-  useEffect(() => {
-    setFinalPrice(totalPrice + shippingPrice + codFee)
-  }, [totalPrice, shippingPrice, codFee])
+  const shippingPrice = totalPrice >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE
+  const codFee = paymentMethod === "cod" ? COD_FEE : 0
+  const finalPrice = totalPrice + shippingPrice + codFee
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -103,13 +102,10 @@ export default function CheckoutPage() {
       }))
 
       if (paymentMethod === "cod") {
-        // Handle COD order
         const result = await createCODOrder({
           cartItems,
           customerInfo,
           deliveryMethod,
-          shippingPrice,
-          codFee,
           needsInvoice,
           invoiceInfo: needsInvoice ? invoiceInfo : undefined,
         })
@@ -119,18 +115,18 @@ export default function CheckoutPage() {
           router.push(`/checkout/success?order_id=${result.orderId}`)
         }
       } else {
-        // Handle card payment
         const result = await createCheckoutSession({
           cartItems,
           customerInfo,
           deliveryMethod,
-          shippingPrice,
           needsInvoice,
           invoiceInfo: needsInvoice ? invoiceInfo : undefined,
         })
 
         if (result.url) {
-          router.push(result.url)
+          // Don't clear cart yet — payment hasn't completed.
+          // Cart is cleared on the success page after confirmation.
+          window.location.href = result.url
         }
       }
     } catch {
@@ -139,7 +135,7 @@ export default function CheckoutPage() {
     }
   }
 
-  if (!mounted) {
+  if (!mounted || items.length === 0) {
     return (
       <div className="bg-background py-12 sm:py-16">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
@@ -150,11 +146,6 @@ export default function CheckoutPage() {
         </div>
       </div>
     )
-  }
-
-  if (items.length === 0) {
-    router.push("/cart")
-    return null
   }
 
   return (
@@ -353,7 +344,7 @@ export default function CheckoutPage() {
                           <Banknote className="h-4 w-4" />
                           Наложен платеж
                         </span>
-                        <p className="text-sm text-muted-foreground">Плащане при доставка (+2,00 лв.)</p>
+                        <p className="text-sm text-muted-foreground">Плащане при доставка (+{formatPrice(COD_FEE)})</p>
                       </Label>
                     </div>
                   </RadioGroup>
@@ -507,7 +498,7 @@ export default function CheckoutPage() {
                   </Button>
 
                   <p className="text-center text-xs text-muted-foreground">
-                    {paymentMethod === "card" 
+                    {paymentMethod === "card"
                       ? "Сигурно плащане чрез Stripe. Вашите данни са защитени."
                       : "Ще платите при получаване на пратката."}
                   </p>
