@@ -62,6 +62,7 @@ export default function CheckoutPage() {
     invoiceAddress: "",
   })
 
+  const [error, setError] = useState<string | null>(null)
   const [finalPrice, setFinalPrice] = useState(0)
 
   useEffect(() => {
@@ -93,6 +94,7 @@ export default function CheckoutPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+    setError(null)
 
     try {
       const cartItems = items.map((item) => ({
@@ -131,8 +133,8 @@ export default function CheckoutPage() {
           router.push(result.url)
         }
       }
-    } catch (error) {
-      console.error("Checkout error:", error)
+    } catch {
+      setError("Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
     }
   }
@@ -486,6 +488,10 @@ export default function CheckoutPage() {
                       <span className="text-xl font-bold text-primary">{formatPrice(finalPrice)}</span>
                     </div>
                   </div>
+
+                  {error && (
+                    <p className="text-sm text-destructive">{error}</p>
+                  )}
 
                   <Button type="submit" className="mt-6 w-full" size="lg" disabled={isLoading}>
                     {isLoading ? (

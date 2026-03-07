@@ -27,8 +27,9 @@ export const useCartStore = create<CartState>()(
       addItem: (product: Product) => {
         const items = get().items
         const existingItem = items.find((item) => item.product.id === product.id)
-        
+
         if (existingItem) {
+          if (existingItem.quantity >= 10) return
           set({
             items: items.map((item) =>
               item.product.id === product.id
@@ -50,6 +51,7 @@ export const useCartStore = create<CartState>()(
           get().removeItem(productId)
           return
         }
+        if (quantity > 10) return
         set({
           items: get().items.map((item) =>
             item.product.id === productId ? { ...item, quantity } : item
