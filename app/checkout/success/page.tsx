@@ -12,23 +12,61 @@ import { confirmOrder } from "@/app/actions/stripe"
 export default function CheckoutSuccessPage() {
   const searchParams = useSearchParams()
   const orderId = searchParams.get("order_id")
-  const [isConfirmed, setIsConfirmed] = useState(false)
+  const [status, setStatus] = useState<"loading" | "confirmed" | "error">("loading")
   const clearCart = useCartStore((state) => state.clearCart)
 
   useEffect(() => {
+    let cancelled = false
     const confirm = async () => {
-      if (orderId && !isConfirmed) {
-        try {
-          await confirmOrder(orderId)
-          setIsConfirmed(true)
+      if (!orderId) {
+        setStatus("error")
+        return
+      }
+      try {
+        await confirmOrder(orderId)
+        if (!cancelled) {
+          setStatus("confirmed")
           clearCart()
-        } catch (error) {
-          console.error("Failed to confirm order:", error)
+        }
+      } catch {
+        if (!cancelled) {
+          setStatus("error")
         }
       }
     }
     confirm()
-  }, [orderId, isConfirmed, clearCart])
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId])
+
+  if (status === "loading") {
+    return (
+      <div className="bg-background py-16 sm:py-24">
+        <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
+          <div className="flex justify-center">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          </div>
+          <p className="mt-6 text-lg text-muted-foreground">Потвърждаване на поръчката...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (status === "error") {
+    return (
+      <div className="bg-background py-16 sm:py-24">
+        <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
+          <h1 className="text-2xl font-bold text-foreground">Възникна проблем</h1>
+          <p className="mt-4 text-muted-foreground">
+            Не успяхме да потвърдим поръчката. Моля, свържете се с нас.
+          </p>
+          <Button asChild className="mt-8" size="lg">
+            <Link href="/contact">Свържете се с нас</Link>
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="bg-background py-16 sm:py-24">
@@ -62,7 +100,7 @@ export default function CheckoutSuccessPage() {
 
         <div className="mt-8 space-y-4">
           <p className="text-sm text-muted-foreground">
-            Очаквайте доставка в рамките на 2 работни дни чрез Speedy.
+            Очаквайте доставка в рамките на 2 работни дни.
           </p>
           <Button asChild size="lg" className="w-full sm:w-auto">
             <Link href="/products">

@@ -27,9 +27,9 @@ export default function ProductDetailPage() {
   if (!product) {
     return (
       <div className="container mx-auto px-4 py-20 text-center">
-        <h1 className="text-2xl font-light tracking-wide text-foreground">Product not found</h1>
+        <h1 className="text-2xl font-light tracking-wide text-foreground">Продуктът не е намерен</h1>
         <Link href="/products" className="mt-4 inline-block text-muted-foreground hover:text-foreground">
-          Back to products
+          Обратно към продуктите
         </Link>
       </div>
     )
@@ -52,7 +52,7 @@ export default function ProductDetailPage() {
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to products
+          Обратно към продуктите
         </Link>
       </div>
 
@@ -120,13 +120,13 @@ export default function ProductDetailPage() {
                 {formatPrice(product.priceInCents)}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {formatPrice(Math.round(product.priceInCents / product.barsCount))} per bar
+                {formatPrice(Math.round(product.priceInCents / product.barsCount))} на бар
               </p>
             </div>
 
             {/* Quantity Selector */}
             <div className="mt-8 flex items-center gap-4">
-              <span className="text-sm font-medium text-foreground">Quantity:</span>
+              <span className="text-sm font-medium text-foreground">Количество:</span>
               <div className="flex items-center border border-border">
                 <button
                   onClick={() => setQuantity(Math.max(1, quantity - 1))}
@@ -138,7 +138,7 @@ export default function ProductDetailPage() {
                   {quantity}
                 </span>
                 <button
-                  onClick={() => setQuantity(quantity + 1)}
+                  onClick={() => setQuantity(Math.min(10, quantity + 1))}
                   className="flex h-10 w-10 items-center justify-center text-foreground hover:bg-secondary transition-colors"
                 >
                   <Plus className="h-4 w-4" />
@@ -153,13 +153,13 @@ export default function ProductDetailPage() {
               className="mt-8 w-full gap-2 py-6 text-base"
             >
               <ShoppingBag className="h-5 w-5" />
-              Add to Cart - {formatPrice(product.priceInCents * quantity)}
+              Добави в количката - {formatPrice(product.priceInCents * quantity)}
             </Button>
 
             {/* Description */}
             <div className="mt-12 space-y-6">
               <div>
-                <h2 className="text-lg font-medium text-foreground">Description</h2>
+                <h2 className="text-lg font-medium text-foreground">Описание</h2>
                 <div className="mt-3 space-y-4 text-muted-foreground">
                   {product.fullDescription.split('\n\n').map((paragraph, index) => (
                     <p key={index}>{paragraph}</p>
@@ -169,7 +169,7 @@ export default function ProductDetailPage() {
 
               {/* Benefits */}
               <div className="border-t border-border pt-6">
-                <h2 className="text-lg font-medium text-foreground">Benefits</h2>
+                <h2 className="text-lg font-medium text-foreground">Предимства</h2>
                 <ul className="mt-3 space-y-2">
                   {product.benefits.map((benefit) => (
                     <li key={benefit} className="flex items-start gap-3 text-muted-foreground">
@@ -187,31 +187,31 @@ export default function ProductDetailPage() {
         <div className="mt-20 grid gap-8 md:grid-cols-2">
           {/* Nutrition Facts */}
           <div className="bg-secondary p-8">
-            <h2 className="text-lg font-medium text-foreground">Nutrition Facts</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Per bar</p>
+            <h2 className="text-lg font-medium text-foreground">Хранителна информация</h2>
+            <p className="mt-1 text-sm text-muted-foreground">На бар</p>
             <div className="mt-6 space-y-4">
               <div className="flex justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Calories</span>
+                <span className="text-muted-foreground">Калории</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.calories} kcal</span>
               </div>
               <div className="flex justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Protein</span>
+                <span className="text-muted-foreground">Протеин</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.protein}g</span>
               </div>
               <div className="flex justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Carbohydrates</span>
+                <span className="text-muted-foreground">Въглехидрати</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.carbs}g</span>
               </div>
               <div className="flex justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Sugar</span>
+                <span className="text-muted-foreground">Захар</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.sugar}g</span>
               </div>
               <div className="flex justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Fat</span>
+                <span className="text-muted-foreground">Мазнини</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.fat}g</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Fiber</span>
+                <span className="text-muted-foreground">Фибри</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.fiber}g</span>
               </div>
             </div>
@@ -219,8 +219,8 @@ export default function ProductDetailPage() {
 
           {/* Ingredients */}
           <div className="bg-secondary p-8">
-            <h2 className="text-lg font-medium text-foreground">Ingredients</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Clean label formula</p>
+            <h2 className="text-lg font-medium text-foreground">Съставки</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Формула с чиста етикета</p>
             <ul className="mt-6 space-y-3">
               {product.ingredients.map((ingredient) => (
                 <li key={ingredient} className="flex items-center gap-3 text-muted-foreground">
@@ -235,7 +235,7 @@ export default function ProductDetailPage() {
         {/* Other Products */}
         {otherProducts.length > 0 && (
           <div className="mt-20">
-            <h2 className="text-2xl font-light tracking-wide text-foreground">You might also like</h2>
+            <h2 className="text-2xl font-light tracking-wide text-foreground">Може да ви хареса още</h2>
             <div className="mt-8 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
               {otherProducts.map((p) => (
                 <ProductCard key={p.id} product={p} />

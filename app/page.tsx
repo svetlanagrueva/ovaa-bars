@@ -140,7 +140,7 @@ export default function HomePage() {
           </div>
           <div className="mt-8 sm:hidden">
             <Button asChild variant="outline" className="w-full">
-              <Link href="/products">View All Products</Link>
+              <Link href="/products">Виж всички продукти</Link>
             </Button>
           </div>
         </div>
@@ -150,18 +150,18 @@ export default function HomePage() {
       <section className="bg-foreground py-24 sm:py-32">
         <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8">
           <p className="text-xs font-medium uppercase tracking-[0.3em] text-background/60">
-            Free Shipping Over 50 лв
+            Безплатна доставка над 50 лв
           </p>
           <h2 className="mt-6 text-3xl font-light tracking-tight text-background sm:text-4xl">
-            Ready to fuel your day?
+            Готови да заредите деня си?
           </h2>
           <p className="mx-auto mt-6 max-w-md text-sm text-background/70">
-            Complete protein without compromise. Order now and experience the Ovva Sculpt difference.
+            Пълноценен протеин без компромиси. Поръчайте сега и усетете разликата с Ovva Sculpt.
           </p>
           <div className="mt-10">
             <Button asChild size="lg" variant="secondary" className="gap-2 px-8">
               <Link href="/products">
-                Shop Now
+                Купи сега
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>

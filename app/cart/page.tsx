@@ -28,7 +28,7 @@ export default function CartPage() {
     return (
       <div className="bg-background py-12 sm:py-16">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <h1 className="text-3xl font-light tracking-wide text-foreground">Your Cart</h1>
+          <h1 className="text-3xl font-light tracking-wide text-foreground">Количка</h1>
           <div className="mt-8 animate-pulse">
             <div className="h-32 rounded-lg bg-secondary" />
           </div>
@@ -46,13 +46,13 @@ export default function CartPage() {
               <ShoppingBag className="h-10 w-10 text-muted-foreground" />
             </div>
           </div>
-          <h1 className="mt-6 text-2xl font-light text-foreground">Your cart is empty</h1>
+          <h1 className="mt-6 text-2xl font-light text-foreground">Количката е празна</h1>
           <p className="mt-2 text-muted-foreground">
-            Add products to continue with your order
+            Добавете продукти, за да продължите с поръчката
           </p>
           <Button asChild className="mt-8" size="lg">
             <Link href="/products">
-              Browse Products
+              Разгледай продуктите
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
@@ -64,7 +64,7 @@ export default function CartPage() {
   return (
     <div className="bg-background py-12 sm:py-16">
       <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-light tracking-wide text-foreground">Your Cart</h1>
+        <h1 className="text-3xl font-light tracking-wide text-foreground">Количка</h1>
 
         <div className="mt-8 space-y-4">
           {items.map((item) => (
@@ -84,7 +84,7 @@ export default function CartPage() {
                       <div>
                         <h3 className="font-semibold text-foreground">{item.product.name}</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {formatPrice(item.product.priceInCents)} / box
+                          {formatPrice(item.product.priceInCents)} / кутия
                         </p>
                       </div>
                       <Button
@@ -133,33 +133,33 @@ export default function CartPage() {
         {/* Summary */}
         <Card className="mt-8">
           <CardContent className="p-6">
-            <h2 className="text-lg font-medium text-foreground">Order Summary</h2>
+            <h2 className="text-lg font-medium text-foreground">Обобщение</h2>
             <div className="mt-4 space-y-3">
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Subtotal</span>
+                <span className="text-muted-foreground">Междинна сума</span>
                 <span className="text-foreground">{formatPrice(totalPrice)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Shipping</span>
+                <span className="text-muted-foreground">Доставка</span>
                 <span className="text-foreground">
-                  {shippingPrice === 0 ? "Free" : formatPrice(shippingPrice)}
+                  {shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}
                 </span>
               </div>
               {totalPrice < 5000 && (
                 <p className="text-xs text-muted-foreground">
-                  Add {formatPrice(5000 - totalPrice)} more for free shipping
+                  Добавете още {formatPrice(5000 - totalPrice)} за безплатна доставка
                 </p>
               )}
               <div className="border-t border-border pt-3">
                 <div className="flex justify-between">
-                  <span className="font-medium text-foreground">Total</span>
+                  <span className="font-medium text-foreground">Общо</span>
                   <span className="text-xl font-bold text-foreground">{formatPrice(finalPrice)}</span>
                 </div>
               </div>
             </div>
             <Button asChild className="mt-6 w-full" size="lg">
               <Link href="/checkout">
-                Proceed to Checkout
+                Към плащане
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>

@@ -70,7 +70,7 @@ export function ProductCard({ product }: ProductCardProps) {
           </Button>
           <Button onClick={() => addItem(product)} size="sm" className="gap-2">
             <Plus className="h-4 w-4" />
-            Add
+            Добави
           </Button>
         </div>
       </CardFooter>

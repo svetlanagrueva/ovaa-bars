@@ -62,7 +62,7 @@ export async function createCheckoutSession(data: CheckoutData) {
         currency: "bgn",
         product_data: {
           name: product.name,
-          description: product.description,
+          description: product.shortDescription,
         },
         unit_amount: product.priceInCents,
       },
@@ -134,9 +134,8 @@ export async function createCheckoutSession(data: CheckoutData) {
   }
 
   // Create Stripe checkout session
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL 
-    ? `https://${process.env.VERCEL_URL}` 
-    : "http://localhost:3000"
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
 
   const session = await stripe.checkout.sessions.create({
     payment_method_types: ["card"],
@@ -156,11 +155,41 @@ export async function createCheckoutSession(data: CheckoutData) {
 export async function confirmOrder(orderId: string) {
   const supabase = await createClient()
 
+  // Check current order status first to prevent duplicate confirmations
+  const { data: existingOrder, error: fetchError } = await supabase
+    .from("orders")
+    .select()
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !existingOrder) {
+    throw new Error("Order not found")
+  }
+
+  // Already confirmed — return early
+  if (existingOrder.status === "confirmed") {
+    return existingOrder
+  }
+
+  // For card payments, verify the Stripe session before confirming
+  if (existingOrder.payment_method === "card") {
+    const sessions = await stripe.checkout.sessions.list({
+      limit: 1,
+    })
+    const session = sessions.data.find(
+      (s) => s.metadata?.orderId === orderId && s.payment_status === "paid"
+    )
+    if (!session) {
+      throw new Error("Payment not verified")
+    }
+  }
+
   // Update order status
   const { data: order, error: updateError } = await supabase
     .from("orders")
     .update({ status: "confirmed" })
     .eq("id", orderId)
+    .eq("status", "pending")
     .select()
     .single()
 
