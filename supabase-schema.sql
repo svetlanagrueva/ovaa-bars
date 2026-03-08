@@ -28,7 +28,12 @@ create table if not exists orders (
   invoice_eik text,
   invoice_vat_number text,
   invoice_mol text,
-  invoice_address text
+  invoice_address text,
+
+  -- Econt delivery (optional)
+  econt_office_id integer,
+  econt_office_name text,
+  econt_office_address text
 );
 
 -- Enable Row Level Security
