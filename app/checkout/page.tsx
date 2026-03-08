@@ -15,6 +15,9 @@ import { useCartStore } from "@/lib/store/cart"
 import { formatPrice } from "@/lib/products"
 import { createCheckoutSession, createCODOrder } from "@/app/actions/stripe"
 import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE, COD_FEE } from "@/lib/constants"
+import { EcontOfficePicker, type EcontOfficeOption } from "@/components/econt-office-picker"
+
+const econtEnabled = process.env.NEXT_PUBLIC_ECONT_ENABLED === "true"
 
 interface CustomerInfo {
   firstName: string
@@ -43,6 +46,7 @@ export default function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState("card")
   const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
   const [needsInvoice, setNeedsInvoice] = useState(false)
+  const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
   const { items, getTotalPrice, clearCart } = useCartStore()
 
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo>({
@@ -96,10 +100,20 @@ export default function CheckoutPage() {
     setError(null)
 
     try {
+      if (deliveryMethod === "econt-office" && !selectedEcontOffice) {
+        setError("Моля, изберете офис на Еконт")
+        setIsLoading(false)
+        return
+      }
+
       const cartItems = items.map((item) => ({
         productId: item.product.id,
         quantity: item.quantity,
       }))
+
+      const econtOffice = deliveryMethod === "econt-office" && selectedEcontOffice
+        ? { id: selectedEcontOffice.id, name: selectedEcontOffice.name, city: selectedEcontOffice.city, fullAddress: selectedEcontOffice.fullAddress }
+        : undefined
 
       if (paymentMethod === "cod") {
         const result = await createCODOrder({
@@ -108,6 +122,7 @@ export default function CheckoutPage() {
           deliveryMethod,
           needsInvoice,
           invoiceInfo: needsInvoice ? invoiceInfo : undefined,
+          econtOffice,
         })
 
         if (result.success) {
@@ -121,6 +136,7 @@ export default function CheckoutPage() {
           deliveryMethod,
           needsInvoice,
           invoiceInfo: needsInvoice ? invoiceInfo : undefined,
+          econtOffice,
         })
 
         if (result.url) {
@@ -250,22 +266,33 @@ export default function CheckoutPage() {
                         <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
                       </Label>
                     </div>
-                    <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="econt-office" id="econt-office" />
-                      <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Еконт офис</span>
-                        <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="econt-address" id="econt-address" />
-                      <Label htmlFor="econt-address" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Еконт до адрес</span>
-                        <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
-                      </Label>
-                    </div>
+                    {econtEnabled && (
+                      <>
+                        <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
+                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                          <RadioGroupItem value="econt-office" id="econt-office" />
+                          <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
+                            <span className="font-medium">Еконт офис</span>
+                            <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                          <RadioGroupItem value="econt-address" id="econt-address" />
+                          <Label htmlFor="econt-address" className="flex-1 cursor-pointer">
+                            <span className="font-medium">Еконт до адрес</span>
+                            <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
+                          </Label>
+                        </div>
+                      </>
+                    )}
                   </RadioGroup>
+
+                  {deliveryMethod === "econt-office" && econtEnabled && (
+                    <EcontOfficePicker
+                      selectedOfficeId={selectedEcontOffice?.id ?? null}
+                      onSelect={setSelectedEcontOffice}
+                    />
+                  )}
 
                   <div className="space-y-4 pt-4">
                     <div className="space-y-2">
@@ -466,6 +493,11 @@ export default function CheckoutPage() {
                         {shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}
                       </span>
                     </div>
+                    {selectedEcontOffice && deliveryMethod === "econt-office" && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Офис: {selectedEcontOffice.name}, {selectedEcontOffice.city}
+                      </p>
+                    )}
                     {codFee > 0 && (
                       <div className="mt-2 flex justify-between text-sm">
                         <span className="text-muted-foreground">Наложен платеж</span>

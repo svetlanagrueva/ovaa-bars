@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
+// Enable Econt delivery methods for tests
+vi.hoisted(() => {
+  process.env.NEXT_PUBLIC_ECONT_ENABLED = "true"
+})
+
 // Mock Stripe
 vi.mock("@/lib/stripe", () => ({
   stripe: {
@@ -53,6 +58,13 @@ const validCustomerInfo = {
   address: "ул. Тестова 1",
   postalCode: "1000",
   notes: "",
+}
+
+const validEcontOffice = {
+  id: 42,
+  name: "София - Дружба",
+  city: "София",
+  fullAddress: "бул. Цариградско шосе 115",
 }
 
 describe("createCheckoutSession", () => {
@@ -169,6 +181,7 @@ describe("createCheckoutSession", () => {
       cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1 }],
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
+      econtOffice: validEcontOffice,
     })
 
     // Since 59.99 лв > 50 лв threshold, shipping is free — no shipping line item
@@ -283,6 +296,7 @@ describe("createCODOrder", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
+      econtOffice: validEcontOffice,
     })
 
     expect(result).toEqual({ success: true, orderId: "cod-order-123" })
@@ -302,6 +316,7 @@ describe("createCODOrder", () => {
       cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1 }],
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
+      econtOffice: validEcontOffice,
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
@@ -315,6 +330,7 @@ describe("createCODOrder", () => {
         cartItems: [{ productId: "nonexistent", quantity: 1 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
+        econtOffice: validEcontOffice,
       })
     ).rejects.toThrow("Product not found")
   })
