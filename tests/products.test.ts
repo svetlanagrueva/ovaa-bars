@@ -47,7 +47,7 @@ describe("getProduct", () => {
   it("returns product by id", () => {
     const product = getProduct("ovva-dark-chocolate-box")
     expect(product).toBeDefined()
-    expect(product!.name).toBe("Dark Chocolate Box")
+    expect(product!.name).toBe("Тъмен Шоколад Кутия")
   })
 
   it("returns undefined for unknown id", () => {

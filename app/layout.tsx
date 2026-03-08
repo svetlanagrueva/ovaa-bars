@@ -1,10 +1,11 @@
 import React from "react"
 import type { Metadata } from 'next'
 import { Geist } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
 import { Toaster } from 'sonner'
 import { Header } from '@/components/layout/header'
 import { Footer } from '@/components/layout/footer'
+import { CookieConsentBanner } from '@/components/cookie-consent'
+import { ConditionalAnalytics } from '@/components/analytics'
 import './globals.css'
 
 const geist = Geist({ subsets: ["latin"] });
@@ -50,7 +51,8 @@ export default function RootLayout({
         </main>
         <Footer />
         <Toaster position="bottom-right" duration={3000} closeButton />
-        <Analytics />
+        <CookieConsentBanner />
+        <ConditionalAnalytics />
       </body>
     </html>
   )

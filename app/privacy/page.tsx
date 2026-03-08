@@ -55,7 +55,7 @@ export default function PrivacyPage() {
             <div className="mt-4 space-y-4">
               <p>Споделяме вашите данни само с:</p>
               <ul className="list-disc space-y-2 pl-6">
-                <li>Куриерска фирма Speedy - за доставка на поръчки</li>
+                <li>Куриерски фирми Speedy и Еконт - за доставка на поръчки</li>
                 <li>Stripe - за обработка на плащания</li>
                 <li>Vercel - за хостинг на уебсайта</li>
                 <li>Supabase - за съхранение на данни</li>
@@ -94,12 +94,47 @@ export default function PrivacyPage() {
             </div>
           </section>
 
-          <section>
-            <h2 className="text-xl font-semibold text-foreground">7. Бисквитки (Cookies)</h2>
-            <p className="mt-4">
-              Използваме бисквитки за подобряване на потребителското изживяване и анализ 
-              на трафика. Можете да контролирате бисквитките чрез настройките на вашия браузър.
-            </p>
+          <section id="cookies">
+            <h2 className="text-xl font-semibold text-foreground">7. Бисквитки и локално съхранение</h2>
+            <div className="mt-4 space-y-4">
+              <p>
+                Нашият сайт използва бисквитки и локално съхранение (localStorage) за различни
+                цели. При първото ви посещение ще бъдете помолени да дадете съгласие за
+                аналитичните бисквитки.
+              </p>
+
+              <div>
+                <h3 className="font-medium text-foreground">Необходими (без съгласие)</h3>
+                <ul className="mt-2 list-disc space-y-2 pl-6">
+                  <li>
+                    <strong>Количка</strong> — съхраняваме съдържанието на количката ви в localStorage,
+                    за да запазим избраните продукти между посещенията. Не съдържа лични данни.
+                  </li>
+                  <li>
+                    <strong>Съгласие за бисквитки</strong> — запомняме вашия избор (приемане/отказ)
+                    в localStorage, за да не ви питаме повторно.
+                  </li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-medium text-foreground">Аналитични (с ваше съгласие)</h3>
+                <ul className="mt-2 list-disc space-y-2 pl-6">
+                  <li>
+                    <strong>Vercel Analytics</strong> — използваме Vercel Analytics за анализ на
+                    трафика и подобряване на сайта. Тази услуга се активира само ако дадете
+                    съгласие чрез банера за бисквитки. Vercel Analytics е проектиран да е
+                    съобразен с поверителността и не използва бисквитки за проследяване между сайтове.
+                  </li>
+                </ul>
+              </div>
+
+              <p>
+                Можете да оттеглите съгласието си по всяко време, като изчистите данните на
+                сайта от настройките на браузъра си. При следващото посещение банерът за
+                бисквитки ще се покаже отново.
+              </p>
+            </div>
           </section>
 
           <section>

@@ -27,20 +27,20 @@ export const PRODUCTS: Product[] = [
   {
     id: 'ovva-dark-chocolate-box',
     slug: 'dark-chocolate-box',
-    name: 'Dark Chocolate Box',
-    shortDescription: 'Box of 12 Dark Chocolate protein bars. Rich cocoa flavor with complete egg white protein.',
-    fullDescription: `Indulge in the intense, satisfying taste of premium dark chocolate while fueling your body with complete protein. Each Ovva Sculpt Dark Chocolate bar delivers 20g of egg white protein - a complete animal protein containing all essential amino acids your body needs.
+    name: 'Тъмен Шоколад Кутия',
+    shortDescription: 'Кутия от 12 протеинови бара с тъмен шоколад. Наситен какаов вкус с пълноценен яйчен протеин.',
+    fullDescription: `Насладете се на интензивния, наситен вкус на висококачествен тъмен шоколад, докато зареждате тялото си с пълноценен протеин. Всеки бар Ovva Sculpt Тъмен Шоколад съдържа 20g яйчен протеин - пълноценен животински протеин с всички есенциални аминокиселини, от които тялото ви се нуждае.
 
-Unlike whey protein bars that can cause bloating and digestive discomfort, our egg white formula is gentle on your stomach and easy to digest. Perfect for everyday use, whether after a workout, as a mid-day snack, or when you need sustained energy.
+За разлика от суроватъчните протеинови барове, които могат да причинят подуване и храносмилателен дискомфорт, нашата формула с яйчен белтък е щадяща за стомаха и лесна за смилане. Перфектна за ежедневна употреба - след тренировка, като следобедна закуска или когато имате нужда от продължителна енергия.
 
-This box contains 12 individually wrapped bars - your month's supply of clean, functional protein.`,
+Тази кутия съдържа 12 индивидуално опаковани бара - вашият месечен запас от чист, функционален протеин.`,
     priceInCents: 5999, // 59.99 BGN
     image: '/images/dark-chocolate-bar.png',
     images: ['/images/dark-chocolate-bar.png'],
-    badge: 'Bestseller',
-    boxContents: '12 x Dark Chocolate bars',
+    badge: 'Бестселър',
+    boxContents: '12 x бара Тъмен Шоколад',
     barsCount: 12,
-    nutritionHighlights: ['20g Protein', 'Low Sugar', 'Clean Label'],
+    nutritionHighlights: ['20g Протеин', 'Ниска Захар', 'Чиста Етикета'],
     nutritionFacts: {
       calories: 195,
       protein: 20,
@@ -50,38 +50,38 @@ This box contains 12 individually wrapped bars - your month's supply of clean, f
       fiber: 4,
     },
     ingredients: [
-      'Egg white protein',
-      'Dark chocolate coating (cocoa mass, cocoa butter, sweetener)',
-      'Chicory root fiber',
-      'Almonds',
-      'Natural flavors',
-      'Sea salt',
+      'Яйчен протеин',
+      'Тъмен шоколадов кувертюр (какаова маса, какаово масло, подсладител)',
+      'Цикориеви фибри',
+      'Бадеми',
+      'Натурални аромати',
+      'Морска сол',
     ],
     benefits: [
-      'Complete protein with all essential amino acids',
-      'No whey, no bloating',
-      'Low sugar formula',
-      'Clean label - no unnecessary ingredients',
-      'Perfect for everyday use',
+      'Пълноценен протеин с всички есенциални аминокиселини',
+      'Без суроватка, без подуване',
+      'Формула с ниско съдържание на захар',
+      'Чиста етикета - без излишни съставки',
+      'Перфектен за ежедневна употреба',
     ],
   },
   {
     id: 'ovva-white-chocolate-raspberry-box',
     slug: 'white-chocolate-raspberry-box',
-    name: 'White Chocolate Raspberry Box',
-    shortDescription: 'Box of 12 White Chocolate Raspberry protein bars. Delicate sweetness with real raspberry pieces.',
-    fullDescription: `Experience the perfect balance of creamy white chocolate and tangy raspberry in every bite. Each Ovva Sculpt White Chocolate Raspberry bar is crafted with 20g of egg white protein - nature's most complete protein source.
+    name: 'Бял Шоколад с Малини Кутия',
+    shortDescription: 'Кутия от 12 протеинови бара с бял шоколад и малини. Нежна сладост с истински парченца малини.',
+    fullDescription: `Изживейте перфектния баланс между кремообразен бял шоколад и свежи малини във всяка хапка. Всеки бар Ovva Sculpt Бял Шоколад с Малини е създаден с 20g яйчен протеин - най-пълноценният природен източник на протеин.
 
-The delicate sweetness of white chocolate pairs beautifully with real freeze-dried raspberry pieces, creating a taste that feels indulgent yet delivers serious nutrition. Our egg white protein formula ensures easy digestion without the discomfort often associated with whey-based products.
+Нежната сладост на белия шоколад се съчетава прекрасно с истински лиофилизирани парченца малини, създавайки вкус, който е едновременно изкусителен и хранителен. Нашата формула с яйчен протеин осигурява лесно смилане без дискомфорта, често свързван със суроватъчни продукти.
 
-This box contains 12 individually wrapped bars - ideal for keeping at home, at the office, or in your gym bag.`,
+Тази кутия съдържа 12 индивидуално опаковани бара - идеални за вкъщи, в офиса или в спортната чанта.`,
     priceInCents: 5999, // 59.99 BGN
     image: '/images/white-chocolate-raspberry-bar.png',
     images: ['/images/white-chocolate-raspberry-bar.png'],
-    badge: 'New',
-    boxContents: '12 x White Chocolate Raspberry bars',
+    badge: 'Ново',
+    boxContents: '12 x бара Бял Шоколад с Малини',
     barsCount: 12,
-    nutritionHighlights: ['20g Protein', 'Low Sugar', 'Clean Label'],
+    nutritionHighlights: ['20g Протеин', 'Ниска Захар', 'Чиста Етикета'],
     nutritionFacts: {
       calories: 190,
       protein: 20,
@@ -91,38 +91,38 @@ This box contains 12 individually wrapped bars - ideal for keeping at home, at t
       fiber: 4,
     },
     ingredients: [
-      'Egg white protein',
-      'White chocolate coating (cocoa butter, milk powder, sweetener)',
-      'Freeze-dried raspberries',
-      'Chicory root fiber',
-      'Natural flavors',
-      'Sea salt',
+      'Яйчен протеин',
+      'Бял шоколадов кувертюр (какаово масло, мляко на прах, подсладител)',
+      'Лиофилизирани малини',
+      'Цикориеви фибри',
+      'Натурални аромати',
+      'Морска сол',
     ],
     benefits: [
-      'Complete protein with all essential amino acids',
-      'Real freeze-dried raspberries',
-      'No whey, no bloating',
-      'Low sugar formula',
-      'Gentle on digestion',
+      'Пълноценен протеин с всички есенциални аминокиселини',
+      'Истински лиофилизирани малини',
+      'Без суроватка, без подуване',
+      'Формула с ниско съдържание на захар',
+      'Лесно смилане',
     ],
   },
   {
     id: 'ovva-mix-box',
     slug: 'mix-box',
-    name: 'Mix Box',
-    shortDescription: 'Box of 12 mixed bars - 6 Dark Chocolate + 6 White Chocolate Raspberry. Best of both worlds.',
-    fullDescription: `Can't decide between rich dark chocolate and delicate white chocolate raspberry? Get the best of both worlds with our Mix Box. This variety pack includes 6 Dark Chocolate bars and 6 White Chocolate Raspberry bars - perfect for discovering your favorite or keeping things interesting.
+    name: 'Микс Кутия',
+    shortDescription: 'Кутия от 12 смесени бара - 6 Тъмен Шоколад + 6 Бял Шоколад с Малини. Най-доброто от двата вкуса.',
+    fullDescription: `Не можете да решите между наситения тъмен шоколад и нежния бял шоколад с малини? Вземете най-доброто от двата вкуса с нашата Микс Кутия. Този разнообразен пакет включва 6 бара Тъмен Шоколад и 6 бара Бял Шоколад с Малини - перфектен за да откриете любимия си вкус или да внесете разнообразие.
 
-Both flavors are crafted with 20g of premium egg white protein per bar, delivering complete nutrition without whey, without bloating, and without unnecessary ingredients. Whether you prefer the intense satisfaction of dark chocolate or the fruity sweetness of white chocolate raspberry, this box has you covered.
+И двата вкуса са създадени с 20g висококачествен яйчен протеин на бар, доставяйки пълноценно хранене без суроватка, без подуване и без излишни съставки. Независимо дали предпочитате интензивното удоволствие от тъмния шоколад или плодовата сладост на белия шоколад с малини, тази кутия ви предлага и двете.
 
-The perfect introduction to Ovva Sculpt or a great way to share with friends and family.`,
+Перфектното въведение в Ovva Sculpt или чудесен начин да споделите с приятели и семейство.`,
     priceInCents: 5999, // 59.99 BGN
     image: '/images/dark-chocolate-bar.png',
     images: ['/images/dark-chocolate-bar.png', '/images/white-chocolate-raspberry-bar.png'],
-    badge: 'Popular',
-    boxContents: '6 x Dark Chocolate + 6 x White Chocolate Raspberry bars',
+    badge: 'Популярен',
+    boxContents: '6 x Тъмен Шоколад + 6 x Бял Шоколад с Малини',
     barsCount: 12,
-    nutritionHighlights: ['20g Protein', 'Low Sugar', 'Clean Label'],
+    nutritionHighlights: ['20g Протеин', 'Ниска Захар', 'Чиста Етикета'],
     nutritionFacts: {
       calories: 192,
       protein: 20,
@@ -132,20 +132,20 @@ The perfect introduction to Ovva Sculpt or a great way to share with friends and
       fiber: 4,
     },
     ingredients: [
-      'Egg white protein',
-      'Dark chocolate coating',
-      'White chocolate coating',
-      'Freeze-dried raspberries',
-      'Chicory root fiber',
-      'Natural flavors',
-      'Sea salt',
+      'Яйчен протеин',
+      'Тъмен шоколадов кувертюр',
+      'Бял шоколадов кувертюр',
+      'Лиофилизирани малини',
+      'Цикориеви фибри',
+      'Натурални аромати',
+      'Морска сол',
     ],
     benefits: [
-      'Try both flavors',
-      'Complete protein with all essential amino acids',
-      'No whey, no bloating',
-      'Perfect for sharing',
-      'Clean label ingredients',
+      'Опитайте и двата вкуса',
+      'Пълноценен протеин с всички есенциални аминокиселини',
+      'Без суроватка, без подуване',
+      'Перфектен за споделяне',
+      'Съставки с чиста етикета',
     ],
   },
 ]

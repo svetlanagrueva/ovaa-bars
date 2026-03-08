@@ -49,4 +49,12 @@ npm install
 npm run dev
 ```
 
+Tun tests - tests run fine in CI with Node 22
+```
+  nvm install 22                                            
+  nvm use 22
+  npx vitest run
+
+```
+
 Then open http://localhost:3000.
