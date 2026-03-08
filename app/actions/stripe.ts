@@ -31,12 +31,20 @@ interface InvoiceInfo {
   invoiceAddress: string
 }
 
+interface EcontOfficeData {
+  id: number
+  name: string
+  city: string
+  fullAddress: string
+}
+
 interface CheckoutData {
   cartItems: CartItem[]
   customerInfo: CustomerInfo
   deliveryMethod: string
   needsInvoice?: boolean
   invoiceInfo?: InvoiceInfo
+  econtOffice?: EcontOfficeData
 }
 
 interface CODOrderData {
@@ -45,9 +53,13 @@ interface CODOrderData {
   deliveryMethod: string
   needsInvoice?: boolean
   invoiceInfo?: InvoiceInfo
+  econtOffice?: EcontOfficeData
 }
 
-const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office", "econt-address"]
+const NEXT_PUBLIC_ECONT_ENABLED = process.env.NEXT_PUBLIC_ECONT_ENABLED === "true"
+const VALID_DELIVERY_METHODS = NEXT_PUBLIC_ECONT_ENABLED
+  ? ["speedy-office", "speedy-address", "econt-office", "econt-address"]
+  : ["speedy-office", "speedy-address"]
 const MAX_FIELD_LENGTH = 500
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
@@ -175,11 +187,25 @@ function getCarrierName(deliveryMethod: string): string {
   return deliveryMethod.startsWith("speedy") ? "Speedy" : "Еконт"
 }
 
+function validateEcontOffice(deliveryMethod: string, econtOffice?: EcontOfficeData) {
+  if (deliveryMethod === "econt-office") {
+    if (!econtOffice || !econtOffice.id || !econtOffice.name) {
+      throw new Error("Econt office is required for office delivery")
+    }
+    // Sanitize: enforce length limits on user-provided strings
+    if (econtOffice.name.length > 200 || (econtOffice.fullAddress && econtOffice.fullAddress.length > 500)) {
+      throw new Error("Invalid Econt office data")
+    }
+  }
+  // If delivery method is not econt-office, ignore econtOffice data even if provided
+}
+
 export async function createCheckoutSession(data: CheckoutData) {
-  const { cartItems, customerInfo, needsInvoice, invoiceInfo } = data
+  const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice } = data
 
   validateCustomerInfo(customerInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
+  validateEcontOffice(deliveryMethod, econtOffice)
   const validatedItems = validateCartItems(cartItems)
 
   const subtotal = validatedItems.reduce(
@@ -246,6 +272,9 @@ export async function createCheckoutSession(data: CheckoutData) {
       invoice_vat_number: invoiceInfo?.vatNumber || null,
       invoice_mol: invoiceInfo?.mol || null,
       invoice_address: invoiceInfo?.invoiceAddress || null,
+      econt_office_id: econtOffice?.id ?? null,
+      econt_office_name: econtOffice?.name ?? null,
+      econt_office_address: econtOffice?.fullAddress ?? null,
     })
     .select()
     .single()
@@ -345,10 +374,11 @@ export async function confirmOrder(orderId: string) {
 }
 
 export async function createCODOrder(data: CODOrderData) {
-  const { cartItems, customerInfo, needsInvoice, invoiceInfo } = data
+  const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice } = data
 
   validateCustomerInfo(customerInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
+  validateEcontOffice(deliveryMethod, econtOffice)
 
   // Rate limit COD orders to prevent spam
   const headerStore = await headers()
@@ -396,6 +426,9 @@ export async function createCODOrder(data: CODOrderData) {
       invoice_vat_number: invoiceInfo?.vatNumber || null,
       invoice_mol: invoiceInfo?.mol || null,
       invoice_address: invoiceInfo?.invoiceAddress || null,
+      econt_office_id: econtOffice?.id ?? null,
+      econt_office_name: econtOffice?.name ?? null,
+      econt_office_address: econtOffice?.fullAddress ?? null,
     })
     .select()
     .single()
@@ -428,6 +461,7 @@ function sendConfirmationEmail(order: Record<string, unknown>) {
     .join("\n")
 
   const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
+  const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
 
   resend.emails.send({
     from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
@@ -443,7 +477,7 @@ ${itemsList}
 
 Обща сума: ${formatPrice(order.total_amount as number)}
 
-Доставка: ${deliveryLabel}
+Доставка: ${deliveryLabel}${econtOfficeLine}
 Град: ${order.city}
 ${order.address ? `Адрес: ${order.address}` : ""}
 
@@ -477,6 +511,7 @@ function sendCODConfirmationEmail(
     .join("\n")
 
   const deliveryLabel = getDeliveryLabel(deliveryMethod)
+  const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
 
   resend.emails.send({
     from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
@@ -495,7 +530,7 @@ ${itemsList}
 
 Сума за плащане при доставка: ${formatPrice(order.total_amount as number)}
 
-Начин на доставка: ${deliveryLabel}
+Начин на доставка: ${deliveryLabel}${econtOfficeLine}
 Град: ${order.city}
 ${order.address ? `Адрес: ${order.address}` : ""}
 

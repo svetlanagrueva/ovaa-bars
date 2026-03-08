@@ -41,6 +41,37 @@ Stripe setup
 1. Go to https://dashboard.stripe.com/apikeys
 2. Copy the Secret key (starts with sk_test_) → paste into STRIPE_SECRET_KEY
 
+Econt delivery integration (optional)
+
+The Econt office picker is behind a feature flag. To enable it:
+
+1. Add the following to your `.env.local`:
+```
+# Feature flag — set to "true" to show Econt delivery options in checkout
+NEXT_PUBLIC_ECONT_ENABLED=true
+
+# Econt API credentials
+# Demo (for local development):
+ECONT_API_URL=https://demo.econt.com/ee/services/
+ECONT_USERNAME=iasp-dev
+ECONT_PASSWORD=1Asp-dev
+
+# Production (replace with your e-Econt credentials):
+# ECONT_API_URL=https://ee.econt.com/services/
+# ECONT_USERNAME=your-username
+# ECONT_PASSWORD=your-password
+```
+
+2. If you already have the `orders` table, run this migration in Supabase SQL Editor:
+```sql
+ALTER TABLE orders ADD COLUMN econt_office_id integer;
+ALTER TABLE orders ADD COLUMN econt_office_name text;
+ALTER TABLE orders ADD COLUMN econt_office_address text;
+```
+   (New projects can skip this — the columns are already in `supabase-schema.sql`.)
+
+3. To disable Econt, remove `NEXT_PUBLIC_ECONT_ENABLED` or set it to `false`. The Econt delivery options will be hidden from checkout and only Speedy options will appear.
+
 Run the app
 
 ```
