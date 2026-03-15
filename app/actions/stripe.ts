@@ -38,6 +38,13 @@ interface EcontOfficeData {
   fullAddress: string
 }
 
+interface SpeedyOfficeData {
+  id: number
+  name: string
+  city: string
+  fullAddress: string
+}
+
 interface CheckoutData {
   cartItems: CartItem[]
   customerInfo: CustomerInfo
@@ -45,6 +52,7 @@ interface CheckoutData {
   needsInvoice?: boolean
   invoiceInfo?: InvoiceInfo
   econtOffice?: EcontOfficeData
+  speedyOffice?: SpeedyOfficeData
 }
 
 interface CODOrderData {
@@ -54,12 +62,15 @@ interface CODOrderData {
   needsInvoice?: boolean
   invoiceInfo?: InvoiceInfo
   econtOffice?: EcontOfficeData
+  speedyOffice?: SpeedyOfficeData
 }
 
-const NEXT_PUBLIC_ECONT_ENABLED = process.env.NEXT_PUBLIC_ECONT_ENABLED === "true"
-const VALID_DELIVERY_METHODS = NEXT_PUBLIC_ECONT_ENABLED
-  ? ["speedy-office", "speedy-address", "econt-office", "econt-address"]
-  : ["speedy-office", "speedy-address"]
+const NEXT_PUBLIC_ECONT_ENABLED = process.env.NEXT_PUBLIC_ECONT_ENABLED !== "false" // on by default
+const NEXT_PUBLIC_SPEEDY_ENABLED = process.env.NEXT_PUBLIC_SPEEDY_ENABLED !== "false" // on by default
+const VALID_DELIVERY_METHODS = [
+  ...(NEXT_PUBLIC_SPEEDY_ENABLED ? ["speedy-office", "speedy-address"] : []),
+  ...(NEXT_PUBLIC_ECONT_ENABLED ? ["econt-office", "econt-address"] : []),
+]
 const MAX_FIELD_LENGTH = 500
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
@@ -95,6 +106,12 @@ function validateDeliveryMethod(method: string): string {
     throw new Error("Invalid delivery method")
   }
   return method
+}
+
+function validateAddressForDelivery(deliveryMethod: string, address: string) {
+  if ((deliveryMethod === "speedy-address" || deliveryMethod === "econt-address") && (!address || address.trim().length === 0)) {
+    throw new Error("Address is required for address delivery")
+  }
 }
 
 function validateCustomerInfo(info: CustomerInfo) {
@@ -187,25 +204,39 @@ function getCarrierName(deliveryMethod: string): string {
   return deliveryMethod.startsWith("speedy") ? "Speedy" : "Еконт"
 }
 
-function validateEcontOffice(deliveryMethod: string, econtOffice?: EcontOfficeData) {
-  if (deliveryMethod === "econt-office") {
-    if (!econtOffice || !econtOffice.id || !econtOffice.name) {
-      throw new Error("Econt office is required for office delivery")
-    }
-    // Sanitize: enforce length limits on user-provided strings
-    if (econtOffice.name.length > 200 || (econtOffice.fullAddress && econtOffice.fullAddress.length > 500)) {
-      throw new Error("Invalid Econt office data")
-    }
+function validateOfficeData(
+  label: string,
+  deliveryMethod: string,
+  requiredMethod: string,
+  office?: EcontOfficeData | SpeedyOfficeData,
+) {
+  if (deliveryMethod !== requiredMethod) return
+
+  if (!office || !office.id || !office.name) {
+    throw new Error(`${label} office is required for office delivery`)
   }
-  // If delivery method is not econt-office, ignore econtOffice data even if provided
+  if (typeof office.id !== "number" || office.id <= 0 || !Number.isFinite(office.id)) {
+    throw new Error(`Invalid ${label} office data`)
+  }
+  if (office.name.length > 200) {
+    throw new Error(`Invalid ${label} office data`)
+  }
+  if (office.city && office.city.length > 200) {
+    throw new Error(`Invalid ${label} office data`)
+  }
+  if (office.fullAddress && office.fullAddress.length > 500) {
+    throw new Error(`Invalid ${label} office data`)
+  }
 }
 
 export async function createCheckoutSession(data: CheckoutData) {
-  const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice } = data
+  const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice, speedyOffice } = data
 
   validateCustomerInfo(customerInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
-  validateEcontOffice(deliveryMethod, econtOffice)
+  validateAddressForDelivery(deliveryMethod, customerInfo.address)
+  validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
+  validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
   const validatedItems = validateCartItems(cartItems)
 
   const subtotal = validatedItems.reduce(
@@ -275,6 +306,9 @@ export async function createCheckoutSession(data: CheckoutData) {
       econt_office_id: econtOffice?.id ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
+      speedy_office_id: speedyOffice?.id ?? null,
+      speedy_office_name: speedyOffice?.name ?? null,
+      speedy_office_address: speedyOffice?.fullAddress ?? null,
     })
     .select()
     .single()
@@ -374,11 +408,13 @@ export async function confirmOrder(orderId: string) {
 }
 
 export async function createCODOrder(data: CODOrderData) {
-  const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice } = data
+  const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice, speedyOffice } = data
 
   validateCustomerInfo(customerInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
-  validateEcontOffice(deliveryMethod, econtOffice)
+  validateAddressForDelivery(deliveryMethod, customerInfo.address)
+  validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
+  validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
 
   // Rate limit COD orders to prevent spam
   const headerStore = await headers()
@@ -429,6 +465,9 @@ export async function createCODOrder(data: CODOrderData) {
       econt_office_id: econtOffice?.id ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
+      speedy_office_id: speedyOffice?.id ?? null,
+      speedy_office_name: speedyOffice?.name ?? null,
+      speedy_office_address: speedyOffice?.fullAddress ?? null,
     })
     .select()
     .single()
@@ -462,6 +501,7 @@ function sendConfirmationEmail(order: Record<string, unknown>) {
 
   const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
   const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
+  const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
     from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
@@ -477,7 +517,7 @@ ${itemsList}
 
 Обща сума: ${formatPrice(order.total_amount as number)}
 
-Доставка: ${deliveryLabel}${econtOfficeLine}
+Доставка: ${deliveryLabel}${econtOfficeLine}${speedyOfficeLine}
 Град: ${order.city}
 ${order.address ? `Адрес: ${order.address}` : ""}
 
@@ -512,6 +552,7 @@ function sendCODConfirmationEmail(
 
   const deliveryLabel = getDeliveryLabel(deliveryMethod)
   const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
+  const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
     from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
@@ -530,7 +571,7 @@ ${itemsList}
 
 Сума за плащане при доставка: ${formatPrice(order.total_amount as number)}
 
-Начин на доставка: ${deliveryLabel}${econtOfficeLine}
+Начин на доставка: ${deliveryLabel}${econtOfficeLine}${speedyOfficeLine}
 Град: ${order.city}
 ${order.address ? `Адрес: ${order.address}` : ""}
 

@@ -73,6 +73,8 @@ export async function POST(request: Request) {
         .join("\n")
 
       const deliveryLabel = getDeliveryLabel(order.logistics_partner)
+      const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
+      const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
       resend.emails.send({
         from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
@@ -88,7 +90,7 @@ ${itemsList}
 
 Обща сума: ${formatPrice(order.total_amount)}
 
-Доставка: ${deliveryLabel}
+Доставка: ${deliveryLabel}${econtOfficeLine}${speedyOfficeLine}
 Град: ${order.city}
 ${order.address ? `Адрес: ${order.address}` : ""}
 

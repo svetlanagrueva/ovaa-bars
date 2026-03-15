@@ -33,15 +33,29 @@ export async function getOffices(cityName?: string): Promise<EcontOffice[]> {
   const body: Record<string, string> = { countryCode: 'BGR' }
   if (cityName) body.cityName = cityName
 
-  const res = await fetch(
-    `${ECONT_API_URL}Nomenclatures/NomenclaturesService.getOffices.json`,
-    {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-      next: { revalidate: 3600 },
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000) // 10s timeout
+
+  let res: Response
+  try {
+    res = await fetch(
+      `${ECONT_API_URL}Nomenclatures/NomenclaturesService.getOffices.json`,
+      {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        next: { revalidate: 3600 },
+      }
+    )
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Econt API timeout')
     }
-  )
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (!res.ok) {
     throw new Error(`Econt API error: ${res.status}`)

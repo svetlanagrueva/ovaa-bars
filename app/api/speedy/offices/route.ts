@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getOffices } from '@/lib/econt'
+import { getOffices } from '@/lib/speedy'
 
 // Simple in-memory rate limiter: max 30 requests per minute per IP
 const rateLimit = new Map<string, number[]>()
@@ -45,12 +45,12 @@ export async function GET(request: NextRequest) {
     const slim = offices.map((o) => ({
       id: o.id,
       name: o.name,
-      city: o.address?.city?.name || '',
-      fullAddress: o.address?.fullAddress || '',
+      city: o.address?.siteName || '',
+      fullAddress: o.address?.fullAddressString || '',
     }))
     return NextResponse.json({ offices: slim })
   } catch (error) {
-    console.error('Econt offices fetch failed:', error)
+    console.error('Speedy offices fetch failed:', error)
     return NextResponse.json(
       { offices: [], error: 'Failed to fetch offices' },
       { status: 502 }

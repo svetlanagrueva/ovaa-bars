@@ -79,6 +79,13 @@ const validEcontOffice = {
   fullAddress: "бул. Цариградско шосе 115",
 }
 
+const validSpeedyOffice = {
+  id: 100,
+  name: "Speedy офис София",
+  city: "София",
+  fullAddress: "бул. Ситняково 48",
+}
+
 describe("Econt office validation – createCheckoutSession", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -189,6 +196,7 @@ describe("Econt office validation – createCheckoutSession", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
@@ -209,13 +217,14 @@ describe("Econt office validation – createCheckoutSession", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
       econtOffice: validEcontOffice,
     })
 
     expect(mockSupabase.insert).toHaveBeenCalled()
   })
 
-  it("handles office ID 0 correctly with nullish coalescing", async () => {
+  it("handles econt office ID 0 via nullish coalescing when using speedy delivery", async () => {
     const fakeOrder = { id: "order-zero-id" }
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
     vi.mocked(stripe.checkout.sessions.create).mockResolvedValueOnce({
@@ -227,6 +236,7 @@ describe("Econt office validation – createCheckoutSession", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
       econtOffice: { id: 0, name: "Test", city: "София", fullAddress: "addr" },
     })
 
@@ -309,6 +319,7 @@ describe("Econt office validation – createCODOrder", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]

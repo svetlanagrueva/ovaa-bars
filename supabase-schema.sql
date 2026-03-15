@@ -33,7 +33,12 @@ create table if not exists orders (
   -- Econt delivery (optional)
   econt_office_id integer,
   econt_office_name text,
-  econt_office_address text
+  econt_office_address text,
+
+  -- Speedy delivery (optional)
+  speedy_office_id integer,
+  speedy_office_name text,
+  speedy_office_address text
 );
 
 -- Enable Row Level Security
@@ -58,3 +63,11 @@ create policy "Deny public deletes" on orders
 
 -- IMPORTANT: Server actions use the SUPABASE_SERVICE_ROLE_KEY to bypass RLS.
 -- See .env.local and lib/supabase/server.ts.
+
+-- ============================================================
+-- MIGRATION: Add Speedy delivery columns to existing databases
+-- Run this if the orders table already exists:
+-- ============================================================
+-- alter table orders add column if not exists speedy_office_id integer;
+-- alter table orders add column if not exists speedy_office_name text;
+-- alter table orders add column if not exists speedy_office_address text;
