@@ -1,61 +1,98 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { Cookie } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 
 const COOKIE_CONSENT_KEY = "ovva-sculpt-cookie-consent"
 
-export type CookieConsent = "accepted" | "rejected" | null
+export interface CookiePreferences {
+  essential: true // always on
+  analytics: boolean
+}
 
-function useCookieConsent() {
-  const [consent, setConsent] = useState<CookieConsent>(null)
+const DEFAULT_PREFERENCES: CookiePreferences = {
+  essential: true,
+  analytics: false,
+}
+
+const ALL_ACCEPTED: CookiePreferences = {
+  essential: true,
+  analytics: true,
+}
+
+/** Read stored preferences. Returns null if user hasn't chosen yet. */
+export function getCookiePreferences(): CookiePreferences | null {
+  if (typeof window === "undefined") return null
+  const raw = localStorage.getItem(COOKIE_CONSENT_KEY)
+  if (!raw) return null
+
+  // Backwards compat: old format stored "accepted" / "rejected"
+  if (raw === "accepted") return ALL_ACCEPTED
+  if (raw === "rejected") return DEFAULT_PREFERENCES
+
+  try {
+    const parsed = JSON.parse(raw)
+    return { essential: true, analytics: !!parsed.analytics }
+  } catch {
+    return null
+  }
+}
+
+/** Check whether a specific cookie category is consented to. */
+export function hasCategoryConsent(category: keyof CookiePreferences): boolean {
+  const prefs = getCookiePreferences()
+  if (!prefs) return false
+  return prefs[category]
+}
+
+function savePreferences(prefs: CookiePreferences) {
+  localStorage.setItem(COOKIE_CONSENT_KEY, JSON.stringify(prefs))
+  window.dispatchEvent(new Event("cookie-consent-change"))
+}
+
+export function CookieConsentBanner() {
   const [loaded, setLoaded] = useState(false)
+  const [hasStored, setHasStored] = useState(false)
+  const [showBanner, setShowBanner] = useState(false)
+  const [analyticsChecked, setAnalyticsChecked] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem(COOKIE_CONSENT_KEY)
-    if (stored === "accepted" || stored === "rejected") {
-      setConsent(stored)
+    const stored = getCookiePreferences()
+    if (stored) {
+      setAnalyticsChecked(stored.analytics)
+      setHasStored(true)
     }
     setLoaded(true)
   }, [])
 
-  const accept = () => {
-    localStorage.setItem(COOKIE_CONSENT_KEY, "accepted")
-    setConsent("accepted")
-    window.dispatchEvent(new Event("cookie-consent-change"))
-  }
-
-  const reject = () => {
-    localStorage.setItem(COOKIE_CONSENT_KEY, "rejected")
-    setConsent("rejected")
-    window.dispatchEvent(new Event("cookie-consent-change"))
-  }
-
-  const reset = () => {
-    localStorage.removeItem(COOKIE_CONSENT_KEY)
-    setConsent(null)
-    window.dispatchEvent(new Event("cookie-consent-change"))
-  }
-
-  return { consent, loaded, accept, reject, reset }
-}
-
-export function CookieConsentBanner() {
-  const { consent, loaded, accept, reject, reset } = useCookieConsent()
-  const [showBanner, setShowBanner] = useState(false)
-
   useEffect(() => {
-    if (loaded && consent === null) {
+    if (loaded && !hasStored) {
       setShowBanner(true)
     }
-  }, [loaded, consent])
+  }, [loaded, hasStored])
+
+  const save = useCallback((prefs: CookiePreferences) => {
+    savePreferences(prefs)
+    setAnalyticsChecked(prefs.analytics)
+    setHasStored(true)
+    setShowBanner(false)
+  }, [])
+
+  const acceptAll = useCallback(() => save(ALL_ACCEPTED), [save])
+  const rejectOptional = useCallback(() => save(DEFAULT_PREFERENCES), [save])
+  const saveSelected = useCallback(
+    () => save({ essential: true, analytics: analyticsChecked }),
+    [save, analyticsChecked],
+  )
 
   if (!loaded) return null
 
-  // Show floating icon when consent has been given (not during initial banner)
-  if (consent !== null && !showBanner) {
+  // Floating icon to re-open settings after initial choice
+  if (hasStored && !showBanner) {
     return (
       <button
         onClick={() => setShowBanner(true)}
@@ -71,21 +108,58 @@ export function CookieConsentBanner() {
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background p-4 shadow-lg sm:p-6">
-      <div className="mx-auto flex max-w-5xl flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mx-auto max-w-5xl space-y-4">
         <p className="text-sm text-muted-foreground">
-          Използваме бисквитки за анализ на трафика и подобряване на изживяването.
+          Използваме бисквитки, за да подобрим изживяването Ви. Изберете кои категории да разрешите.
           Научете повече в нашата{" "}
           <Link href="/privacy#cookies" className="underline hover:text-foreground">
             политика за поверителност
           </Link>
           .
         </p>
-        <div className="flex shrink-0 gap-3">
-          <Button variant="outline" size="sm" onClick={() => { reject(); setShowBanner(false) }}>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* Essential — always on */}
+          <div className="flex items-start gap-3 rounded-lg border border-border p-3">
+            <Checkbox id="ck-essential" checked disabled className="mt-0.5" />
+            <div>
+              <Label htmlFor="ck-essential" className="font-medium text-foreground">
+                Необходими
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Тези бисквитки са необходими за правилното функциониране на сайта, включително за различни възможности, като например влизане в профила и добавяне на артикули в количката.
+              </p>
+            </div>
+          </div>
+
+          {/* Analytics — optional (covers Google Analytics + Microsoft Clarity) */}
+          <div className="flex items-start gap-3 rounded-lg border border-border p-3">
+            <Checkbox
+              id="ck-analytics"
+              checked={analyticsChecked}
+              onCheckedChange={(checked) => setAnalyticsChecked(checked === true)}
+              className="mt-0.5"
+            />
+            <div>
+              <Label htmlFor="ck-analytics" className="cursor-pointer font-medium text-foreground">
+                Анализ
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Тези бисквитки ни помагат да разберем как взаимодействате със сайта. Използваме тези данни, за да идентифицираме области, които да подобрим.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Button variant="outline" size="sm" onClick={rejectOptional}>
             Отказвам
           </Button>
-          <Button size="sm" onClick={() => { accept(); setShowBanner(false) }}>
-            Приемам
+          <Button variant="outline" size="sm" onClick={saveSelected}>
+            Запази избора
+          </Button>
+          <Button size="sm" onClick={acceptAll}>
+            Приемам всички
           </Button>
         </div>
       </div>
