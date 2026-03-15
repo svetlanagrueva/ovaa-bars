@@ -41,13 +41,42 @@ Stripe setup
 1. Go to https://dashboard.stripe.com/apikeys
 2. Copy the Secret key (starts with sk_test_) → paste into STRIPE_SECRET_KEY
 
-Econt delivery integration (optional)
+Delivery integrations
 
-The Econt office picker is behind a feature flag. To enable it:
+The app supports two delivery providers — **Speedy** and **Econt**. Both are behind feature flags 
+and can be enabled independently.
 
-1. Add the following to your `.env.local`:
+Speedy delivery (enabled by default)
+
+Speedy is **on by default** — no flag needed. To disable it, set `NEXT_PUBLIC_SPEEDY_ENABLED=false`.
+
+Add your Speedy API credentials to `.env.local`:
 ```
-# Feature flag — set to "true" to show Econt delivery options in checkout
+# Speedy API credentials (required for office picker to work)
+SPEEDY_API_URL=https://api.speedy.bg/v1
+SPEEDY_USERNAME=your-username
+SPEEDY_PASSWORD=your-password
+```
+
+> **Note:** Speedy does not provide public demo/sandbox credentials. You need a real Speedy API account. 
+> Without valid credentials the office picker will show an error — the "Speedy до адрес" (address delivery) option 
+> still works since it doesn't call the API.
+
+If you already have the `orders` table, run this migration in Supabase SQL Editor:
+```sql
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS speedy_office_id integer;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS speedy_office_name text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS speedy_office_address text;
+```
+New projects can skip this — the columns are already in `supabase-schema.sql`.
+
+Econt delivery (enabled by default)
+
+Econt is **on by default** — no flag needed. To disable it, set `NEXT_PUBLIC_ECONT_ENABLED=false`.
+
+Add the following to your `.env.local`:
+```
+# Feature flag — set to "false" to hide Econt delivery options in checkout
 NEXT_PUBLIC_ECONT_ENABLED=true
 
 # Econt API credentials
@@ -62,15 +91,15 @@ ECONT_PASSWORD=1Asp-dev
 # ECONT_PASSWORD=your-password
 ```
 
-2. If you already have the `orders` table, run this migration in Supabase SQL Editor:
-```sql
-ALTER TABLE orders ADD COLUMN econt_office_id integer;
-ALTER TABLE orders ADD COLUMN econt_office_name text;
-ALTER TABLE orders ADD COLUMN econt_office_address text;
-```
-   (New projects can skip this — the columns are already in `supabase-schema.sql`.)
+Econt provides demo credentials (`iasp-dev` / `1Asp-dev`) that work out of the box for local development.
 
-3. To disable Econt, remove `NEXT_PUBLIC_ECONT_ENABLED` or set it to `false`. The Econt delivery options will be hidden from checkout and only Speedy options will appear.
+If you already have the `orders` table, run this migration in Supabase SQL Editor:
+```sql
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS econt_office_id integer;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS econt_office_name text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS econt_office_address text;
+```
+New projects can skip this — the columns are already in `supabase-schema.sql`.
 
 Run the app
 

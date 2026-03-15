@@ -16,8 +16,10 @@ import { formatPrice } from "@/lib/products"
 import { createCheckoutSession, createCODOrder } from "@/app/actions/stripe"
 import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE, COD_FEE } from "@/lib/constants"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/econt-office-picker"
+import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/speedy-office-picker"
 
-const econtEnabled = process.env.NEXT_PUBLIC_ECONT_ENABLED === "true"
+const econtEnabled = process.env.NEXT_PUBLIC_ECONT_ENABLED !== "false" // on by default
+const speedyEnabled = process.env.NEXT_PUBLIC_SPEEDY_ENABLED !== "false" // on by default
 
 interface CustomerInfo {
   firstName: string
@@ -44,9 +46,10 @@ export default function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paymentMethod, setPaymentMethod] = useState("card")
-  const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
+  const [deliveryMethod, setDeliveryMethod] = useState(speedyEnabled ? "speedy-office" : econtEnabled ? "econt-office" : "speedy-office")
   const [needsInvoice, setNeedsInvoice] = useState(false)
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
+  const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
   const { items, getTotalPrice, clearCart } = useCartStore()
 
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo>({
@@ -106,6 +109,12 @@ export default function CheckoutPage() {
         return
       }
 
+      if (deliveryMethod === "speedy-office" && !selectedSpeedyOffice) {
+        setError("Моля, изберете офис на Speedy")
+        setIsLoading(false)
+        return
+      }
+
       const cartItems = items.map((item) => ({
         productId: item.product.id,
         quantity: item.quantity,
@@ -113,6 +122,10 @@ export default function CheckoutPage() {
 
       const econtOffice = deliveryMethod === "econt-office" && selectedEcontOffice
         ? { id: selectedEcontOffice.id, name: selectedEcontOffice.name, city: selectedEcontOffice.city, fullAddress: selectedEcontOffice.fullAddress }
+        : undefined
+
+      const speedyOffice = deliveryMethod === "speedy-office" && selectedSpeedyOffice
+        ? { id: selectedSpeedyOffice.id, name: selectedSpeedyOffice.name, city: selectedSpeedyOffice.city, fullAddress: selectedSpeedyOffice.fullAddress }
         : undefined
 
       if (paymentMethod === "cod") {
@@ -123,6 +136,7 @@ export default function CheckoutPage() {
           needsInvoice,
           invoiceInfo: needsInvoice ? invoiceInfo : undefined,
           econtOffice,
+          speedyOffice,
         })
 
         if (result.success) {
@@ -137,6 +151,7 @@ export default function CheckoutPage() {
           needsInvoice,
           invoiceInfo: needsInvoice ? invoiceInfo : undefined,
           econtOffice,
+          speedyOffice,
         })
 
         if (result.url) {
@@ -251,21 +266,25 @@ export default function CheckoutPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <RadioGroup value={deliveryMethod} onValueChange={setDeliveryMethod}>
-                    <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="speedy-office" id="speedy-office" />
-                      <Label htmlFor="speedy-office" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Speedy офис</span>
-                        <p className="text-sm text-muted-foreground">До най-близкия офис на Speedy</p>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="speedy-address" id="speedy-address" />
-                      <Label htmlFor="speedy-address" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Speedy до адрес</span>
-                        <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
-                      </Label>
-                    </div>
+                    {speedyEnabled && (
+                      <>
+                        <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
+                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                          <RadioGroupItem value="speedy-office" id="speedy-office" />
+                          <Label htmlFor="speedy-office" className="flex-1 cursor-pointer">
+                            <span className="font-medium">Speedy офис</span>
+                            <p className="text-sm text-muted-foreground">До най-близкия офис на Speedy</p>
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                          <RadioGroupItem value="speedy-address" id="speedy-address" />
+                          <Label htmlFor="speedy-address" className="flex-1 cursor-pointer">
+                            <span className="font-medium">Speedy до адрес</span>
+                            <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
+                          </Label>
+                        </div>
+                      </>
+                    )}
                     {econtEnabled && (
                       <>
                         <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
@@ -286,6 +305,13 @@ export default function CheckoutPage() {
                       </>
                     )}
                   </RadioGroup>
+
+                  {deliveryMethod === "speedy-office" && speedyEnabled && (
+                    <SpeedyOfficePicker
+                      selectedOfficeId={selectedSpeedyOffice?.id ?? null}
+                      onSelect={setSelectedSpeedyOffice}
+                    />
+                  )}
 
                   {deliveryMethod === "econt-office" && econtEnabled && (
                     <EcontOfficePicker
@@ -493,6 +519,11 @@ export default function CheckoutPage() {
                         {shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}
                       </span>
                     </div>
+                    {selectedSpeedyOffice && deliveryMethod === "speedy-office" && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Офис: {selectedSpeedyOffice.name}, {selectedSpeedyOffice.city}
+                      </p>
+                    )}
                     {selectedEcontOffice && deliveryMethod === "econt-office" && (
                       <p className="mt-1 text-xs text-muted-foreground">
                         Офис: {selectedEcontOffice.name}, {selectedEcontOffice.city}

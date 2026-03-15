@@ -6,20 +6,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-export interface EcontOfficeOption {
+export interface SpeedyOfficeOption {
   id: number
   name: string
   city: string
   fullAddress: string
 }
 
-interface EcontOfficePickerProps {
+interface SpeedyOfficePickerProps {
   selectedOfficeId: number | null
-  onSelect: (office: EcontOfficeOption) => void
+  onSelect: (office: SpeedyOfficeOption) => void
 }
 
-export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePickerProps) {
-  const [offices, setOffices] = useState<EcontOfficeOption[]>([])
+export function SpeedyOfficePicker({ selectedOfficeId, onSelect }: SpeedyOfficePickerProps) {
+  const [offices, setOffices] = useState<SpeedyOfficeOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cityFilter, setCityFilter] = useState("")
@@ -42,7 +42,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
     const controller = new AbortController()
     setLoading(true)
     setError(null)
-    fetch("/api/econt/offices", { signal: controller.signal })
+    fetch("/api/speedy/offices", { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch")
         return res.json()
@@ -52,7 +52,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return
-        setError("Неуспешно зареждане на офисите на Еконт")
+        setError("Неуспешно зареждане на офисите на Speedy")
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
@@ -75,7 +75,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
 
   // Group by city
   const groupedOffices = useMemo(() => {
-    const groups = new Map<string, EcontOfficeOption[]>()
+    const groups = new Map<string, SpeedyOfficeOption[]>()
     for (const office of filteredOffices) {
       const city = office.city || "Други"
       if (!groups.has(city)) groups.set(city, [])
@@ -103,7 +103,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
 
   return (
     <div className="space-y-3" ref={dropdownRef}>
-      <Label>Изберете офис на Еконт *</Label>
+      <Label>Изберете офис на Speedy *</Label>
 
       <Button
         type="button"

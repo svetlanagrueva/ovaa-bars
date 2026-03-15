@@ -67,6 +67,13 @@ const validEcontOffice = {
   fullAddress: "бул. Цариградско шосе 115",
 }
 
+const validSpeedyOffice = {
+  id: 100,
+  name: "Speedy офис София",
+  city: "София",
+  fullAddress: "бул. Ситняково 48",
+}
+
 describe("createCheckoutSession", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -83,6 +90,7 @@ describe("createCheckoutSession", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
     })
 
     expect(result.url).toBe(fakeSession.url)
@@ -103,6 +111,7 @@ describe("createCheckoutSession", () => {
         cartItems: [{ productId: "nonexistent", quantity: 1 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Product not found")
   })
@@ -113,6 +122,7 @@ describe("createCheckoutSession", () => {
         cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 100 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Invalid quantity")
   })
@@ -123,6 +133,7 @@ describe("createCheckoutSession", () => {
         cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 0 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Invalid quantity")
   })
@@ -133,6 +144,7 @@ describe("createCheckoutSession", () => {
         cartItems: [],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Cart is empty")
   })
@@ -148,6 +160,7 @@ describe("createCheckoutSession", () => {
         cartItems: validCartItems,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Failed to create order")
   })
@@ -162,6 +175,7 @@ describe("createCheckoutSession", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
@@ -202,6 +216,7 @@ describe("createCheckoutSession", () => {
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
     })
 
     // Second .from("orders") call is the update with stripe_session_id
@@ -387,8 +402,29 @@ describe("input validation", () => {
         cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1.5 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Invalid quantity")
+  })
+
+  it("rejects empty address for address delivery", async () => {
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        customerInfo: { ...validCustomerInfo, address: "" },
+        deliveryMethod: "speedy-address",
+      })
+    ).rejects.toThrow("Address is required for address delivery")
+  })
+
+  it("rejects empty address for econt address delivery", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: { ...validCustomerInfo, address: "" },
+        deliveryMethod: "econt-address",
+      })
+    ).rejects.toThrow("Address is required for address delivery")
   })
 
   it("rejects fields exceeding max length", async () => {
