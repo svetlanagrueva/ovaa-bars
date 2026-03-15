@@ -2,17 +2,17 @@
 
 import { useEffect, useState } from "react"
 import { Analytics } from "@vercel/analytics/next"
-
-const COOKIE_CONSENT_KEY = "ovva-sculpt-cookie-consent"
+import { GoogleAnalytics } from "@next/third-parties/google"
+import { hasCategoryConsent } from "@/components/cookie-consent"
 
 export function ConditionalAnalytics() {
-  const [hasConsent, setHasConsent] = useState(false)
+  const [analyticsConsent, setAnalyticsConsent] = useState(false)
 
   useEffect(() => {
-    setHasConsent(localStorage.getItem(COOKIE_CONSENT_KEY) === "accepted")
+    setAnalyticsConsent(hasCategoryConsent("analytics"))
 
     const check = () => {
-      setHasConsent(localStorage.getItem(COOKIE_CONSENT_KEY) === "accepted")
+      setAnalyticsConsent(hasCategoryConsent("analytics"))
     }
 
     window.addEventListener("storage", check)
@@ -23,7 +23,14 @@ export function ConditionalAnalytics() {
     }
   }, [])
 
-  if (!hasConsent) return null
+  if (!analyticsConsent) return null
 
-  return <Analytics />
+  const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID
+
+  return (
+    <>
+      <Analytics />
+      {gaId && <GoogleAnalytics gaId={gaId} />}
+    </>
+  )
 }
