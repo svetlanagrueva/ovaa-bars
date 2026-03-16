@@ -38,9 +38,10 @@ export async function POST(request: Request) {
     }
 
     const orderId = session.metadata?.orderId
-    if (!orderId) {
-      console.error("Stripe webhook: no orderId in session metadata")
-      return NextResponse.json({ error: "No orderId in metadata" }, { status: 400 })
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!orderId || !uuidRegex.test(orderId)) {
+      console.error("Stripe webhook: missing or invalid orderId in session metadata")
+      return NextResponse.json({ error: "Invalid orderId in metadata" }, { status: 400 })
     }
 
     const supabase = await createClient()

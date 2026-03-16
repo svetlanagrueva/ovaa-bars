@@ -245,7 +245,7 @@ describe("confirmOrder", () => {
   it("throws when order not found", async () => {
     mockSupabase.single.mockResolvedValueOnce({ data: null, error: { message: "Not found" } })
 
-    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Order not found")
+    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Unable to confirm order")
   })
 
   it("verifies Stripe payment via session retrieve for card orders", async () => {
@@ -282,7 +282,7 @@ describe("confirmOrder", () => {
       payment_status: "unpaid",
     } as never)
 
-    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Payment not verified")
+    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Unable to confirm order")
   })
 
   it("rejects card order when no stripe session ID stored", async () => {
@@ -294,7 +294,7 @@ describe("confirmOrder", () => {
     }
     mockSupabase.single.mockResolvedValueOnce({ data: pendingOrder, error: null })
 
-    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Payment not verified")
+    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Unable to confirm order")
   })
 })
 

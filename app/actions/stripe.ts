@@ -334,10 +334,16 @@ export async function createCheckoutSession(data: CheckoutData) {
   })
 
   // Store the Stripe session ID on the order for later verification
-  await supabase
+  const { error: updateError } = await supabase
     .from("orders")
     .update({ stripe_session_id: session.id })
     .eq("id", order.id)
+
+  if (updateError) {
+    console.error("Failed to store stripe_session_id:", updateError)
+    // Don't block the redirect — the webhook can still confirm the order
+    // via session.metadata.orderId without needing the stored session ID.
+  }
 
   return { url: session.url }
 }
@@ -358,7 +364,8 @@ export async function confirmOrder(orderId: string) {
     .single()
 
   if (fetchError || !existingOrder) {
-    throw new Error("Order not found")
+    // Use generic message to avoid leaking whether an order ID exists
+    throw new Error("Unable to confirm order")
   }
 
   if (existingOrder.status === "confirmed") {
@@ -368,11 +375,11 @@ export async function confirmOrder(orderId: string) {
   // For card payments, verify the Stripe session before confirming
   if (existingOrder.payment_method === "card") {
     if (!existingOrder.stripe_session_id) {
-      throw new Error("Payment not verified")
+      throw new Error("Unable to confirm order")
     }
     const session = await stripe.checkout.sessions.retrieve(existingOrder.stripe_session_id)
     if (session.payment_status !== "paid") {
-      throw new Error("Payment not verified")
+      throw new Error("Unable to confirm order")
     }
   }
 
