@@ -41,6 +41,18 @@ Stripe setup
 1. Go to https://dashboard.stripe.com/apikeys
 2. Copy the Secret key (starts with sk_test_) → paste into STRIPE_SECRET_KEY
 
+Test card numbers (use with `sk_test_` key only):
+
+| Card | Number | CVC | Expiry |
+|---|---|---|---|
+| Visa (success) | `4242 4242 4242 4242` | Any 3 digits | Any future date |
+| Visa (debit) | `4000 0566 5566 5556` | Any 3 digits | Any future date |
+| Mastercard | `5555 5555 5555 4444` | Any 3 digits | Any future date |
+| 3D Secure | `4000 0027 6000 3184` | Any 3 digits | Any future date |
+| Declined | `4000 0000 0000 0002` | Any 3 digits | Any future date |
+
+Full list: https://docs.stripe.com/testing
+
 Delivery integrations
 
 The app supports two delivery providers — **Speedy** and **Econt**. Both are behind feature flags 

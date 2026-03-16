@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText } from "lucide-react"
@@ -44,6 +44,7 @@ export default function CheckoutPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const submittingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [paymentMethod, setPaymentMethod] = useState("card")
   const [deliveryMethod, setDeliveryMethod] = useState(speedyEnabled ? "speedy-office" : econtEnabled ? "econt-office" : "speedy-office")
@@ -99,6 +100,8 @@ export default function CheckoutPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (submittingRef.current) return
+    submittingRef.current = true
     setIsLoading(true)
     setError(null)
 
@@ -106,12 +109,14 @@ export default function CheckoutPage() {
       if (deliveryMethod === "econt-office" && !selectedEcontOffice) {
         setError("Моля, изберете офис на Еконт")
         setIsLoading(false)
+        submittingRef.current = false
         return
       }
 
       if (deliveryMethod === "speedy-office" && !selectedSpeedyOffice) {
         setError("Моля, изберете офис на Speedy")
         setIsLoading(false)
+        submittingRef.current = false
         return
       }
 
@@ -163,6 +168,7 @@ export default function CheckoutPage() {
     } catch {
       setError("Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
+      submittingRef.current = false
     }
   }
 
