@@ -321,17 +321,24 @@ export async function createCheckoutSession(data: CheckoutData) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
 
-  const session = await stripe.checkout.sessions.create({
-    payment_method_types: ["card"],
-    line_items: lineItems,
-    mode: "payment",
-    success_url: `${baseUrl}/checkout/success?order_id=${order.id}`,
-    cancel_url: `${baseUrl}/checkout?canceled=true`,
-    customer_email: customerInfo.email,
-    metadata: {
-      orderId: order.id,
-    },
-  })
+  let session
+  try {
+    session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: lineItems,
+      mode: "payment",
+      success_url: `${baseUrl}/checkout/success?order_id=${order.id}`,
+      cancel_url: `${baseUrl}/checkout?canceled=true`,
+      customer_email: customerInfo.email,
+      metadata: {
+        orderId: order.id,
+      },
+    })
+  } catch (err) {
+    // Stripe session creation failed — clean up the orphaned pending order
+    await supabase.from("orders").delete().eq("id", order.id).eq("status", "pending")
+    throw err
+  }
 
   // Store the Stripe session ID on the order for later verification
   const { error: updateError } = await supabase

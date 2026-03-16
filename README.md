@@ -74,14 +74,6 @@ SPEEDY_PASSWORD=your-password
 > Without valid credentials the office picker will show an error — the "Speedy до адрес" (address delivery) option 
 > still works since it doesn't call the API.
 
-If you already have the `orders` table, run this migration in Supabase SQL Editor:
-```sql
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS speedy_office_id integer;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS speedy_office_name text;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS speedy_office_address text;
-```
-New projects can skip this — the columns are already in `supabase-schema.sql`.
-
 Econt delivery (enabled by default)
 
 Econt is **on by default** — no flag needed. To disable it, set `NEXT_PUBLIC_ECONT_ENABLED=false`.
@@ -104,14 +96,6 @@ ECONT_PASSWORD=1Asp-dev
 ```
 
 Econt provides demo credentials (`iasp-dev` / `1Asp-dev`) that work out of the box for local development.
-
-If you already have the `orders` table, run this migration in Supabase SQL Editor:
-```sql
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS econt_office_id integer;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS econt_office_name text;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS econt_office_address text;
-```
-New projects can skip this — the columns are already in `supabase-schema.sql`.
 
 Run the app
 

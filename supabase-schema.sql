@@ -16,9 +16,9 @@ create table if not exists orders (
 
   -- Order details
   items jsonb not null,
-  total_amount integer not null,
-  status text not null default 'pending',
-  payment_method text not null,
+  total_amount integer not null check (total_amount > 0),
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'cancelled')),
+  payment_method text not null check (payment_method in ('card', 'cod')),
   logistics_partner text,
   stripe_session_id text unique,
 
@@ -63,11 +63,3 @@ create policy "Deny public deletes" on orders
 
 -- IMPORTANT: Server actions use the SUPABASE_SERVICE_ROLE_KEY to bypass RLS.
 -- See .env.local and lib/supabase/server.ts.
-
--- ============================================================
--- MIGRATION: Add Speedy delivery columns to existing databases
--- Run this if the orders table already exists:
--- ============================================================
--- alter table orders add column if not exists speedy_office_id integer;
--- alter table orders add column if not exists speedy_office_name text;
--- alter table orders add column if not exists speedy_office_address text;
