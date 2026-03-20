@@ -2,18 +2,9 @@ import { NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { formatPrice } from "@/lib/products"
+import { getDeliveryLabel } from "@/lib/delivery"
 import { Resend } from "resend"
 import type Stripe from "stripe"
-
-function getDeliveryLabel(deliveryMethod: string): string {
-  switch (deliveryMethod) {
-    case "speedy-office": return "До офис на Speedy"
-    case "speedy-address": return "Speedy до адрес"
-    case "econt-office": return "До офис на Еконт"
-    case "econt-address": return "Еконт до адрес"
-    default: return deliveryMethod
-  }
-}
 
 export async function POST(request: Request) {
   const body = await request.text()

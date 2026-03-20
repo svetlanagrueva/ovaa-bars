@@ -17,7 +17,8 @@ create table if not exists orders (
   -- Order details
   items jsonb not null,
   total_amount integer not null check (total_amount > 0),
-  status text not null default 'pending' check (status in ('pending', 'confirmed', 'cancelled')),
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled')),
+  tracking_number text,
   payment_method text not null check (payment_method in ('card', 'cod')),
   logistics_partner text,
   stripe_session_id text unique,
