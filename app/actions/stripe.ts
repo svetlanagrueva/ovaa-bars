@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { Resend } from "resend"
 import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE, COD_FEE, MAX_QUANTITY } from "@/lib/constants"
+import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
 
 interface CartItem {
   productId: string
@@ -188,20 +189,6 @@ function validateCartItems(cartItems: CartItem[]) {
 
 function calculateShipping(subtotal: number): number {
   return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE
-}
-
-function getDeliveryLabel(deliveryMethod: string): string {
-  switch (deliveryMethod) {
-    case "speedy-office": return "До офис на Speedy"
-    case "speedy-address": return "Speedy до адрес"
-    case "econt-office": return "До офис на Еконт"
-    case "econt-address": return "Еконт до адрес"
-    default: return deliveryMethod
-  }
-}
-
-function getCarrierName(deliveryMethod: string): string {
-  return deliveryMethod.startsWith("speedy") ? "Speedy" : "Еконт"
 }
 
 function validateOfficeData(

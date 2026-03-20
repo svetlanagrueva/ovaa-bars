@@ -2,10 +2,6 @@ import React from "react"
 import type { Metadata } from 'next'
 import { Geist } from 'next/font/google'
 import { Toaster } from 'sonner'
-import { Header } from '@/components/layout/header'
-import { Footer } from '@/components/layout/footer'
-import { CookieConsentBanner } from '@/components/cookie-consent'
-import { ConditionalAnalytics } from '@/components/analytics'
 import './globals.css'
 
 const geist = Geist({ subsets: ["latin"] });
@@ -45,14 +41,8 @@ export default function RootLayout({
   return (
     <html lang="bg">
       <body className={`${geist.className} antialiased`}>
-        <Header />
-        <main className="min-h-screen">
-          {children}
-        </main>
-        <Footer />
+        {children}
         <Toaster position="bottom-right" duration={3000} closeButton />
-        <CookieConsentBanner />
-        <ConditionalAnalytics />
       </body>
     </html>
   )

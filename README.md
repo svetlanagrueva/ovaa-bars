@@ -97,6 +97,20 @@ ECONT_PASSWORD=1Asp-dev
 
 Econt provides demo credentials (`iasp-dev` / `1Asp-dev`) that work out of the box for local development.
 
+Admin panel
+
+Set a password in `.env.local`:
+```
+ADMIN_PASSWORD=your-secret-password
+```
+
+Then visit `/admin` to log in. The admin panel lets you:
+- View and filter orders by status (pending, confirmed, shipped, delivered, cancelled)
+- View full order details (customer info, items, delivery, invoice)
+- Mark orders as shipped (with tracking number — sends email notification to customer)
+- Mark orders as delivered
+- Cancel orders
+
 Run the app
 
 ```
