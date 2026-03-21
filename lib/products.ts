@@ -34,7 +34,7 @@ export const PRODUCTS: Product[] = [
 За разлика от суроватъчните протеинови барове, които могат да причинят подуване и храносмилателен дискомфорт, нашата формула с яйчен белтък е щадяща за стомаха и лесна за смилане. Перфектна за ежедневна употреба - след тренировка, като следобедна закуска или когато имате нужда от продължителна енергия.
 
 Тази кутия съдържа 12 индивидуално опаковани бара - вашият месечен запас от чист, функционален протеин.`,
-    priceInCents: 5999, // 59.99 BGN
+    priceInCents: 2570, // 25.70 EUR
     image: '/images/dark-chocolate-bar.png',
     images: ['/images/dark-chocolate-bar.png'],
     badge: 'Бестселър',
@@ -75,7 +75,7 @@ export const PRODUCTS: Product[] = [
 Нежната сладост на белия шоколад се съчетава прекрасно с истински лиофилизирани парченца малини, създавайки вкус, който е едновременно изкусителен и хранителен. Нашата формула с яйчен протеин осигурява лесно смилане без дискомфорта, често свързван със суроватъчни продукти.
 
 Тази кутия съдържа 12 индивидуално опаковани бара - идеални за вкъщи, в офиса или в спортната чанта.`,
-    priceInCents: 5999, // 59.99 BGN
+    priceInCents: 2570, // 25.70 EUR
     image: '/images/white-chocolate-raspberry-bar.png',
     images: ['/images/white-chocolate-raspberry-bar.png'],
     badge: 'Ново',
@@ -116,7 +116,7 @@ export const PRODUCTS: Product[] = [
 И двата вкуса са създадени с 20g висококачествен яйчен протеин на бар, доставяйки пълноценно хранене без суроватка, без подуване и без излишни съставки. Независимо дали предпочитате интензивното удоволствие от тъмния шоколад или плодовата сладост на белия шоколад с малини, тази кутия ви предлага и двете.
 
 Перфектното въведение в Ovva Sculpt или чудесен начин да споделите с приятели и семейство.`,
-    priceInCents: 5999, // 59.99 BGN
+    priceInCents: 2570, // 25.70 EUR
     image: '/images/dark-chocolate-bar.png',
     images: ['/images/dark-chocolate-bar.png', '/images/white-chocolate-raspberry-bar.png'],
     badge: 'Популярен',
@@ -159,5 +159,5 @@ export function getProductBySlug(slug: string): Product | undefined {
 }
 
 export function formatPrice(priceInCents: number): string {
-  return (priceInCents / 100).toFixed(2).replace(".", ",") + " лв."
+  return (priceInCents / 100).toFixed(2).replace(".", ",") + " €"
 }

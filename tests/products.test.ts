@@ -68,19 +68,19 @@ describe("getProductBySlug", () => {
 })
 
 describe("formatPrice", () => {
-  it("formats price in BGN with comma separator", () => {
-    expect(formatPrice(5999)).toBe("59,99 лв.")
+  it("formats price in EUR with comma separator", () => {
+    expect(formatPrice(5999)).toBe("59,99 €")
   })
 
   it("formats zero", () => {
-    expect(formatPrice(0)).toBe("0,00 лв.")
+    expect(formatPrice(0)).toBe("0,00 €")
   })
 
   it("formats small amounts", () => {
-    expect(formatPrice(99)).toBe("0,99 лв.")
+    expect(formatPrice(99)).toBe("0,99 €")
   })
 
   it("formats round amounts", () => {
-    expect(formatPrice(10000)).toBe("100,00 лв.")
+    expect(formatPrice(10000)).toBe("100,00 €")
   })
 })

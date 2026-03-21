@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
   logistics_partner TEXT NOT NULL DEFAULT 'speedy',
   items JSONB NOT NULL,
   total_amount INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'BGN',
+  currency TEXT NOT NULL DEFAULT 'EUR',
   stripe_session_id TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

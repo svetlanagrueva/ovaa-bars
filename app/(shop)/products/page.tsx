@@ -66,7 +66,7 @@ export default function ProductsPage() {
         {/* Shipping Info */}
         <div className="mt-16 border-t border-border pt-8 text-center">
           <p className="text-sm text-muted-foreground">
-            Безплатна доставка при поръчки над 50 лв. Доставка до 2 работни дни в цяла България.
+            Безплатна доставка до офис при поръчки над 30 €. Доставка до 2 работни дни в цяла България.
           </p>
         </div>
       </div>

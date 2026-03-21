@@ -45,7 +45,7 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-foreground">3. Цени и плащане</h2>
             <div className="mt-4 space-y-4">
               <p>
-                Всички цени са в български лева (BGN) и включват ДДС. Цената на доставката 
+                Всички цени са в евро (EUR) и включват ДДС. Цената на доставката
                 се показва отделно преди финализиране на поръчката.
               </p>
               <p>
@@ -66,9 +66,9 @@ export default function TermsPage() {
                 Цена на доставката:
               </p>
               <ul className="list-disc space-y-2 pl-6">
-                <li>До офис на Speedy: 5.99 лв.</li>
-                <li>До адрес: 5.99 лв.</li>
-                <li>Безплатна доставка при поръчки над 50 лв.</li>
+                <li>До офис на куриер: 3,00 €</li>
+                <li>До адрес: 3,60 €</li>
+                <li>Безплатна доставка до офис при поръчки над 30 €</li>
               </ul>
             </div>
           </section>

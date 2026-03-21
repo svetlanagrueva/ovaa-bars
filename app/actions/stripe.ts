@@ -231,7 +231,7 @@ export async function createCheckoutSession(data: CheckoutData) {
 
   const lineItems = validatedItems.map((item) => ({
     price_data: {
-      currency: "bgn",
+      currency: "eur",
       product_data: {
         name: item.product.name,
         description: item.product.shortDescription,
@@ -244,7 +244,7 @@ export async function createCheckoutSession(data: CheckoutData) {
   if (shippingPrice > 0) {
     lineItems.push({
       price_data: {
-        currency: "bgn",
+        currency: "eur",
         product_data: {
           name: `Доставка (${getCarrierName(deliveryMethod)})`,
           description: getDeliveryLabel(deliveryMethod),
