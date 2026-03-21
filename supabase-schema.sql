@@ -23,13 +23,15 @@ create table if not exists orders (
   logistics_partner text,
   stripe_session_id text unique,
 
-  -- Invoice (optional)
+  -- Invoice
   needs_invoice boolean default false,
   invoice_company_name text,
   invoice_eik text,
   invoice_vat_number text,
   invoice_mol text,
   invoice_address text,
+  invoice_number text unique,
+  invoice_date timestamptz,
 
   -- Econt delivery (optional)
   econt_office_id integer,
@@ -64,3 +66,31 @@ create policy "Deny public deletes" on orders
 
 -- IMPORTANT: Server actions use the SUPABASE_SERVICE_ROLE_KEY to bypass RLS.
 -- See .env.local and lib/supabase/server.ts.
+
+-- Invoice numbering (sequential, gap-free — required by Bulgarian law)
+create table if not exists invoice_counter (
+  id integer primary key default 1 check (id = 1),
+  current_number bigint not null default 0
+);
+
+insert into invoice_counter (id, current_number)
+values (1, 0)
+on conflict (id) do nothing;
+
+create or replace function next_invoice_number()
+returns bigint
+language plpgsql
+as $$
+declare
+  next_num bigint;
+begin
+  update invoice_counter
+  set current_number = current_number + 1
+  where id = 1
+  returning current_number into next_num;
+  return next_num;
+end;
+$$;
+
+create index if not exists idx_orders_invoice_number on orders (invoice_number)
+  where invoice_number is not null;

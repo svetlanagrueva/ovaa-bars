@@ -45,6 +45,20 @@ vi.mock("next/headers", () => ({
   })),
 }))
 
+// Mock invoice modules
+vi.mock("@/lib/invoice-pdf", () => ({
+  generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
+}))
+vi.mock("@/lib/invoice-email", () => ({
+  sendInvoiceEmail: vi.fn(),
+}))
+vi.mock("@/lib/seller", () => ({
+  getSellerConfig: vi.fn(() => ({
+    companyName: "Test", eik: "123", vatNumber: "", mol: "Test",
+    address: "", city: "", postalCode: "", phone: "", email: "", iban: "", bank: "",
+  })),
+}))
+
 import { createCheckoutSession, confirmOrder, createCODOrder } from "@/app/actions/stripe"
 import { stripe } from "@/lib/stripe"
 
