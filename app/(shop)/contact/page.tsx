@@ -34,7 +34,7 @@ export default function ContactPage() {
                   </div>
                   <div>
                     <h3 className="font-medium text-foreground">Имейл</h3>
-                    <a href="mailto:info@eggorigin.com" className="text-sm text-muted-foreground hover:text-primary">
+                    <a href="mailto:info@eggorigin.com" className="text-muted-foreground hover:text-primary">
                       info@eggorigin.com
                     </a>
                   </div>
@@ -48,7 +48,7 @@ export default function ContactPage() {
                   </div>
                   <div>
                     <h3 className="font-medium text-foreground">Телефон</h3>
-                    <a href="tel:+359888123456" className="text-sm text-muted-foreground hover:text-primary">
+                    <a href="tel:+359888123456" className="text-muted-foreground hover:text-primary">
                       +359 888 123 456
                     </a>
                   </div>
@@ -62,7 +62,7 @@ export default function ContactPage() {
                   </div>
                   <div>
                     <h3 className="font-medium text-foreground">Адрес</h3>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-muted-foreground">
                       София, България
                     </p>
                   </div>
@@ -76,7 +76,7 @@ export default function ContactPage() {
                   </div>
                   <div>
                     <h3 className="font-medium text-foreground">Работно време</h3>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-muted-foreground">
                       Пон-Пет: 9:00 - 18:00
                     </p>
                   </div>
@@ -86,7 +86,7 @@ export default function ContactPage() {
 
             <div className="rounded-lg bg-secondary p-6">
               <h3 className="font-semibold text-foreground">Често задавани въпроси</h3>
-              <ul className="mt-4 space-y-3 text-sm text-muted-foreground">
+              <ul className="mt-4 space-y-3 text-muted-foreground">
                 <li>
                   <strong className="text-foreground">Колко време отнема доставката?</strong>
                   <p className="mt-1">Доставката със Speedy е до 2 работни дни в цяла България.</p>
@@ -108,7 +108,7 @@ export default function ContactPage() {
             <Card>
               <CardContent className="p-6">
                 <h2 className="text-xl font-semibold text-foreground">Изпратете съобщение</h2>
-                <p className="mt-2 text-sm text-muted-foreground">
+                <p className="mt-2 text-muted-foreground">
                   Попълнете формата и ще ви отговорим възможно най-скоро.
                 </p>
                 <ContactForm />
