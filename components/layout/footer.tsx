@@ -1,4 +1,23 @@
 import Link from "next/link"
+import { Instagram } from "lucide-react"
+import { INSTAGRAM_URL, TIKTOK_URL } from "@/lib/constants"
+
+function TikTokIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5" />
+    </svg>
+  )
+}
 
 export function Footer() {
   return (
@@ -10,9 +29,29 @@ export function Footer() {
               <span className="text-xl font-light tracking-[0.2em] uppercase text-foreground">Egg Origin</span>
             </Link>
             <p className="mt-4 max-w-md text-sm text-muted-foreground">
-              Протеинови барове с яйчен белтък. Високо съдържание на протеин, 
+              Протеинови барове с яйчен белтък. Високо съдържание на протеин,
               без суроватка, без добавена захар - създадени за ежедневна употреба.
             </p>
+            <div className="mt-4 flex items-center gap-4">
+              <a
+                href={INSTAGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground transition-colors hover:text-primary"
+                aria-label="Instagram"
+              >
+                <Instagram className="h-6 w-6" />
+              </a>
+              <a
+                href={TIKTOK_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground transition-colors hover:text-primary"
+                aria-label="TikTok"
+              >
+                <TikTokIcon className="h-6 w-6" />
+              </a>
+            </div>
           </div>
 
           <div>
