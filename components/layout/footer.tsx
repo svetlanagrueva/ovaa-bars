@@ -4,13 +4,13 @@ import { INSTAGRAM_URL, TIKTOK_URL } from "@/lib/constants"
 
 function StripeBadge() {
   return (
-    <div className="inline-flex items-center gap-3 rounded-md border border-border bg-white px-4 py-2">
-      <Lock className="h-5 w-5 text-black" />
+    <div className="inline-flex items-center gap-3 rounded-lg border border-border bg-white px-5 py-3">
+      <Lock className="h-6 w-6 text-black" />
       <div className="flex flex-col items-center text-black">
-        <span className="text-[11px] font-semibold leading-tight tracking-wide">Secure Payments</span>
-        <span className="flex items-center gap-1 text-[10px] leading-tight text-neutral-500">
+        <span className="text-sm font-semibold leading-tight tracking-wide">Secure Payments</span>
+        <span className="flex items-center gap-1 text-xs leading-tight text-neutral-500">
           Powered by
-          <span className="text-sm font-bold text-[#635BFF]">stripe</span>
+          <span className="text-base font-bold text-[#635BFF]">stripe</span>
         </span>
       </div>
     </div>
@@ -52,7 +52,7 @@ export function Footer() {
                 href={INSTAGRAM_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-muted-foreground transition-colors hover:text-primary"
+                className="text-foreground transition-colors hover:text-primary"
                 aria-label="Instagram"
               >
                 <Instagram className="h-6 w-6" />
@@ -61,7 +61,7 @@ export function Footer() {
                 href={TIKTOK_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-muted-foreground transition-colors hover:text-primary"
+                className="text-foreground transition-colors hover:text-primary"
                 aria-label="TikTok"
               >
                 <TikTokIcon className="h-6 w-6" />
@@ -109,10 +109,10 @@ export function Footer() {
 
         <div className="mt-12 border-t border-border pt-8">
           <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
+            <StripeBadge />
             <p className="text-sm text-muted-foreground">
               &copy; {new Date().getFullYear()} Egg Origin. Всички права запазени.
             </p>
-            <StripeBadge />
             <p className="text-sm text-muted-foreground">
               Доставка със <span className="font-medium text-foreground">Speedy</span> и <span className="font-medium text-foreground">Еконт</span>
             </p>
