@@ -3,9 +3,12 @@ import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProductCard } from "@/components/products/product-card"
-import { PRODUCTS } from "@/lib/products"
+import { getProductsWithSales } from "@/lib/sales"
 
-export default function HomePage() {
+export const revalidate = 60
+
+export default async function HomePage() {
+  const PRODUCTS = await getProductsWithSales()
   return (
     <div>
       {/* Hero Section */}

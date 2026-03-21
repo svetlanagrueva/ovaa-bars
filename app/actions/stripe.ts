@@ -4,6 +4,7 @@ import { headers } from "next/headers"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
+import { getProductsWithSales } from "@/lib/sales"
 import { Resend } from "resend"
 import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
@@ -157,7 +158,7 @@ function validateCustomerInfo(info: CustomerInfo) {
   }
 }
 
-function validateCartItems(cartItems: CartItem[]) {
+async function validateCartItems(cartItems: CartItem[]) {
   if (!Array.isArray(cartItems) || cartItems.length === 0) {
     throw new Error("Cart is empty")
   }
@@ -169,8 +170,12 @@ function validateCartItems(cartItems: CartItem[]) {
     deduped.set(item.productId, qty + item.quantity)
   }
 
+  // Fetch all sale-aware prices in a single DB call
+  const allProducts = await getProductsWithSales()
+  const productMap = new Map(allProducts.map((p) => [p.id, p]))
+
   return Array.from(deduped.entries()).map(([productId, quantity]) => {
-    const product = PRODUCTS.find((p) => p.id === productId)
+    const product = productMap.get(productId)
     if (!product) {
       throw new Error(`Product not found: ${productId}`)
     }
@@ -220,7 +225,7 @@ export async function createCheckoutSession(data: CheckoutData) {
   validateAddressForDelivery(deliveryMethod, customerInfo.address)
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
   validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
-  const validatedItems = validateCartItems(cartItems)
+  const validatedItems = await validateCartItems(cartItems)
 
   const subtotal = validatedItems.reduce(
     (sum, item) => sum + item.priceInCents * item.quantity,
@@ -418,7 +423,7 @@ export async function createCODOrder(data: CODOrderData) {
   const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
   checkCODRateLimit(ip)
 
-  const validatedItems = validateCartItems(cartItems)
+  const validatedItems = await validateCartItems(cartItems)
 
   const subtotal = validatedItems.reduce(
     (sum, item) => sum + item.priceInCents * item.quantity,

@@ -1,13 +1,16 @@
 import type { Metadata } from "next"
 import { ProductCard } from "@/components/products/product-card"
-import { PRODUCTS } from "@/lib/products"
+import { getProductsWithSales } from "@/lib/sales"
 
 export const metadata: Metadata = {
   title: "Продукти - Ovva Sculpt",
   description: "Протеинови барове Ovva Sculpt с яйчен белтък. Високо съдържание на протеин, без суроватка, без добавена захар.",
 }
 
-export default function ProductsPage() {
+export const revalidate = 60
+
+export default async function ProductsPage() {
+  const PRODUCTS = await getProductsWithSales()
   return (
     <div className="bg-background py-16 sm:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
-import { getOrders, logoutAdmin, type OrderSummary } from "@/app/actions/admin"
+import { getOrders, type OrderSummary } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -65,13 +65,8 @@ export default function AdminOrdersPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold">Поръчки</h1>
-        <form action={logoutAdmin}>
-          <Button variant="outline" size="sm" type="submit">
-            Изход
-          </Button>
-        </form>
       </div>
 
       <Tabs value={status} onValueChange={handleStatusChange}>

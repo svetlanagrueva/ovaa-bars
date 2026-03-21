@@ -1,5 +1,6 @@
 import React from "react"
 import type { Metadata } from "next"
+import { AdminNav } from "./nav"
 
 export const metadata: Metadata = {
   title: "Ovva Sculpt - Админ панел",
@@ -13,6 +14,7 @@ export default function AdminLayout({
 }) {
   return (
     <main className="min-h-screen bg-gray-50">
+      <AdminNav />
       {children}
     </main>
   )

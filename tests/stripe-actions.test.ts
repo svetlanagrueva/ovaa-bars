@@ -45,6 +45,12 @@ vi.mock("next/headers", () => ({
   })),
 }))
 
+// Mock sales module — returns base prices (no active sales in tests)
+const mockGetProductsWithSales = vi.fn()
+vi.mock("@/lib/sales", () => ({
+  getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
+}))
+
 // Mock invoice modules
 vi.mock("@/lib/invoice-pdf", () => ({
   generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
@@ -61,6 +67,10 @@ vi.mock("@/lib/seller", () => ({
 
 import { createCheckoutSession, confirmOrder, createCODOrder } from "@/app/actions/stripe"
 import { stripe } from "@/lib/stripe"
+import { PRODUCTS } from "@/lib/products"
+
+// Set up sales mock to return base prices (no active sales)
+mockGetProductsWithSales.mockImplementation(() => Promise.resolve([...PRODUCTS]))
 
 const validCartItems = [{ productId: "ovva-dark-chocolate-box", quantity: 2 }]
 const validCustomerInfo = {
