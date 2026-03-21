@@ -1,6 +1,21 @@
 import Link from "next/link"
-import { Instagram } from "lucide-react"
+import { Instagram, Lock } from "lucide-react"
 import { INSTAGRAM_URL, TIKTOK_URL } from "@/lib/constants"
+
+function StripeBadge() {
+  return (
+    <div className="inline-flex items-center gap-3 rounded-md border border-border bg-white px-4 py-2">
+      <Lock className="h-5 w-5 text-black" />
+      <div className="flex flex-col items-center text-black">
+        <span className="text-[11px] font-semibold leading-tight tracking-wide">Secure Payments</span>
+        <span className="flex items-center gap-1 text-[10px] leading-tight text-neutral-500">
+          Powered by
+          <span className="text-sm font-bold text-[#635BFF]">stripe</span>
+        </span>
+      </div>
+    </div>
+  )
+}
 
 function TikTokIcon({ className }: { className?: string }) {
   return (
@@ -97,6 +112,7 @@ export function Footer() {
             <p className="text-sm text-muted-foreground">
               &copy; {new Date().getFullYear()} Egg Origin. Всички права запазени.
             </p>
+            <StripeBadge />
             <p className="text-sm text-muted-foreground">
               Доставка със <span className="font-medium text-foreground">Speedy</span> и <span className="font-medium text-foreground">Еконт</span>
             </p>
