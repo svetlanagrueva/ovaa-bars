@@ -107,7 +107,7 @@ export async function POST(request: Request) {
       const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
       resend.emails.send({
-        from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
         to: order.email,
         subject: `Поръчка #${order.id.slice(0, 8)} - Потвърждение`,
         text: `
@@ -127,7 +127,7 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Ще получите известие, когато поръчката Ви бъде изпратена.
 
 Поздрави,
-Екипът на Ovva Sculpt
+Екипът на Egg Origin
         `.trim(),
       }).catch(() => {
         // Non-blocking

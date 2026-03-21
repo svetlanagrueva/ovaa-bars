@@ -26,7 +26,7 @@ export function Header() {
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-2">
-          <span className="text-2xl font-light tracking-[0.2em] uppercase text-foreground">Ovva Sculpt</span>
+          <span className="text-2xl font-light tracking-[0.2em] uppercase text-foreground">Egg Origin</span>
         </Link>
 
         <nav className="hidden items-center gap-8 md:flex">

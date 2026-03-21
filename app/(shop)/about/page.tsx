@@ -5,8 +5,8 @@ import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 export const metadata: Metadata = {
-  title: "За нас - Ovva Sculpt",
-  description: "Научете повече за Ovva Sculpt и нашата мисия да създаваме протеинови барове с яйчен белтък и чиста етикета.",
+  title: "За нас - Egg Origin",
+  description: "Научете повече за Egg Origin и нашата мисия да създаваме протеинови барове с яйчен белтък и чиста етикета.",
 }
 
 export default function AboutPage() {
@@ -24,7 +24,7 @@ export default function AboutPage() {
                 Протеин, преосмислен
               </h1>
               <p className="mt-8 text-base leading-relaxed text-muted-foreground">
-                Ovva Sculpt се роди от едно просто убеждение: протеиновите барове трябва да бъдат
+                Egg Origin се роди от едно просто убеждение: протеиновите барове трябва да бъдат
                 функционално хранене, а не бонбони в дегизировка. Създадохме бар с чиста етикета,
                 който доставя пълноценен протеин без компромиси.
               </p>
@@ -37,7 +37,7 @@ export default function AboutPage() {
             <div className="relative aspect-[4/5]">
               <Image
                 src="/images/hero-bg.jpg"
-                alt="Ovva Sculpt"
+                alt="Egg Origin"
                 fill
                 className="object-cover"
               />
@@ -57,7 +57,7 @@ export default function AboutPage() {
               По-малко е повече
             </h2>
             <p className="mt-8 text-base leading-relaxed text-muted-foreground">
-              Вярваме в прозрачността. Всяка съставка в Ovva Sculpt има своята цел.
+              Вярваме в прозрачността. Всяка съставка в Egg Origin има своята цел.
               Без пълнители, без изкуствени подсладители, без сложни химикали.
               Само чисто, функционално хранене, създадено за ежедневна употреба.
             </p>
@@ -92,7 +92,7 @@ export default function AboutPage() {
               <div className="mb-6 h-px w-12 bg-foreground" />
               <h3 className="text-sm font-medium uppercase tracking-wider text-foreground">Функция Пред Показност</h3>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-                Ovva Sculpt не се опитва да бъде бонбон. Това е функционален протеин,
+                Egg Origin не се опитва да бъде бонбон. Това е функционален протеин,
                 създаден за хора, които се грижат какво влиза в тялото им.
               </p>
             </div>
@@ -107,7 +107,7 @@ export default function AboutPage() {
             Усетете разликата
           </h2>
           <p className="mx-auto mt-6 max-w-md text-sm text-background/70">
-            Опитайте Ovva Sculpt и открийте какъв е вкусът на чистия протеин.
+            Опитайте Egg Origin и открийте какъв е вкусът на чистия протеин.
           </p>
           <div className="mt-10">
             <Button asChild size="lg" variant="secondary" className="gap-2 px-8">

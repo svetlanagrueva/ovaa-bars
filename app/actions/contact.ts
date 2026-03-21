@@ -55,8 +55,8 @@ export async function sendContactMessage(data: ContactData) {
   const resend = new Resend(process.env.RESEND_API_KEY)
 
   await resend.emails.send({
-    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
-    to: "info@ovvasculpt.com",
+    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    to: "info@eggorigin.com",
     replyTo: email,
     subject: subject ? `Contact: ${subject}` : `Contact from ${name}`,
     text: `Name: ${name}\nEmail: ${email}\n\n${message}`,

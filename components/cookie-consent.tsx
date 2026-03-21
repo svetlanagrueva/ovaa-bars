@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 
-const COOKIE_CONSENT_KEY = "ovva-sculpt-cookie-consent"
+const COOKIE_CONSENT_KEY = "egg-origin-cookie-consent"
 
 export interface CookiePreferences {
   essential: true // always on

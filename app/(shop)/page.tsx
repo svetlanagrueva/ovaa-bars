@@ -24,7 +24,7 @@ export default async function HomePage() {
                 <span className="italic">без компромиси</span>
               </h1>
               <p className="mt-8 text-pretty text-base leading-relaxed text-muted-foreground">
-                Ovva Sculpt е протеинов бар с яйчен белтък - 
+                Egg Origin е протеинов бар с яйчен белтък - 
                 пълноценен животински протеин с всички есенциални аминокиселини. 
                 Високо съдържание на протеин, без суроватка, без добавена захар.
               </p>
@@ -43,7 +43,7 @@ export default async function HomePage() {
             <div className="relative aspect-[4/5] lg:aspect-square">
               <Image
                 src="/images/hero-bg.jpg"
-                alt="Ovva Sculpt протеинови барове"
+                alt="Egg Origin протеинови барове"
                 fill
                 className="object-cover"
                 priority
@@ -159,7 +159,7 @@ export default async function HomePage() {
             Готови да заредите деня си?
           </h2>
           <p className="mx-auto mt-6 max-w-md text-sm text-background/70">
-            Пълноценен протеин без компромиси. Поръчайте сега и усетете разликата с Ovva Sculpt.
+            Пълноценен протеин без компромиси. Поръчайте сега и усетете разликата с Egg Origin.
           </p>
           <div className="mt-10">
             <Button asChild size="lg" variant="secondary" className="gap-2 px-8">

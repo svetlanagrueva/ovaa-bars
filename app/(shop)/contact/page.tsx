@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { ContactForm } from "@/components/contact/contact-form"
 
 export const metadata: Metadata = {
-  title: "Контакти - Ovva Sculpt",
+  title: "Контакти - Egg Origin",
   description: "Свържете се с нас за въпроси относно нашите продукти или поръчки.",
 }
 
@@ -34,8 +34,8 @@ export default function ContactPage() {
                   </div>
                   <div>
                     <h3 className="font-medium text-foreground">Имейл</h3>
-                    <a href="mailto:info@ovvasculpt.com" className="text-sm text-muted-foreground hover:text-primary">
-                      info@ovvasculpt.com
+                    <a href="mailto:info@eggorigin.com" className="text-sm text-muted-foreground hover:text-primary">
+                      info@eggorigin.com
                     </a>
                   </div>
                 </CardContent>

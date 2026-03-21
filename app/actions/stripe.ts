@@ -670,7 +670,7 @@ function sendConfirmationEmail(order: Record<string, unknown>) {
   const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to: order.email as string,
     subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
     text: `
@@ -690,7 +690,7 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Ще получите известие, когато поръчката Ви бъде изпратена.
 
 Поздрави,
-Екипът на Ovva Sculpt
+Екипът на Egg Origin
     `.trim(),
   }).catch(() => {
     // Email sending failed — don't block order confirmation
@@ -721,7 +721,7 @@ function sendCODConfirmationEmail(
   const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to: order.email as string,
     subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
     text: `
@@ -744,7 +744,7 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Ще получите известие, когато поръчката Ви бъде изпратена.
 
 Поздрави,
-Екипът на Ovva Sculpt
+Екипът на Egg Origin
     `.trim(),
   }).catch(() => {
     // Email sending failed — don't block order completion

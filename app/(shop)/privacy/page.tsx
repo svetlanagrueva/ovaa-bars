@@ -1,8 +1,8 @@
 import type { Metadata } from "next"
 
 export const metadata: Metadata = {
-  title: "Политика за поверителност - Ovva Sculpt",
-  description: "Политика за поверителност и защита на личните данни на Ovva Sculpt.",
+  title: "Политика за поверителност - Egg Origin",
+  description: "Политика за поверителност и защита на личните данни на Egg Origin.",
 }
 
 export default function PrivacyPage() {
@@ -16,7 +16,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-foreground">1. Въведение</h2>
             <p className="mt-4">
-              Ovva Sculpt се ангажира да защитава поверителността на вашите лични данни. 
+              Egg Origin се ангажира да защитава поверителността на вашите лични данни. 
               Тази политика описва как събираме, използваме и защитаваме вашата информация 
               при използване на нашия уебсайт и услуги.
             </p>
@@ -89,7 +89,7 @@ export default function PrivacyPage() {
                 <li>Възражение срещу обработка</li>
               </ul>
               <p>
-                За да упражните тези права, свържете се с нас на info@ovvasculpt.com.
+                За да упражните тези права, свържете се с нас на info@eggorigin.com.
               </p>
             </div>
           </section>
@@ -142,7 +142,7 @@ export default function PrivacyPage() {
             <p className="mt-4">
               При въпроси относно тази политика или обработката на вашите данни:
               <br />
-              Имейл: info@ovvasculpt.com
+              Имейл: info@eggorigin.com
               <br />
               Телефон: +359 888 123 456
             </p>

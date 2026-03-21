@@ -1,7 +1,7 @@
 import { DeliveryInfo } from "@/components/delivery-info"
 
 export const metadata = {
-  title: "Доставка | Ovva Sculpt",
+  title: "Доставка | Egg Origin",
   description: "Информация за доставка - срокове, цени и начини на доставка.",
 }
 

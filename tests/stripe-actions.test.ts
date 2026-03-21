@@ -72,7 +72,7 @@ import { PRODUCTS } from "@/lib/products"
 // Set up sales mock to return base prices (no active sales)
 mockGetProductsWithSales.mockImplementation(() => Promise.resolve([...PRODUCTS]))
 
-const validCartItems = [{ productId: "ovva-dark-chocolate-box", quantity: 2 }]
+const validCartItems = [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }]
 const validCustomerInfo = {
   firstName: "Иван",
   lastName: "Петров",
@@ -143,7 +143,7 @@ describe("createCheckoutSession", () => {
   it("throws when quantity exceeds max", async () => {
     await expect(
       createCheckoutSession({
-        cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 100 }],
+        cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 100 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -154,7 +154,7 @@ describe("createCheckoutSession", () => {
   it("throws when quantity is zero", async () => {
     await expect(
       createCheckoutSession({
-        cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 0 }],
+        cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 0 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -213,7 +213,7 @@ describe("createCheckoutSession", () => {
 
     // 1 box = 25.70 € < 30 € threshold, but test checks carrier name not shipping
     await createCheckoutSession({
-      cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1 }],
+      cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -349,7 +349,7 @@ describe("createCODOrder", () => {
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
 
     await createCODOrder({
-      cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1 }],
+      cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -420,7 +420,7 @@ describe("input validation", () => {
   it("rejects fractional quantity", async () => {
     await expect(
       createCheckoutSession({
-        cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1.5 }],
+        cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1.5 }],
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,

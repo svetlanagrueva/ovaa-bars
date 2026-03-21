@@ -21,14 +21,14 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
   const product = getProductBySlug(slug)
 
   if (!product) {
-    return { title: "Продуктът не е намерен - Ovva Sculpt" }
+    return { title: "Продуктът не е намерен - Egg Origin" }
   }
 
   return {
-    title: `${product.name} - Ovva Sculpt`,
+    title: `${product.name} - Egg Origin`,
     description: product.shortDescription,
     openGraph: {
-      title: `${product.name} - Ovva Sculpt`,
+      title: `${product.name} - Egg Origin`,
       description: product.shortDescription,
       images: product.images,
     },

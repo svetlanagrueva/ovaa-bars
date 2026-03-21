@@ -3,8 +3,8 @@ import { ProductCard } from "@/components/products/product-card"
 import { getProductsWithSales } from "@/lib/sales"
 
 export const metadata: Metadata = {
-  title: "Продукти - Ovva Sculpt",
-  description: "Протеинови барове Ovva Sculpt с яйчен белтък. Високо съдържание на протеин, без суроватка, без добавена захар.",
+  title: "Продукти - Egg Origin",
+  description: "Протеинови барове Egg Origin с яйчен белтък. Високо съдържание на протеин, без суроватка, без добавена захар.",
 }
 
 export const revalidate = 60
@@ -22,7 +22,7 @@ export default async function ProductsPage() {
             Чист протеин, на ново ниво
           </h1>
           <p className="mt-6 text-base leading-relaxed text-muted-foreground">
-            Всеки бар Ovva Sculpt съдържа 20g пълноценен яйчен протеин с всички есенциални аминокиселини.
+            Всеки бар Egg Origin съдържа 20g пълноценен яйчен протеин с всички есенциални аминокиселини.
             Без суроватка, без добавена захар, без излишни съставки - само функционално хранене за ежедневна употреба.
           </p>
         </div>
@@ -36,7 +36,7 @@ export default async function ProductsPage() {
         {/* Benefits Grid */}
         <div className="mt-24 border-t border-border pt-16">
           <p className="text-xs font-medium uppercase tracking-[0.3em] text-muted-foreground">
-            Защо Ovva Sculpt
+            Защо Egg Origin
           </p>
           <div className="mt-8 grid gap-12 sm:grid-cols-2 lg:grid-cols-4">
             <div>
