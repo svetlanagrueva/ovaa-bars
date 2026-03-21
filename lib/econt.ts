@@ -45,7 +45,7 @@ export async function getOffices(cityName?: string): Promise<EcontOffice[]> {
         headers: authHeaders(),
         body: JSON.stringify(body),
         signal: controller.signal,
-        next: { revalidate: 3600 },
+        cache: 'no-store',
       }
     )
   } catch (err) {

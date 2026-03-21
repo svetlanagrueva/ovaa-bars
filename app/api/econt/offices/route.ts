@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getOffices } from '@/lib/econt'
 
+// In-memory cache for slim office data (response is ~2.4MB raw, too large for Next.js fetch cache)
+const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+let officeCache: { data: Map<string, { id: number; name: string; city: string; fullAddress: string }[]>; timestamp: number } | null = null
+
+/** @internal — exposed for tests only */
+export function _resetCache() { officeCache = null }
+
 // Simple in-memory rate limiter: max 30 requests per minute per IP
 const rateLimit = new Map<string, number[]>()
 const RATE_LIMIT_WINDOW_MS = 60 * 1000
@@ -41,6 +48,17 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const cacheKey = city || '__all__'
+    const now = Date.now()
+
+    // Return cached data if fresh
+    if (officeCache && now - officeCache.timestamp < CACHE_TTL_MS) {
+      const cached = officeCache.data.get(cacheKey)
+      if (cached) {
+        return NextResponse.json({ offices: cached })
+      }
+    }
+
     const offices = await getOffices(city)
     const slim = offices.map((o) => ({
       id: o.id,
@@ -48,6 +66,13 @@ export async function GET(request: NextRequest) {
       city: o.address?.city?.name || '',
       fullAddress: o.address?.fullAddress || '',
     }))
+
+    // Update cache
+    if (!officeCache || now - officeCache.timestamp >= CACHE_TTL_MS) {
+      officeCache = { data: new Map(), timestamp: now }
+    }
+    officeCache.data.set(cacheKey, slim)
+
     return NextResponse.json({ offices: slim })
   } catch (error) {
     console.error('Econt offices fetch failed:', error)

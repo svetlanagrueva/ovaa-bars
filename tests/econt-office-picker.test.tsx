@@ -106,7 +106,7 @@ describe("EcontOfficePicker", () => {
     expect(screen.getByText(/София - Офис Дружба/)).toBeInTheDocument()
   })
 
-  it("shows error state when fetch fails", async () => {
+  it("shows manual input fallback when fetch fails", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve({ ok: false }))
@@ -117,7 +117,7 @@ describe("EcontOfficePicker", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Неуспешно зареждане на офисите на Еконт")
+        screen.getByPlaceholderText("Въведи адрес или офис на Еконт за доставка")
       ).toBeInTheDocument()
     })
   })

@@ -95,8 +95,20 @@ export function SpeedyOfficePicker({ selectedOfficeId, onSelect }: SpeedyOfficeP
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/50 p-4 text-sm text-destructive">
-        {error}
+      <div className="space-y-3">
+        <Label>Офис на Speedy *</Label>
+        <Input
+          placeholder="Въведи адрес, офис или автомат за доставка със Speedy"
+          onChange={(e) => {
+            const value = e.target.value
+            if (value.trim()) {
+              onSelect({ id: 0, name: value.trim(), city: "", fullAddress: value.trim() })
+            }
+          }}
+        />
+        <p className="text-xs text-muted-foreground">
+          Автоматичното зареждане на офиси е недостъпно. Моля, въведете името на офиса ръчно.
+        </p>
       </div>
     )
   }

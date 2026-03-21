@@ -95,8 +95,20 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/50 p-4 text-sm text-destructive">
-        {error}
+      <div className="space-y-3">
+        <Label>Офис на Еконт *</Label>
+        <Input
+          placeholder="Въведи адрес или офис на Еконт за доставка"
+          onChange={(e) => {
+            const value = e.target.value
+            if (value.trim()) {
+              onSelect({ id: 0, name: value.trim(), city: "", fullAddress: value.trim() })
+            }
+          }}
+        />
+        <p className="text-xs text-muted-foreground">
+          Автоматичното зареждане на офиси е недостъпно. Моля, въведете името на офиса ръчно.
+        </p>
       </div>
     )
   }
