@@ -3,7 +3,7 @@ import type { Metadata } from "next"
 import { AdminNav } from "./nav"
 
 export const metadata: Metadata = {
-  title: "Ovva Sculpt - Админ панел",
+  title: "Egg Origin - Админ панел",
   robots: { index: false, follow: false },
 }
 

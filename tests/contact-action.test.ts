@@ -35,7 +35,7 @@ describe("sendContactMessage", () => {
     expect(result).toEqual({ success: true })
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "info@ovvasculpt.com",
+        to: "info@eggorigin.com",
         replyTo: "ivan@test.com",
         subject: "Contact: Въпрос",
       })

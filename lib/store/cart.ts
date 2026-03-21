@@ -120,7 +120,7 @@ export const useCartStore = create<CartState>()(
       },
     }),
     {
-      name: "ovva-sculpt-cart",
+      name: "egg-origin-cart",
     }
   )
 )

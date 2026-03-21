@@ -1,3 +1,7 @@
+// Social media
+export const INSTAGRAM_URL = "https://www.instagram.com/eggorigin"
+export const TIKTOK_URL = "https://www.tiktok.com/@eggorigin"
+
 // Prices in eurocents
 export const FREE_SHIPPING_THRESHOLD = 3000 // 30.00 €
 export const SHIPPING_PRICE_OFFICE = 300 // 3.00 € (to courier office)

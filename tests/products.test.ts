@@ -45,7 +45,7 @@ describe("PRODUCTS data", () => {
 
 describe("getProduct", () => {
   it("returns product by id", () => {
-    const product = getProduct("ovva-dark-chocolate-box")
+    const product = getProduct("egg-origin-dark-chocolate-box")
     expect(product).toBeDefined()
     expect(product!.name).toBe("Тъмен Шоколад Кутия")
   })
@@ -59,7 +59,7 @@ describe("getProductBySlug", () => {
   it("returns product by slug", () => {
     const product = getProductBySlug("white-chocolate-raspberry-box")
     expect(product).toBeDefined()
-    expect(product!.id).toBe("ovva-white-chocolate-raspberry-box")
+    expect(product!.id).toBe("egg-origin-white-chocolate-raspberry-box")
   })
 
   it("returns undefined for unknown slug", () => {

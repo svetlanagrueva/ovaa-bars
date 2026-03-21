@@ -319,7 +319,7 @@ function sendShippingEmail(order: Record<string, unknown>, trackingNumber: strin
   const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to: order.email as string,
     subject: `Поръчка #${(order.id as string).slice(0, 8)} - Изпратена`,
     text: `
@@ -338,7 +338,7 @@ ${itemsList}
 Ще получите пратката си в рамките на 1-3 работни дни.
 
 Поздрави,
-Екипът на Ovva Sculpt
+Екипът на Egg Origin
     `.trim(),
   }).catch(() => {
     // Non-blocking

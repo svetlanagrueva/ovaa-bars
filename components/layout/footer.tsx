@@ -1,4 +1,38 @@
 import Link from "next/link"
+import { Instagram, Lock } from "lucide-react"
+import { INSTAGRAM_URL, TIKTOK_URL } from "@/lib/constants"
+
+function StripeBadge() {
+  return (
+    <div className="inline-flex items-center gap-3 rounded-lg border border-border bg-white px-5 py-3">
+      <Lock className="h-6 w-6 text-black" />
+      <div className="flex flex-col items-center text-black">
+        <span className="text-sm font-semibold leading-tight tracking-wide">Secure Payments</span>
+        <span className="flex items-center gap-1 text-xs leading-tight text-neutral-500">
+          Powered by
+          <span className="text-base font-bold text-[#635BFF]">stripe</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function TikTokIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5" />
+    </svg>
+  )
+}
 
 export function Footer() {
   return (
@@ -7,12 +41,32 @@ export function Footer() {
         <div className="grid gap-8 md:grid-cols-4">
           <div className="md:col-span-2">
             <Link href="/" className="flex items-center gap-2">
-              <span className="text-xl font-light tracking-[0.2em] uppercase text-foreground">Ovva Sculpt</span>
+              <span className="text-xl font-light tracking-[0.2em] uppercase text-foreground">Egg Origin</span>
             </Link>
             <p className="mt-4 max-w-md text-sm text-muted-foreground">
-              Протеинови барове с яйчен белтък. Високо съдържание на протеин, 
+              Протеинови барове с яйчен белтък. Високо съдържание на протеин,
               без суроватка, без добавена захар - създадени за ежедневна употреба.
             </p>
+            <div className="mt-4 flex items-center gap-4">
+              <a
+                href={INSTAGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground transition-colors hover:text-primary"
+                aria-label="Instagram"
+              >
+                <Instagram className="h-6 w-6" />
+              </a>
+              <a
+                href={TIKTOK_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground transition-colors hover:text-primary"
+                aria-label="TikTok"
+              >
+                <TikTokIcon className="h-6 w-6" />
+              </a>
+            </div>
           </div>
 
           <div>
@@ -55,8 +109,9 @@ export function Footer() {
 
         <div className="mt-12 border-t border-border pt-8">
           <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
+            <StripeBadge />
             <p className="text-sm text-muted-foreground">
-              &copy; {new Date().getFullYear()} Ovva Sculpt. Всички права запазени.
+              &copy; {new Date().getFullYear()} Egg Origin. Всички права запазени.
             </p>
             <p className="text-sm text-muted-foreground">
               Доставка със <span className="font-medium text-foreground">Speedy</span> и <span className="font-medium text-foreground">Еконт</span>

@@ -10,9 +10,9 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     (process.env.NEXT_PUBLIC_APP_URL?.startsWith('http')
       ? process.env.NEXT_PUBLIC_APP_URL
-      : `https://${process.env.NEXT_PUBLIC_APP_URL}`) || 'https://ovvasculpt.com'
+      : `https://${process.env.NEXT_PUBLIC_APP_URL}`) || 'https://eggorigin.com'
   ),
-  title: 'Ovva Sculpt - Протеинови Барове с Яйчен Белтък',
+  title: 'Egg Origin - Протеинови Барове с Яйчен Белтък',
   description: 'Протеинови барове с яйчен белтък - високо съдържание на протеин, без добавена захар, без суроватка. Пълноценен животински протеин с всички есенциални аминокиселини.',
   icons: {
     icon: [

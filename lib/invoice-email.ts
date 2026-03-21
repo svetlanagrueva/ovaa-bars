@@ -17,7 +17,7 @@ export function sendInvoiceEmail(params: {
 
   const resend = new Resend(process.env.RESEND_API_KEY)
   const { to, firstName, orderId, invoiceNumber, type, pdfBuffer } = params
-  const sellerName = params.sellerName || process.env.SELLER_COMPANY_NAME || "Ovva Sculpt"
+  const sellerName = params.sellerName || process.env.SELLER_COMPANY_NAME || "Egg Origin"
 
   const shortId = orderId.slice(0, 8)
   const isInvoice = type === "invoice"
@@ -35,7 +35,7 @@ export function sendInvoiceEmail(params: {
     : `Здравейте ${firstName},\n\nПрилагаме проформа фактура към Вашата поръчка #${shortId}.\n\nОкончателна фактура ще получите след получаване на пратката.\n\nПоздрави,\nЕкипът на ${sellerName}`
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Ovva Sculpt <onboarding@resend.dev>",
+    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to,
     subject,
     text,

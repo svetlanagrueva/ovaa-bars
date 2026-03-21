@@ -31,7 +31,7 @@ export function ContactForm() {
       })
       setIsSubmitted(true)
     } catch {
-      setError("Неуспешно изпращане. Моля, опитайте отново или ни пишете директно на info@ovvasculpt.com.")
+      setError("Неуспешно изпращане. Моля, опитайте отново или ни пишете директно на info@eggorigin.com.")
     } finally {
       setIsLoading(false)
     }

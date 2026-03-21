@@ -82,7 +82,7 @@ beforeAll(async () => {
   stripe = stripeMod.stripe
 })
 
-const validCartItems = [{ productId: "ovva-dark-chocolate-box", quantity: 2 }]
+const validCartItems = [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }]
 const validCustomerInfo = {
   firstName: "Иван",
   lastName: "Петров",
