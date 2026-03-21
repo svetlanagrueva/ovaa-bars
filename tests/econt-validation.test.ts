@@ -47,6 +47,12 @@ vi.mock("next/headers", () => ({
   ),
 }))
 
+// Mock sales module — returns base prices (no active sales in tests)
+const mockGetProductsWithSales = vi.fn()
+vi.mock("@/lib/sales", () => ({
+  getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
+}))
+
 // Mock invoice modules
 vi.mock("@/lib/invoice-pdf", () => ({
   generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
@@ -67,6 +73,8 @@ let createCODOrder: typeof import("@/app/actions/stripe").createCODOrder
 let stripe: typeof import("@/lib/stripe").stripe
 
 beforeAll(async () => {
+  const { PRODUCTS } = await import("@/lib/products")
+  mockGetProductsWithSales.mockImplementation(() => Promise.resolve([...PRODUCTS]))
   const stripeActions = await import("@/app/actions/stripe")
   createCheckoutSession = stripeActions.createCheckoutSession
   createCODOrder = stripeActions.createCODOrder

@@ -97,7 +97,7 @@ export default function ContactPage() {
                 </li>
                 <li>
                   <strong className="text-foreground">Има ли безплатна доставка?</strong>
-                  <p className="mt-1">Да, при поръчки над 50 лв. доставката е безплатна.</p>
+                  <p className="mt-1">Да, при поръчки над 30 € доставката до офис на куриер е безплатна.</p>
                 </li>
               </ul>
             </div>

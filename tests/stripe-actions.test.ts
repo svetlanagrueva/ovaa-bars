@@ -45,6 +45,12 @@ vi.mock("next/headers", () => ({
   })),
 }))
 
+// Mock sales module — returns base prices (no active sales in tests)
+const mockGetProductsWithSales = vi.fn()
+vi.mock("@/lib/sales", () => ({
+  getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
+}))
+
 // Mock invoice modules
 vi.mock("@/lib/invoice-pdf", () => ({
   generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
@@ -61,6 +67,10 @@ vi.mock("@/lib/seller", () => ({
 
 import { createCheckoutSession, confirmOrder, createCODOrder } from "@/app/actions/stripe"
 import { stripe } from "@/lib/stripe"
+import { PRODUCTS } from "@/lib/products"
+
+// Set up sales mock to return base prices (no active sales)
+mockGetProductsWithSales.mockImplementation(() => Promise.resolve([...PRODUCTS]))
 
 const validCartItems = [{ productId: "ovva-dark-chocolate-box", quantity: 2 }]
 const validCustomerInfo = {
@@ -179,12 +189,12 @@ describe("createCheckoutSession", () => {
     ).rejects.toThrow("Failed to create order")
   })
 
-  it("calculates shipping server-side (free over 50 лв)", async () => {
+  it("calculates shipping server-side (free over 30 €)", async () => {
     const fakeOrder = { id: "order-456" }
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
     vi.mocked(stripe.checkout.sessions.create).mockResolvedValueOnce({ id: "cs_1", url: "https://test.com" } as never)
 
-    // 2 boxes at 59.99 = 119.98 лв → free shipping
+    // 2 boxes at 25.70 = 51.40 € → free shipping
     await createCheckoutSession({
       cartItems: validCartItems,
       customerInfo: validCustomerInfo,
@@ -193,7 +203,7 @@ describe("createCheckoutSession", () => {
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
-    expect(insertCall.total_amount).toBe(5999 * 2) // No shipping added
+    expect(insertCall.total_amount).toBe(2570 * 2) // No shipping added
   })
 
   it("uses correct carrier name for Econt", async () => {
@@ -201,10 +211,7 @@ describe("createCheckoutSession", () => {
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
     vi.mocked(stripe.checkout.sessions.create).mockResolvedValueOnce({ id: "cs_2", url: "https://test.com" } as never)
 
-    // 1 box = 59.99 лв > 50 лв → free shipping, so no shipping line item
-    // Use a cheaper scenario to trigger shipping: quantity 1 at 59.99 is already > 50
-    // Actually 5999 > 5000 so shipping is free. We need the line items to include shipping.
-    // Let's just check the Stripe session was created with correct metadata
+    // 1 box = 25.70 € < 30 € threshold, but test checks carrier name not shipping
     await createCheckoutSession({
       cartItems: [{ productId: "ovva-dark-chocolate-box", quantity: 1 }],
       customerInfo: validCustomerInfo,
@@ -212,7 +219,7 @@ describe("createCheckoutSession", () => {
       econtOffice: validEcontOffice,
     })
 
-    // Since 59.99 лв > 50 лв threshold, shipping is free — no shipping line item
+    // 25.70 € < 30 € threshold, but this test only checks delivery method, not shipping
     // Verify the order was created with econt delivery method
     expect(mockSupabase.insert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -349,8 +356,8 @@ describe("createCODOrder", () => {
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
-    // 5999 (product) + 0 (shipping, 59.99 > 50 лв threshold) + 200 (COD fee) = 6199
-    expect(insertCall.total_amount).toBe(6199)
+    // 2570 (product) + 300 (shipping, 25.70 < 30 € threshold) + 200 (COD fee) = 3070
+    expect(insertCall.total_amount).toBe(3070)
   })
 
   it("throws when product not found", async () => {

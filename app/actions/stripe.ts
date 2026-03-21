@@ -4,6 +4,7 @@ import { headers } from "next/headers"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
+import { getProductsWithSales } from "@/lib/sales"
 import { Resend } from "resend"
 import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
@@ -54,6 +55,7 @@ interface CheckoutData {
   invoiceInfo?: InvoiceInfo
   econtOffice?: EcontOfficeData
   speedyOffice?: SpeedyOfficeData
+  promoCode?: string
 }
 
 interface CODOrderData {
@@ -64,6 +66,7 @@ interface CODOrderData {
   invoiceInfo?: InvoiceInfo
   econtOffice?: EcontOfficeData
   speedyOffice?: SpeedyOfficeData
+  promoCode?: string
 }
 
 const NEXT_PUBLIC_ECONT_ENABLED = process.env.NEXT_PUBLIC_ECONT_ENABLED !== "false" // on by default
@@ -157,7 +160,7 @@ function validateCustomerInfo(info: CustomerInfo) {
   }
 }
 
-function validateCartItems(cartItems: CartItem[]) {
+async function validateCartItems(cartItems: CartItem[]) {
   if (!Array.isArray(cartItems) || cartItems.length === 0) {
     throw new Error("Cart is empty")
   }
@@ -169,8 +172,12 @@ function validateCartItems(cartItems: CartItem[]) {
     deduped.set(item.productId, qty + item.quantity)
   }
 
+  // Fetch all sale-aware prices in a single DB call
+  const allProducts = await getProductsWithSales()
+  const productMap = new Map(allProducts.map((p) => [p.id, p]))
+
   return Array.from(deduped.entries()).map(([productId, quantity]) => {
-    const product = PRODUCTS.find((p) => p.id === productId)
+    const product = productMap.get(productId)
     if (!product) {
       throw new Error(`Product not found: ${productId}`)
     }
@@ -185,6 +192,138 @@ function validateCartItems(cartItems: CartItem[]) {
       priceInCents: product.priceInCents,
     }
   })
+}
+
+function calculateDiscount(
+  discountType: string,
+  discountValue: number,
+  subtotal: number,
+): number {
+  if (discountType === "percentage") {
+    return Math.round(subtotal * discountValue / 100)
+  }
+  // Fixed: cap at subtotal so discount never exceeds product cost
+  return Math.min(discountValue, subtotal)
+}
+
+// Rate limit promo validation per IP
+const promoRateLimit = new Map<string, number[]>()
+const PROMO_RATE_LIMIT_WINDOW_MS = 60 * 1000
+const PROMO_RATE_LIMIT_MAX = 10
+
+export async function validatePromoCode(code: string, subtotalInCents: number) {
+  if (!code || !code.trim()) {
+    return { valid: false as const, error: "Въведете промо код" }
+  }
+
+  // Rate limit by IP
+  const headerStore = await headers()
+  const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
+  const now = Date.now()
+  const timestamps = (promoRateLimit.get(ip) || []).filter((t) => now - t < PROMO_RATE_LIMIT_WINDOW_MS)
+  if (timestamps.length >= PROMO_RATE_LIMIT_MAX) {
+    return { valid: false as const, error: "Твърде много опити. Опитайте по-късно." }
+  }
+  timestamps.push(now)
+  promoRateLimit.set(ip, timestamps)
+
+  const supabase = await createClient()
+  const nowISO = new Date().toISOString()
+
+  const { data: promo, error } = await supabase
+    .from("promo_codes")
+    .select("*")
+    .eq("code", code.trim().toUpperCase())
+    .eq("is_active", true)
+    .lte("starts_at", nowISO)
+    .single()
+
+  if (error || !promo) {
+    return { valid: false as const, error: "Невалиден промо код" }
+  }
+
+  // Use generic error for expired/exhausted to prevent code enumeration
+  if (promo.ends_at && new Date(promo.ends_at) <= new Date()) {
+    return { valid: false as const, error: "Невалиден промо код" }
+  }
+
+  if (promo.max_uses !== null && promo.current_uses >= promo.max_uses) {
+    return { valid: false as const, error: "Невалиден промо код" }
+  }
+
+  if (subtotalInCents < promo.min_order_amount) {
+    return {
+      valid: false as const,
+      error: `Минимална поръчка: ${formatPrice(promo.min_order_amount)}`,
+    }
+  }
+
+  const discountAmount = calculateDiscount(promo.discount_type, promo.discount_value, subtotalInCents)
+
+  return {
+    valid: true as const,
+    code: promo.code as string,
+    discountType: promo.discount_type as string,
+    discountValue: promo.discount_value as number,
+    discountAmount,
+  }
+}
+
+async function applyAndValidatePromo(
+  promoCode: string | undefined,
+  subtotalInCents: number,
+): Promise<{ code: string; discountAmount: number } | null> {
+  if (!promoCode?.trim()) return null
+
+  const supabase = await createClient()
+  const now = new Date().toISOString()
+
+  // Atomic: fetch, validate, and increment in one query
+  // Only increment if still active, within dates, and under max_uses
+  const { data: promo, error } = await supabase
+    .from("promo_codes")
+    .select("*")
+    .eq("code", promoCode.trim().toUpperCase())
+    .eq("is_active", true)
+    .lte("starts_at", now)
+    .single()
+
+  if (error || !promo) {
+    throw new Error("Невалиден промо код")
+  }
+
+  if (promo.ends_at && new Date(promo.ends_at) <= new Date()) {
+    throw new Error("Промо кодът е изтекъл")
+  }
+
+  if (promo.max_uses !== null && promo.current_uses >= promo.max_uses) {
+    throw new Error("Промо кодът е изчерпан")
+  }
+
+  if (subtotalInCents < promo.min_order_amount) {
+    throw new Error(`Минимална поръчка: ${formatPrice(promo.min_order_amount)}`)
+  }
+
+  // Atomic increment with max_uses guard — prevents race condition
+  const incrementFilter = supabase
+    .from("promo_codes")
+    .update({ current_uses: promo.current_uses + 1 })
+    .eq("id", promo.id)
+    .eq("current_uses", promo.current_uses) // optimistic lock
+
+  if (promo.max_uses !== null) {
+    incrementFilter.lt("current_uses", promo.max_uses)
+  }
+
+  const { data: updated } = await incrementFilter.select("id")
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Промо кодът е изчерпан")
+  }
+
+  const discountAmount = calculateDiscount(promo.discount_type, promo.discount_value, subtotalInCents)
+
+  return { code: promo.code, discountAmount }
 }
 
 function validateOfficeData(
@@ -220,18 +359,22 @@ export async function createCheckoutSession(data: CheckoutData) {
   validateAddressForDelivery(deliveryMethod, customerInfo.address)
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
   validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
-  const validatedItems = validateCartItems(cartItems)
+  const validatedItems = await validateCartItems(cartItems)
 
   const subtotal = validatedItems.reduce(
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
   const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
-  const totalAmount = subtotal + shippingPrice
+
+  // Apply promo code if provided
+  const promo = await applyAndValidatePromo(data.promoCode, subtotal)
+  const discountAmount = promo?.discountAmount ?? 0
+  const totalAmount = Math.max(1, subtotal - discountAmount + shippingPrice)
 
   const lineItems = validatedItems.map((item) => ({
     price_data: {
-      currency: "bgn",
+      currency: "eur",
       product_data: {
         name: item.product.name,
         description: item.product.shortDescription,
@@ -244,7 +387,7 @@ export async function createCheckoutSession(data: CheckoutData) {
   if (shippingPrice > 0) {
     lineItems.push({
       price_data: {
-        currency: "bgn",
+        currency: "eur",
         product_data: {
           name: `Доставка (${getCarrierName(deliveryMethod)})`,
           description: getDeliveryLabel(deliveryMethod),
@@ -292,6 +435,8 @@ export async function createCheckoutSession(data: CheckoutData) {
       speedy_office_id: speedyOffice?.id ?? null,
       speedy_office_name: speedyOffice?.name ?? null,
       speedy_office_address: speedyOffice?.fullAddress ?? null,
+      promo_code: promo?.code ?? null,
+      discount_amount: discountAmount,
     })
     .select()
     .single()
@@ -305,11 +450,26 @@ export async function createCheckoutSession(data: CheckoutData) {
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
 
   let session
+  let stripeCouponId: string | undefined
   try {
+    // Create Stripe coupon for promo discount if applicable
+    let stripeDiscounts: { coupon: string }[] | undefined
+    if (discountAmount > 0) {
+      const coupon = await stripe.coupons.create({
+        amount_off: discountAmount,
+        currency: "eur",
+        duration: "once",
+        name: promo?.code ?? "Discount",
+      })
+      stripeCouponId = coupon.id
+      stripeDiscounts = [{ coupon: coupon.id }]
+    }
+
     session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: lineItems,
       mode: "payment",
+      ...(stripeDiscounts ? { discounts: stripeDiscounts } : {}),
       success_url: `${baseUrl}/checkout/success?order_id=${order.id}`,
       cancel_url: `${baseUrl}/checkout?canceled=true`,
       customer_email: customerInfo.email,
@@ -318,8 +478,11 @@ export async function createCheckoutSession(data: CheckoutData) {
       },
     })
   } catch (err) {
-    // Stripe session creation failed — clean up the orphaned pending order
+    // Stripe session creation failed — clean up orphaned resources
     await supabase.from("orders").delete().eq("id", order.id).eq("status", "pending")
+    if (stripeCouponId) {
+      await stripe.coupons.del(stripeCouponId).catch(() => {})
+    }
     throw err
   }
 
@@ -418,7 +581,7 @@ export async function createCODOrder(data: CODOrderData) {
   const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
   checkCODRateLimit(ip)
 
-  const validatedItems = validateCartItems(cartItems)
+  const validatedItems = await validateCartItems(cartItems)
 
   const subtotal = validatedItems.reduce(
     (sum, item) => sum + item.priceInCents * item.quantity,
@@ -426,7 +589,11 @@ export async function createCODOrder(data: CODOrderData) {
   )
   const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
   const codFee = COD_FEE
-  const totalAmount = subtotal + shippingPrice + codFee
+
+  // Apply promo code if provided
+  const promo = await applyAndValidatePromo(data.promoCode, subtotal)
+  const discountAmount = promo?.discountAmount ?? 0
+  const totalAmount = Math.max(1, subtotal - discountAmount + shippingPrice + codFee)
 
   const supabase = await createClient()
 
@@ -465,6 +632,8 @@ export async function createCODOrder(data: CODOrderData) {
       speedy_office_id: speedyOffice?.id ?? null,
       speedy_office_name: speedyOffice?.name ?? null,
       speedy_office_address: speedyOffice?.fullAddress ?? null,
+      promo_code: promo?.code ?? null,
+      discount_amount: discountAmount,
     })
     .select()
     .single()

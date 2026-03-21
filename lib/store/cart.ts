@@ -19,6 +19,7 @@ interface CartState {
   clearCart: () => void
   getTotalItems: () => number
   getTotalPrice: () => number
+  syncPrices: () => Promise<boolean>
 }
 
 export const useCartStore = create<CartState>()(
@@ -79,6 +80,43 @@ export const useCartStore = create<CartState>()(
           (total, item) => total + item.product.priceInCents * item.quantity,
           0
         )
+      },
+
+      syncPrices: async () => {
+        try {
+          const res = await fetch("/api/prices")
+          if (!res.ok) return false
+
+          const prices: Array<{ id: string; priceInCents: number; originalPriceInCents?: number }> =
+            await res.json()
+          const priceMap = new Map(prices.map((p) => [p.id, p]))
+
+          const items = get().items
+          let changed = false
+          const updated = items.map((item) => {
+            const current = priceMap.get(item.product.id)
+            if (!current) return item
+            if (
+              current.priceInCents !== item.product.priceInCents ||
+              current.originalPriceInCents !== item.product.originalPriceInCents
+            ) {
+              changed = true
+              return {
+                ...item,
+                product: {
+                  ...item.product,
+                  priceInCents: current.priceInCents,
+                  originalPriceInCents: current.originalPriceInCents,
+                },
+              }
+            }
+            return item
+          })
+          if (changed) set({ items: updated })
+          return changed
+        } catch {
+          return false
+        }
       },
     }),
     {

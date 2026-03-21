@@ -2,7 +2,8 @@
 
 import { createAdminSession, validateAdminSession, destroyAdminSession } from "@/lib/admin-auth"
 import { createClient } from "@/lib/supabase/server"
-import { formatPrice } from "@/lib/products"
+import { PRODUCTS, formatPrice } from "@/lib/products"
+import { revalidateTag } from "next/cache"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { getNextInvoiceNumber } from "@/lib/invoice"
 import { generateInvoicePDF } from "@/lib/invoice-pdf"
@@ -107,6 +108,8 @@ export interface OrderDetail extends OrderSummary {
   stripe_session_id: string | null
   invoice_number: string | null
   invoice_date: string | null
+  promo_code: string | null
+  discount_amount: number
 }
 
 export async function getOrders(status?: string): Promise<OrderSummary[]> {
@@ -341,3 +344,290 @@ ${itemsList}
     // Non-blocking
   })
 }
+
+// ── Sale management ──────────────────────────────────────────────
+
+export interface SaleRecord {
+  id: string
+  product_id: string
+  sale_price_in_cents: number
+  original_price_in_cents: number
+  starts_at: string
+  ends_at: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export async function getSales(): Promise<SaleRecord[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from("product_sales")
+    .select("*")
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("Failed to fetch sales:", error)
+    throw new Error("Failed to fetch sales")
+  }
+
+  return data || []
+}
+
+async function getLowestPrice30Days(productId: string): Promise<number> {
+  const baseProduct = PRODUCTS.find((p) => p.id === productId)
+  if (!baseProduct) throw new Error("Product not found")
+
+  const supabase = await createClient()
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+
+  // Check price history
+  const { data: history } = await supabase
+    .from("product_price_history")
+    .select("price_in_cents")
+    .eq("product_id", productId)
+    .gte("recorded_at", thirtyDaysAgo)
+    .order("price_in_cents", { ascending: true })
+    .limit(1)
+
+  // Check past sale prices
+  const { data: pastSales } = await supabase
+    .from("product_sales")
+    .select("sale_price_in_cents")
+    .eq("product_id", productId)
+    .gte("created_at", thirtyDaysAgo)
+    .order("sale_price_in_cents", { ascending: true })
+    .limit(1)
+
+  const basePrice = baseProduct.priceInCents
+  const historyMin = history?.[0]?.price_in_cents ?? Infinity
+  const saleMin = pastSales?.[0]?.sale_price_in_cents ?? Infinity
+
+  return Math.min(basePrice, historyMin, saleMin)
+}
+
+export async function createSale(data: {
+  productId: string
+  salePriceInCents: number
+  startsAt?: string
+  endsAt?: string | null
+}) {
+  await requireAdmin()
+
+  const product = PRODUCTS.find((p) => p.id === data.productId)
+  if (!product) throw new Error("Продуктът не е намерен")
+
+  if (!Number.isInteger(data.salePriceInCents) || data.salePriceInCents <= 0) {
+    throw new Error("Промоционалната цена трябва да е положително число")
+  }
+
+  if (data.salePriceInCents >= product.priceInCents) {
+    throw new Error(
+      `Промоционалната цена (${formatPrice(data.salePriceInCents)}) трябва да е по-ниска от базовата (${formatPrice(product.priceInCents)})`
+    )
+  }
+
+  if (data.endsAt) {
+    const endsAtDate = new Date(data.endsAt)
+    if (isNaN(endsAtDate.getTime())) {
+      throw new Error("Невалидна крайна дата")
+    }
+    if (endsAtDate <= new Date()) {
+      throw new Error("Крайната дата трябва да е в бъдещето")
+    }
+  }
+
+  // EU Omnibus: original price must be the lowest in the last 30 days
+  const lowestPrice = await getLowestPrice30Days(data.productId)
+
+  const supabase = await createClient()
+
+  // Deactivate any existing active sale for this product
+  const { error: deactivateError } = await supabase
+    .from("product_sales")
+    .update({ is_active: false })
+    .eq("product_id", data.productId)
+    .eq("is_active", true)
+
+  if (deactivateError) {
+    console.error("Failed to deactivate existing sale:", deactivateError)
+    throw new Error("Грешка при деактивиране на текущата промоция")
+  }
+
+  // Record current base price in history for future Omnibus calculations
+  await supabase.from("product_price_history").insert({
+    product_id: data.productId,
+    price_in_cents: product.priceInCents,
+  })
+
+  const { error } = await supabase.from("product_sales").insert({
+    product_id: data.productId,
+    sale_price_in_cents: data.salePriceInCents,
+    original_price_in_cents: lowestPrice,
+    starts_at: data.startsAt ?? new Date().toISOString(),
+    ends_at: data.endsAt ?? null,
+    is_active: true,
+  })
+
+  if (error) {
+    console.error("Failed to create sale:", error)
+    throw new Error("Грешка при създаване на промоцията")
+  }
+
+  revalidateTag("active-sales", "page")
+  return { success: true }
+}
+
+export async function endSale(saleId: string) {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(saleId)) throw new Error("Invalid sale ID")
+
+  const supabase = await createClient()
+
+  const { data: updated, error } = await supabase
+    .from("product_sales")
+    .update({ is_active: false, ends_at: new Date().toISOString() })
+    .eq("id", saleId)
+    .eq("is_active", true)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to end sale:", error)
+    throw new Error("Грешка при спиране на промоцията")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Промоцията вече е спряна")
+  }
+
+  revalidateTag("active-sales", "page")
+  return { success: true }
+}
+
+// ── Promo code management ────────────────────────────────────────
+
+export interface PromoCodeRecord {
+  id: string
+  code: string
+  discount_type: string
+  discount_value: number
+  min_order_amount: number
+  max_uses: number | null
+  current_uses: number
+  starts_at: string
+  ends_at: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export async function getPromoCodes(): Promise<PromoCodeRecord[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from("promo_codes")
+    .select("*")
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("Failed to fetch promo codes:", error)
+    throw new Error("Failed to fetch promo codes")
+  }
+
+  return data || []
+}
+
+const PROMO_CODE_REGEX = /^[A-Z0-9\-_]{2,30}$/
+
+export async function createPromoCode(input: {
+  code: string
+  discountType: "percentage" | "fixed"
+  discountValue: number
+  minOrderAmount: number
+  maxUses: number | null
+  startsAt?: string
+  endsAt?: string | null
+}) {
+  await requireAdmin()
+
+  const code = input.code.trim().toUpperCase()
+  if (!PROMO_CODE_REGEX.test(code)) {
+    throw new Error("Кодът трябва да е 2-30 символа (букви, цифри, тирета)")
+  }
+
+  if (!Number.isInteger(input.discountValue) || input.discountValue <= 0) {
+    throw new Error("Стойността на отстъпката трябва да е положително число")
+  }
+
+  if (input.discountType === "percentage" && input.discountValue > 100) {
+    throw new Error("Процентната отстъпка не може да надвишава 100%")
+  }
+
+  if (input.minOrderAmount < 0) {
+    throw new Error("Минималната сума не може да е отрицателна")
+  }
+
+  if (input.maxUses !== null && input.maxUses <= 0) {
+    throw new Error("Максималният брой използвания трябва да е положително число")
+  }
+
+  if (input.endsAt) {
+    const endsAtDate = new Date(input.endsAt)
+    if (isNaN(endsAtDate.getTime())) throw new Error("Невалидна крайна дата")
+    if (endsAtDate <= new Date()) throw new Error("Крайната дата трябва да е в бъдещето")
+  }
+
+  const supabase = await createClient()
+
+  const { error } = await supabase.from("promo_codes").insert({
+    code,
+    discount_type: input.discountType,
+    discount_value: input.discountValue,
+    min_order_amount: input.minOrderAmount,
+    max_uses: input.maxUses,
+    starts_at: input.startsAt ?? new Date().toISOString(),
+    ends_at: input.endsAt ?? null,
+    is_active: true,
+  })
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Вече съществува активен код с това име")
+    }
+    console.error("Failed to create promo code:", error)
+    throw new Error("Грешка при създаване на промо код")
+  }
+
+  return { success: true }
+}
+
+export async function deactivatePromoCode(promoId: string) {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(promoId)) throw new Error("Invalid promo code ID")
+
+  const supabase = await createClient()
+
+  const { data: updated, error } = await supabase
+    .from("promo_codes")
+    .update({ is_active: false })
+    .eq("id", promoId)
+    .eq("is_active", true)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to deactivate promo code:", error)
+    throw new Error("Грешка при деактивиране на промо кода")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Промо кодът вече е деактивиран")
+  }
+
+  return { success: true }
+}
+

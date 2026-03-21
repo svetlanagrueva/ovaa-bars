@@ -117,10 +117,7 @@ SELLER_IBAN=BG12AAAA12341234123412
 SELLER_BANK=Банка АД
 ```
 
-Run the database migration:
-```
-scripts/003_add_invoice_system.sql
-```
+The full database schema (including invoice, sales, and promo code tables) is in `supabase-schema.sql`. Run it in Supabase SQL Editor on initial setup.
 
 Admin panel
 

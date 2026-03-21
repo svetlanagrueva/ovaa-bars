@@ -14,8 +14,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useCartStore } from "@/lib/store/cart"
 import { formatPrice } from "@/lib/products"
-import { createCheckoutSession, createCODOrder } from "@/app/actions/stripe"
+import { createCheckoutSession, createCODOrder, validatePromoCode } from "@/app/actions/stripe"
 import { COD_FEE, calculateShippingPrice } from "@/lib/constants"
+import { isOnSale } from "@/lib/products"
 import { DeliveryInfo } from "@/components/delivery-info"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/econt-office-picker"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/speedy-office-picker"
@@ -59,6 +60,14 @@ export default function CheckoutPage() {
   const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
   const { items, getTotalPrice, clearCart } = useCartStore()
 
+  const [promoCode, setPromoCode] = useState("")
+  const [promoLoading, setPromoLoading] = useState(false)
+  const [promoError, setPromoError] = useState<string | null>(null)
+  const [appliedPromo, setAppliedPromo] = useState<{
+    code: string
+    discountAmount: number
+  } | null>(null)
+
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo>({
     firstName: "",
     lastName: "",
@@ -100,7 +109,41 @@ export default function CheckoutPage() {
   const totalPrice = getTotalPrice()
   const shippingPrice = calculateShippingPrice(totalPrice, deliveryMethod)
   const codFee = paymentMethod === "cod" ? COD_FEE : 0
-  const finalPrice = totalPrice + shippingPrice + codFee
+
+  // Clear promo if cart is now below minimum (server will re-validate anyway)
+  useEffect(() => {
+    if (!appliedPromo) return
+    // Re-validate will happen server-side; just clear client-side to avoid confusion
+    setAppliedPromo(null)
+    setPromoCode("")
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPrice])
+
+  const discountAmount = appliedPromo?.discountAmount ?? 0
+  const finalPrice = Math.max(0, totalPrice - discountAmount + shippingPrice + codFee)
+
+  async function handleApplyPromo() {
+    setPromoError(null)
+    setPromoLoading(true)
+    try {
+      const result = await validatePromoCode(promoCode.trim(), totalPrice)
+      if (result.valid) {
+        setAppliedPromo({ code: result.code, discountAmount: result.discountAmount })
+      } else {
+        setPromoError(result.error)
+      }
+    } catch {
+      setPromoError("Грешка при валидиране на кода")
+    } finally {
+      setPromoLoading(false)
+    }
+  }
+
+  function handleRemovePromo() {
+    setAppliedPromo(null)
+    setPromoCode("")
+    setPromoError(null)
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -175,6 +218,7 @@ export default function CheckoutPage() {
           invoiceInfo: invoiceData,
           econtOffice,
           speedyOffice,
+          promoCode: appliedPromo?.code,
         })
 
         if (result.success) {
@@ -190,6 +234,7 @@ export default function CheckoutPage() {
           invoiceInfo: invoiceData,
           econtOffice,
           speedyOffice,
+          promoCode: appliedPromo?.code,
         })
 
         if (result.url) {
@@ -640,6 +685,16 @@ export default function CheckoutPage() {
                       <span className="text-muted-foreground">Междинна сума</span>
                       <span className="text-foreground">{formatPrice(totalPrice)}</span>
                     </div>
+                    {items.some((item) => isOnSale(item.product)) && (
+                      <div className="mt-2 flex justify-between text-sm text-green-600">
+                        <span>Спестявате</span>
+                        <span>-{formatPrice(items.reduce((s, item) =>
+                          s + (isOnSale(item.product)
+                            ? (item.product.originalPriceInCents! - item.product.priceInCents) * item.quantity
+                            : 0), 0))}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-2 flex justify-between text-sm">
                       <span className="flex items-center gap-1 text-muted-foreground">
                         Доставка ({deliveryMethod.startsWith("speedy") ? "Speedy" : "Еконт"})
@@ -677,7 +732,52 @@ export default function CheckoutPage() {
                         <span className="text-foreground">{formatPrice(codFee)}</span>
                       </div>
                     )}
+                    {discountAmount > 0 && (
+                      <div className="mt-2 flex justify-between text-sm text-green-600">
+                        <span>Отстъпка ({appliedPromo?.code})</span>
+                        <span>-{formatPrice(discountAmount)}</span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Promo code */}
+                  <div className="border-t border-border pt-4">
+                    <Label className="text-sm text-muted-foreground">Код за отстъпка</Label>
+                    {appliedPromo ? (
+                      <div className="mt-2 flex items-center justify-between rounded-md bg-green-50 px-3 py-2">
+                        <span className="text-sm font-medium text-green-700">{appliedPromo.code}</span>
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                          onClick={handleRemovePromo}
+                        >
+                          Премахни
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex gap-2">
+                        <Input
+                          placeholder="Въведете код"
+                          value={promoCode}
+                          onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                          className="flex-1 uppercase"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={promoLoading || !promoCode.trim()}
+                          onClick={handleApplyPromo}
+                        >
+                          {promoLoading ? "..." : "Приложи"}
+                        </Button>
+                      </div>
+                    )}
+                    {promoError && (
+                      <p className="mt-1 text-xs text-destructive">{promoError}</p>
+                    )}
+                  </div>
+
                   <div className="border-t border-border pt-4">
                     <div className="flex justify-between">
                       <span className="font-semibold text-foreground">Общо</span>

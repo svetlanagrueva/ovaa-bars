@@ -3,9 +3,12 @@ import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProductCard } from "@/components/products/product-card"
-import { PRODUCTS } from "@/lib/products"
+import { getProductsWithSales } from "@/lib/sales"
 
-export default function HomePage() {
+export const revalidate = 60
+
+export default async function HomePage() {
+  const PRODUCTS = await getProductsWithSales()
   return (
     <div>
       {/* Hero Section */}
@@ -150,7 +153,7 @@ export default function HomePage() {
       <section className="bg-foreground py-24 sm:py-32">
         <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8">
           <p className="text-xs font-medium uppercase tracking-[0.3em] text-background/60">
-            Безплатна доставка над 50 лв
+            Безплатна доставка над 30 €
           </p>
           <h2 className="mt-6 text-3xl font-light tracking-tight text-background sm:text-4xl">
             Готови да заредите деня си?
