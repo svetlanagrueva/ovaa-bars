@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 const links = [
   { href: "/admin/orders", label: "Поръчки" },
   { href: "/admin/sales", label: "Промоции" },
+  { href: "/admin/promo-codes", label: "Промо кодове" },
 ]
 
 export function AdminNav() {

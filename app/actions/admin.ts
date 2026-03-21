@@ -108,6 +108,8 @@ export interface OrderDetail extends OrderSummary {
   stripe_session_id: string | null
   invoice_number: string | null
   invoice_date: string | null
+  promo_code: string | null
+  discount_amount: number
 }
 
 export async function getOrders(status?: string): Promise<OrderSummary[]> {
@@ -502,6 +504,130 @@ export async function endSale(saleId: string) {
   }
 
   revalidateTag("active-sales", "page")
+  return { success: true }
+}
+
+// ── Promo code management ────────────────────────────────────────
+
+export interface PromoCodeRecord {
+  id: string
+  code: string
+  discount_type: string
+  discount_value: number
+  min_order_amount: number
+  max_uses: number | null
+  current_uses: number
+  starts_at: string
+  ends_at: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export async function getPromoCodes(): Promise<PromoCodeRecord[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from("promo_codes")
+    .select("*")
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("Failed to fetch promo codes:", error)
+    throw new Error("Failed to fetch promo codes")
+  }
+
+  return data || []
+}
+
+const PROMO_CODE_REGEX = /^[A-Z0-9\-_]{2,30}$/
+
+export async function createPromoCode(input: {
+  code: string
+  discountType: "percentage" | "fixed"
+  discountValue: number
+  minOrderAmount: number
+  maxUses: number | null
+  startsAt?: string
+  endsAt?: string | null
+}) {
+  await requireAdmin()
+
+  const code = input.code.trim().toUpperCase()
+  if (!PROMO_CODE_REGEX.test(code)) {
+    throw new Error("Кодът трябва да е 2-30 символа (букви, цифри, тирета)")
+  }
+
+  if (!Number.isInteger(input.discountValue) || input.discountValue <= 0) {
+    throw new Error("Стойността на отстъпката трябва да е положително число")
+  }
+
+  if (input.discountType === "percentage" && input.discountValue > 100) {
+    throw new Error("Процентната отстъпка не може да надвишава 100%")
+  }
+
+  if (input.minOrderAmount < 0) {
+    throw new Error("Минималната сума не може да е отрицателна")
+  }
+
+  if (input.maxUses !== null && input.maxUses <= 0) {
+    throw new Error("Максималният брой използвания трябва да е положително число")
+  }
+
+  if (input.endsAt) {
+    const endsAtDate = new Date(input.endsAt)
+    if (isNaN(endsAtDate.getTime())) throw new Error("Невалидна крайна дата")
+    if (endsAtDate <= new Date()) throw new Error("Крайната дата трябва да е в бъдещето")
+  }
+
+  const supabase = await createClient()
+
+  const { error } = await supabase.from("promo_codes").insert({
+    code,
+    discount_type: input.discountType,
+    discount_value: input.discountValue,
+    min_order_amount: input.minOrderAmount,
+    max_uses: input.maxUses,
+    starts_at: input.startsAt ?? new Date().toISOString(),
+    ends_at: input.endsAt ?? null,
+    is_active: true,
+  })
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Вече съществува активен код с това име")
+    }
+    console.error("Failed to create promo code:", error)
+    throw new Error("Грешка при създаване на промо код")
+  }
+
+  return { success: true }
+}
+
+export async function deactivatePromoCode(promoId: string) {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(promoId)) throw new Error("Invalid promo code ID")
+
+  const supabase = await createClient()
+
+  const { data: updated, error } = await supabase
+    .from("promo_codes")
+    .update({ is_active: false })
+    .eq("id", promoId)
+    .eq("is_active", true)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to deactivate promo code:", error)
+    throw new Error("Грешка при деактивиране на промо кода")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Промо кодът вече е деактивиран")
+  }
+
   return { success: true }
 }
 

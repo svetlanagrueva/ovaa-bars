@@ -164,6 +164,12 @@ export default function AdminOrderDetailPage({
                   <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
                 </div>
               ))}
+              {order.promo_code && order.discount_amount > 0 && (
+                <div className="flex items-center justify-between text-sm text-green-600">
+                  <span>Промо код: {order.promo_code}</span>
+                  <span>-{formatPrice(order.discount_amount)}</span>
+                </div>
+              )}
               <div className="border-t pt-2 flex items-center justify-between font-medium">
                 <span>Общо</span>
                 <span>{formatPrice(order.total_amount)}</span>

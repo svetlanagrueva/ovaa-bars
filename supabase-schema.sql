@@ -22,6 +22,8 @@ create table if not exists orders (
   payment_method text not null check (payment_method in ('card', 'cod')),
   logistics_partner text,
   stripe_session_id text unique,
+  promo_code text,
+  discount_amount integer not null default 0,
 
   -- Invoice
   needs_invoice boolean default false,
@@ -132,3 +134,28 @@ create index if not exists idx_price_history_lookup
 alter table product_price_history enable row level security;
 create policy "Deny public reads on price history" on product_price_history for select using (false);
 create policy "Deny public inserts on price history" on product_price_history for insert with check (false);
+
+-- Promo codes
+create table if not exists promo_codes (
+  id uuid primary key default gen_random_uuid(),
+  code text not null,
+  discount_type text not null check (discount_type in ('percentage', 'fixed')),
+  discount_value integer not null check (discount_value > 0),
+  min_order_amount integer not null default 0,
+  max_uses integer,
+  current_uses integer not null default 0,
+  starts_at timestamptz not null default now(),
+  ends_at timestamptz,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  constraint chk_percentage check (discount_type != 'percentage' or discount_value <= 100)
+);
+
+create unique index if not exists idx_promo_codes_unique_active
+  on promo_codes (upper(code)) where is_active = true;
+
+alter table promo_codes enable row level security;
+create policy "Deny public reads on promo codes" on promo_codes for select using (false);
+create policy "Deny public inserts on promo codes" on promo_codes for insert with check (false);
+create policy "Deny public updates on promo codes" on promo_codes for update using (false);
+create policy "Deny public deletes on promo codes" on promo_codes for delete using (false);
