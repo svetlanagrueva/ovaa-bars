@@ -105,7 +105,7 @@ describe("SpeedyOfficePicker", () => {
     expect(screen.getByText(/София - Офис Дружба/)).toBeInTheDocument()
   })
 
-  it("shows error state when fetch fails", async () => {
+  it("shows manual input fallback when fetch fails", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve({ ok: false }))
@@ -116,7 +116,7 @@ describe("SpeedyOfficePicker", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Неуспешно зареждане на офисите на Speedy")
+        screen.getByPlaceholderText("Въведи адрес, офис или автомат за доставка със Speedy")
       ).toBeInTheDocument()
     })
   })

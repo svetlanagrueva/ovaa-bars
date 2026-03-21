@@ -4,6 +4,10 @@ import { createAdminSession, validateAdminSession, destroyAdminSession } from "@
 import { createClient } from "@/lib/supabase/server"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
+import { getNextInvoiceNumber } from "@/lib/invoice"
+import { generateInvoicePDF } from "@/lib/invoice-pdf"
+import { sendInvoiceEmail } from "@/lib/invoice-email"
+import { getSellerConfig } from "@/lib/seller"
 import { Resend } from "resend"
 import { redirect } from "next/navigation"
 import { createHmac, timingSafeEqual } from "crypto"
@@ -101,6 +105,8 @@ export interface OrderDetail extends OrderSummary {
   speedy_office_name: string | null
   speedy_office_address: string | null
   stripe_session_id: string | null
+  invoice_number: string | null
+  invoice_date: string | null
 }
 
 export async function getOrders(status?: string): Promise<OrderSummary[]> {
@@ -197,16 +203,21 @@ export async function updateOrderStatus(
     updateData.tracking_number = trackingNumber.trim()
   }
 
-  // Atomic update — only update if status hasn't changed
-  const { error: updateError } = await supabase
+  // Atomic update — only update if status hasn't changed (prevents race conditions)
+  const { data: updated, error: updateError } = await supabase
     .from("orders")
     .update(updateData)
     .eq("id", orderId)
     .eq("status", order.status)
+    .select("id")
 
   if (updateError) {
     console.error("Failed to update order status:", updateError)
     throw new Error("Failed to update order status")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Order status was changed by another request. Please refresh and try again.")
   }
 
   // Send shipping notification email
@@ -214,7 +225,76 @@ export async function updateOrderStatus(
     sendShippingEmail(order, trackingNumber!.trim())
   }
 
+  // Generate invoice for COD orders with company data, on delivery (tax event = payment)
+  if (newStatus === "delivered" && order.payment_method === "cod" && order.needs_invoice && order.invoice_eik && !order.invoice_number) {
+    try {
+      const invoiceNumber = await getNextInvoiceNumber()
+      const seller = getSellerConfig()
+      const pdfBuffer = await generateInvoicePDF({
+        type: "invoice",
+        invoiceNumber,
+        invoiceDate: new Date(),
+        order,
+        seller,
+      })
+
+      await supabase
+        .from("orders")
+        .update({
+          invoice_number: invoiceNumber,
+          invoice_date: new Date().toISOString(),
+        })
+        .eq("id", orderId)
+
+      sendInvoiceEmail({
+        to: order.email as string,
+        firstName: order.first_name as string,
+        orderId: order.id as string,
+        invoiceNumber,
+        type: "invoice",
+        pdfBuffer,
+      })
+    } catch (invoiceError) {
+      console.error("Failed to generate invoice for COD delivery:", invoiceError)
+    }
+  }
+
   return { success: true }
+}
+
+export async function downloadInvoicePDF(orderId: string): Promise<{ pdfBase64: string; filename: string }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Order not found")
+
+  const seller = getSellerConfig()
+  const hasInvoice = !!order.invoice_number
+  const invoiceNumber = order.invoice_number || `PRF-${order.id.slice(0, 8).toUpperCase()}`
+  const type = hasInvoice ? "invoice" as const : "proforma" as const
+
+  const pdfBuffer = await generateInvoicePDF({
+    type,
+    invoiceNumber,
+    invoiceDate: order.invoice_date ? new Date(order.invoice_date) : new Date(order.created_at),
+    order,
+    seller,
+  })
+
+  const filename = hasInvoice
+    ? `faktura-${invoiceNumber}.pdf`
+    : `proforma-${order.id.slice(0, 8)}.pdf`
+
+  return { pdfBase64: pdfBuffer.toString("base64"), filename }
 }
 
 function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {

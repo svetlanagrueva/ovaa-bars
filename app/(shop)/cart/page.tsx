@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useCartStore } from "@/lib/store/cart"
 import { formatPrice } from "@/lib/products"
-import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE } from "@/lib/constants"
+import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE_OFFICE } from "@/lib/constants"
 
 export default function CartPage() {
   const [mounted, setMounted] = useState(false)
@@ -19,7 +19,7 @@ export default function CartPage() {
   }, [])
 
   const totalPrice = getTotalPrice()
-  const shippingPrice = totalPrice >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE
+  const shippingPrice = totalPrice >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE_OFFICE
   const finalPrice = totalPrice + shippingPrice
 
   if (!mounted) {
@@ -145,7 +145,7 @@ export default function CartPage() {
               </div>
               {totalPrice < FREE_SHIPPING_THRESHOLD && (
                 <p className="text-xs text-muted-foreground">
-                  Добавете още {formatPrice(FREE_SHIPPING_THRESHOLD - totalPrice)} за безплатна доставка
+                  Добавете още {formatPrice(FREE_SHIPPING_THRESHOLD - totalPrice)} за безплатна доставка до офис на куриер
                 </p>
               )}
               <div className="border-t border-border pt-3">

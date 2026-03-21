@@ -11,10 +11,29 @@ vi.mock("@/lib/admin-auth", () => ({
   destroyAdminSession: (...args: unknown[]) => mockDestroyAdminSession(...args),
 }))
 
+// Mock invoice modules (imported by admin actions)
+vi.mock("@/lib/invoice", () => ({
+  getNextInvoiceNumber: vi.fn(() => Promise.resolve("20260000000001")),
+}))
+vi.mock("@/lib/invoice-pdf", () => ({
+  generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
+}))
+vi.mock("@/lib/invoice-email", () => ({
+  sendInvoiceEmail: vi.fn(),
+}))
+vi.mock("@/lib/seller", () => ({
+  getSellerConfig: vi.fn(() => ({
+    companyName: "Test Co", eik: "123456789", vatNumber: "", mol: "Test",
+    address: "Test St", city: "Sofia", postalCode: "1000", phone: "",
+    email: "", iban: "", bank: "",
+  })),
+}))
+
 // Mock Supabase — helper to create thenable query results
 function mockThenableResult(data: unknown, error: unknown = null) {
   const obj: Record<string, unknown> = {
     eq: vi.fn(() => obj),
+    select: vi.fn(() => obj),
     then(resolve: (v: unknown) => void) {
       resolve({ data, error })
     },
@@ -22,11 +41,20 @@ function mockThenableResult(data: unknown, error: unknown = null) {
   return obj
 }
 
+// Update chain: .update().eq().eq().select() → thenable with { data: [...], error: null }
+const mockUpdateChain = {
+  eq: vi.fn(() => mockUpdateChain),
+  select: vi.fn(() => mockUpdateChain),
+  then(resolve: (v: unknown) => void) {
+    resolve({ data: [{ id: "updated" }], error: null })
+  },
+}
+
 const mockSupabase = {
   from: vi.fn(() => mockSupabase),
   select: vi.fn(() => mockSupabase),
   insert: vi.fn(() => mockSupabase),
-  update: vi.fn(() => mockSupabase),
+  update: vi.fn(() => mockUpdateChain),
   eq: vi.fn(() => mockSupabase),
   order: vi.fn(() => mockSupabase),
   single: vi.fn(),

@@ -10,7 +10,7 @@ vi.mock("@/lib/econt", () => ({
 }))
 
 // Import after mocks
-import { GET } from "@/app/api/econt/offices/route"
+import { GET, _resetCache } from "@/app/api/econt/offices/route"
 import { NextRequest } from "next/server"
 
 function makeRequest(url = "http://localhost:3000/api/econt/offices", ip = "1.2.3.4") {
@@ -22,6 +22,7 @@ function makeRequest(url = "http://localhost:3000/api/econt/offices", ip = "1.2.
 describe("GET /api/econt/offices", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    _resetCache()
   })
 
   it("returns slim office payload", async () => {

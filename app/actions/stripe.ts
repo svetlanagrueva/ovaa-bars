@@ -5,7 +5,7 @@ import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { Resend } from "resend"
-import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE, COD_FEE, MAX_QUANTITY } from "@/lib/constants"
+import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
 
 interface CartItem {
@@ -187,10 +187,6 @@ function validateCartItems(cartItems: CartItem[]) {
   })
 }
 
-function calculateShipping(subtotal: number): number {
-  return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_PRICE
-}
-
 function validateOfficeData(
   label: string,
   deliveryMethod: string,
@@ -199,10 +195,10 @@ function validateOfficeData(
 ) {
   if (deliveryMethod !== requiredMethod) return
 
-  if (!office || !office.id || !office.name) {
+  if (!office || !office.name) {
     throw new Error(`${label} office is required for office delivery`)
   }
-  if (typeof office.id !== "number" || office.id <= 0 || !Number.isFinite(office.id)) {
+  if (typeof office.id !== "number" || office.id < 0 || !Number.isFinite(office.id)) {
     throw new Error(`Invalid ${label} office data`)
   }
   if (office.name.length > 200) {
@@ -230,7 +226,7 @@ export async function createCheckoutSession(data: CheckoutData) {
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
-  const shippingPrice = calculateShipping(subtotal)
+  const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
   const totalAmount = subtotal + shippingPrice
 
   const lineItems = validatedItems.map((item) => ({
@@ -428,7 +424,7 @@ export async function createCODOrder(data: CODOrderData) {
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
-  const shippingPrice = calculateShipping(subtotal)
+  const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
   const codFee = COD_FEE
   const totalAmount = subtotal + shippingPrice + codFee
 

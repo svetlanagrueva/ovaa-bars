@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, type OrderDetail } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, downloadInvoicePDF, type OrderDetail } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -96,6 +96,20 @@ export default function AdminOrderDetailPage({
         </Badge>
       </div>
 
+      {order.payment_method === "cod" && order.status === "confirmed" && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-900">
+            Обади се на клиента за потвърждение преди изпращане
+          </p>
+          <a
+            href={`tel:${order.phone}`}
+            className="mt-1 inline-block text-sm font-bold text-amber-900 underline"
+          >
+            {order.phone}
+          </a>
+        </div>
+      )}
+
       <div className="grid gap-6 md:grid-cols-2">
         {/* Customer info */}
         <Card>
@@ -159,20 +173,50 @@ export default function AdminOrderDetailPage({
         </Card>
 
         {/* Invoice */}
-        {order.needs_invoice && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Фактура</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
-              {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
-              {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
-              {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
-              {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
-            </CardContent>
-          </Card>
-        )}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Фактура</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {order.invoice_number ? (
+              <div><span className="text-muted-foreground">Номер:</span> <span className="font-mono">{order.invoice_number}</span></div>
+            ) : (
+              <div className="text-muted-foreground">Фактура не е издадена{order.payment_method === "cod" ? " (ще бъде издадена при доставка)" : ""}</div>
+            )}
+            {order.invoice_date && (
+              <div><span className="text-muted-foreground">Дата:</span> {new Date(order.invoice_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
+            )}
+            {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
+            {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
+            {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
+            {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
+            {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={async () => {
+                try {
+                  const { pdfBase64, filename } = await downloadInvoicePDF(id)
+                  const blob = new Blob(
+                    [Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0))],
+                    { type: "application/pdf" }
+                  )
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement("a")
+                  a.href = url
+                  a.download = filename
+                  a.click()
+                  URL.revokeObjectURL(url)
+                } catch {
+                  setActionError("Грешка при генериране на фактура")
+                }
+              }}
+            >
+              {order.invoice_number ? "Изтегли фактура" : "Изтегли проформа"}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Actions */}

@@ -97,6 +97,31 @@ ECONT_PASSWORD=1Asp-dev
 
 Econt provides demo credentials (`iasp-dev` / `1Asp-dev`) that work out of the box for local development.
 
+Invoice generation (Bulgarian ЗДДС)
+
+Invoices are generated only when a customer provides company data (ЕИК/Булстат) during checkout. Individual consumers receive order confirmations only, per standard Bulgarian e-commerce practice.
+
+Add your seller/company details to `.env.local`:
+```
+# Seller info (required for invoice generation)
+SELLER_COMPANY_NAME=Вашата Фирма ЕООД
+SELLER_EIK=123456789
+SELLER_VAT_NUMBER=BG123456789
+SELLER_MOL=Име Фамилия
+SELLER_ADDRESS=гр. София, ул. Примерна 1
+SELLER_CITY=София
+SELLER_POSTAL_CODE=1000
+SELLER_PHONE=+359 88 123 4567
+SELLER_EMAIL=info@example.com
+SELLER_IBAN=BG12AAAA12341234123412
+SELLER_BANK=Банка АД
+```
+
+Run the database migration:
+```
+scripts/003_add_invoice_system.sql
+```
+
 Admin panel
 
 Set a password in `.env.local`:
@@ -108,8 +133,8 @@ Then visit `/admin` to log in. The admin panel lets you:
 - View and filter orders by status (pending, confirmed, shipped, delivered, cancelled)
 - View full order details (customer info, items, delivery, invoice)
 - Mark orders as shipped (with tracking number — sends email notification to customer)
-- Mark orders as delivered
-- Cancel orders
+- Mark orders as delivered or cancel orders
+- Download invoice PDF for orders with company data
 
 Run the app
 
