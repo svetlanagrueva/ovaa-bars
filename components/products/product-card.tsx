@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useCartStore } from "@/lib/store/cart"
-import { formatPrice, type Product } from "@/lib/products"
+import { type Product } from "@/lib/products"
+import { PriceDisplay } from "@/components/products/price-display"
 
 interface ProductCardProps {
   product: Product
@@ -52,9 +53,7 @@ export function ProductCard({ product }: ProductCardProps) {
         </div>
       </CardContent>
       <CardFooter className="flex items-center justify-between p-4 pt-0">
-        <span className="text-xl font-bold text-foreground">
-          {formatPrice(product.priceInCents)}
-        </span>
+        <PriceDisplay product={product} size="sm" />
         <div className="flex gap-2">
           <Button 
             variant="outline" 

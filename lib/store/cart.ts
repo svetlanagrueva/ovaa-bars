@@ -2,7 +2,7 @@
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import type { Product } from "@/lib/products"
+import { getProduct, type Product } from "@/lib/products"
 import { MAX_QUANTITY } from "@/lib/constants"
 
 export interface CartItem {
@@ -19,6 +19,7 @@ interface CartState {
   clearCart: () => void
   getTotalItems: () => number
   getTotalPrice: () => number
+  syncPrices: () => void
 }
 
 export const useCartStore = create<CartState>()(
@@ -79,6 +80,24 @@ export const useCartStore = create<CartState>()(
           (total, item) => total + item.product.priceInCents * item.quantity,
           0
         )
+      },
+
+      syncPrices: () => {
+        const items = get().items
+        let changed = false
+        const updated = items.map((item) => {
+          const current = getProduct(item.product.id)
+          if (!current) return item
+          if (
+            current.priceInCents !== item.product.priceInCents ||
+            current.originalPriceInCents !== item.product.originalPriceInCents
+          ) {
+            changed = true
+            return { ...item, product: { ...item.product, priceInCents: current.priceInCents, originalPriceInCents: current.originalPriceInCents } }
+          }
+          return item
+        })
+        if (changed) set({ items: updated })
       },
     }),
     {

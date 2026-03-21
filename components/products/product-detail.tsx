@@ -8,7 +8,8 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useCartStore } from "@/lib/store/cart"
-import { formatPrice, type Product } from "@/lib/products"
+import { formatPrice, isOnSale, type Product } from "@/lib/products"
+import { PriceDisplay } from "@/components/products/price-display"
 import { ProductCard } from "@/components/products/product-card"
 import { MAX_QUANTITY } from "@/lib/constants"
 
@@ -107,12 +108,7 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
             </div>
 
             <div className="mt-8 border-t border-border pt-8">
-              <p className="text-3xl font-light text-foreground">
-                {formatPrice(product.priceInCents)}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {formatPrice(Math.round(product.priceInCents / product.barsCount))} на бар
-              </p>
+              <PriceDisplay product={product} size="lg" showPerBar />
             </div>
 
             {/* Quantity Selector */}
@@ -145,6 +141,11 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
             >
               <ShoppingBag className="h-5 w-5" />
               Добави в количката - {formatPrice(product.priceInCents * quantity)}
+              {isOnSale(product) && (
+                <span className="text-xs opacity-75 ml-1">
+                  (спестявате {formatPrice((product.originalPriceInCents! - product.priceInCents) * quantity)})
+                </span>
+              )}
             </Button>
 
             {/* Description */}

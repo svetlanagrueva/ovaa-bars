@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { PRODUCTS, getProduct, getProductBySlug, formatPrice } from "@/lib/products"
+import { PRODUCTS, getProduct, getProductBySlug, formatPrice, isOnSale, getDiscountPercentage } from "@/lib/products"
 
 describe("PRODUCTS data", () => {
   it("has 3 products", () => {
@@ -82,5 +82,45 @@ describe("formatPrice", () => {
 
   it("formats round amounts", () => {
     expect(formatPrice(10000)).toBe("100,00 €")
+  })
+})
+
+describe("isOnSale", () => {
+  const baseProduct = PRODUCTS[0]
+
+  it("returns false when originalPriceInCents is undefined", () => {
+    expect(isOnSale({ ...baseProduct, originalPriceInCents: undefined })).toBe(false)
+  })
+
+  it("returns true when originalPriceInCents > priceInCents", () => {
+    expect(isOnSale({ ...baseProduct, priceInCents: 1999, originalPriceInCents: 2570 })).toBe(true)
+  })
+
+  it("returns false when originalPriceInCents equals priceInCents", () => {
+    expect(isOnSale({ ...baseProduct, priceInCents: 2570, originalPriceInCents: 2570 })).toBe(false)
+  })
+
+  it("returns false when originalPriceInCents < priceInCents", () => {
+    expect(isOnSale({ ...baseProduct, priceInCents: 2570, originalPriceInCents: 1999 })).toBe(false)
+  })
+})
+
+describe("getDiscountPercentage", () => {
+  const baseProduct = PRODUCTS[0]
+
+  it("returns 0 when not on sale", () => {
+    expect(getDiscountPercentage(baseProduct)).toBe(0)
+  })
+
+  it("calculates correct percentage", () => {
+    expect(getDiscountPercentage({ ...baseProduct, priceInCents: 1999, originalPriceInCents: 2570 })).toBe(22)
+  })
+
+  it("rounds percentage to nearest integer", () => {
+    expect(getDiscountPercentage({ ...baseProduct, priceInCents: 2000, originalPriceInCents: 2570 })).toBe(22)
+  })
+
+  it("handles 50% discount", () => {
+    expect(getDiscountPercentage({ ...baseProduct, priceInCents: 1000, originalPriceInCents: 2000 })).toBe(50)
   })
 })

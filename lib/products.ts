@@ -5,6 +5,7 @@ export interface Product {
   shortDescription: string
   fullDescription: string
   priceInCents: number
+  originalPriceInCents?: number // set when product is on sale (must be lowest price in last 30 days per EU Omnibus Directive)
   image: string
   images: string[]
   badge?: string
@@ -160,4 +161,20 @@ export function getProductBySlug(slug: string): Product | undefined {
 
 export function formatPrice(priceInCents: number): string {
   return (priceInCents / 100).toFixed(2).replace(".", ",") + " €"
+}
+
+export function isOnSale(product: Product): boolean {
+  return (
+    product.originalPriceInCents !== undefined &&
+    product.originalPriceInCents > product.priceInCents
+  )
+}
+
+export function getDiscountPercentage(product: Product): number {
+  if (!isOnSale(product)) return 0
+  return Math.round(
+    ((product.originalPriceInCents! - product.priceInCents) /
+      product.originalPriceInCents!) *
+      100
+  )
 }

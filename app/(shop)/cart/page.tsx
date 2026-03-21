@@ -7,7 +7,7 @@ import { Minus, Plus, Trash2, ShoppingBag, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useCartStore } from "@/lib/store/cart"
-import { formatPrice } from "@/lib/products"
+import { formatPrice, isOnSale } from "@/lib/products"
 import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE_OFFICE } from "@/lib/constants"
 
 export default function CartPage() {
@@ -82,6 +82,11 @@ export default function CartPage() {
                       <div>
                         <h3 className="font-semibold text-foreground">{item.product.name}</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
+                          {isOnSale(item.product) && (
+                            <span className="line-through mr-1">
+                              {formatPrice(item.product.originalPriceInCents!)}
+                            </span>
+                          )}
                           {formatPrice(item.product.priceInCents)} / кутия
                         </p>
                       </div>
@@ -137,6 +142,16 @@ export default function CartPage() {
                 <span className="text-muted-foreground">Междинна сума</span>
                 <span className="text-foreground">{formatPrice(totalPrice)}</span>
               </div>
+              {items.some((item) => isOnSale(item.product)) && (
+                <div className="flex justify-between text-sm text-green-600">
+                  <span>Спестявате</span>
+                  <span>-{formatPrice(items.reduce((s, item) =>
+                    s + (isOnSale(item.product)
+                      ? (item.product.originalPriceInCents! - item.product.priceInCents) * item.quantity
+                      : 0), 0))}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Доставка</span>
                 <span className="text-foreground">
