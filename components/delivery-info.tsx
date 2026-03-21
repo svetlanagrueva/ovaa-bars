@@ -1,11 +1,12 @@
 import { formatPrice } from "@/lib/products"
-import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE_OFFICE } from "@/lib/constants"
+import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE_OFFICE, SHIPPING_PRICE_ADDRESS } from "@/lib/constants"
 
 export function DeliveryInfo() {
   return (
     <div className="space-y-4 text-sm text-muted-foreground">
       <p>Всички поръчки над {formatPrice(FREE_SHIPPING_THRESHOLD)} са с безплатна доставка до офис на куриер.</p>
       <p>При поръчка под {formatPrice(FREE_SHIPPING_THRESHOLD)} се начислява доставка {formatPrice(SHIPPING_PRICE_OFFICE)}.</p>
+      <p>При доставка до адрес се начислява доставка {formatPrice(SHIPPING_PRICE_ADDRESS)} независимо от стойността на поръчката.</p>
       <p>
         Онлайн магазинът извършва доставка в цяла България с куриерска
         фирма &bdquo;Еконт Експрес&ldquo; &mdash; до точен адрес или до офис на

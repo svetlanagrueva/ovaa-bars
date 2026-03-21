@@ -99,10 +99,10 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
         <Label>Офис на Еконт *</Label>
         <Input
           placeholder="Въведи адрес или офис на Еконт за доставка"
-          onChange={(e) => {
-            const value = e.target.value
-            if (value.trim()) {
-              onSelect({ id: 0, name: value.trim(), city: "", fullAddress: value.trim() })
+          onBlur={(e) => {
+            const value = e.target.value.trim()
+            if (value) {
+              onSelect({ id: 0, name: value, city: "", fullAddress: value })
             }
           }}
         />

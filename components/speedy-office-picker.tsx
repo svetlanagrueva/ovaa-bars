@@ -99,10 +99,10 @@ export function SpeedyOfficePicker({ selectedOfficeId, onSelect }: SpeedyOfficeP
         <Label>Офис на Speedy *</Label>
         <Input
           placeholder="Въведи адрес, офис или автомат за доставка със Speedy"
-          onChange={(e) => {
-            const value = e.target.value
-            if (value.trim()) {
-              onSelect({ id: 0, name: value.trim(), city: "", fullAddress: value.trim() })
+          onBlur={(e) => {
+            const value = e.target.value.trim()
+            if (value) {
+              onSelect({ id: 0, name: value, city: "", fullAddress: value })
             }
           }}
         />

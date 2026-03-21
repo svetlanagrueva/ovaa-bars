@@ -145,7 +145,7 @@ export default function CartPage() {
               </div>
               {totalPrice < FREE_SHIPPING_THRESHOLD && (
                 <p className="text-xs text-muted-foreground">
-                  Добавете още {formatPrice(FREE_SHIPPING_THRESHOLD - totalPrice)} за безплатна доставка
+                  Добавете още {formatPrice(FREE_SHIPPING_THRESHOLD - totalPrice)} за безплатна доставка до офис на куриер
                 </p>
               )}
               <div className="border-t border-border pt-3">

@@ -187,10 +187,6 @@ function validateCartItems(cartItems: CartItem[]) {
   })
 }
 
-function calculateShipping(subtotal: number, deliveryMethod: string): number {
-  return calculateShippingPrice(subtotal, deliveryMethod)
-}
-
 function validateOfficeData(
   label: string,
   deliveryMethod: string,
@@ -230,7 +226,7 @@ export async function createCheckoutSession(data: CheckoutData) {
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
-  const shippingPrice = calculateShipping(subtotal, deliveryMethod)
+  const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
   const totalAmount = subtotal + shippingPrice
 
   const lineItems = validatedItems.map((item) => ({
@@ -428,7 +424,7 @@ export async function createCODOrder(data: CODOrderData) {
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
-  const shippingPrice = calculateShipping(subtotal, deliveryMethod)
+  const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
   const codFee = COD_FEE
   const totalAmount = subtotal + shippingPrice + codFee
 
