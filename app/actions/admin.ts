@@ -115,20 +115,20 @@ export interface OrderDetail extends OrderSummary {
   discount_amount: number
 }
 
-export async function getOrders(params?: {
+interface OrderQueryParams {
   status?: string
   search?: string
   dateFrom?: string
   dateTo?: string
-}): Promise<OrderSummary[]> {
-  await requireAdmin()
-  const supabase = await createClient()
+  invoiceFilter?: string
+}
 
-  let query = supabase
-    .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date")
-    .order("created_at", { ascending: false })
+const ORDERS_PAGE_SIZE = 100
 
+function applyOrderFilters(
+  query: ReturnType<Awaited<ReturnType<typeof createClient>>["from"]>,
+  params?: OrderQueryParams
+) {
   const status = params?.status
   if (status && status !== "all") {
     query = query.eq("status", status)
@@ -146,7 +146,6 @@ export async function getOrders(params?: {
 
   const search = params?.search?.trim().toLowerCase()
   if (search) {
-    // Search by order ID prefix, name, or email
     const uuidPrefix = /^#?[0-9a-f-]+$/i.test(search)
     if (uuidPrefix) {
       const cleanId = search.replace(/^#/, "")
@@ -157,6 +156,55 @@ export async function getOrders(params?: {
       query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`)
     }
   }
+
+  const invoiceFilter = params?.invoiceFilter
+  if (invoiceFilter === "requested") {
+    query = query.eq("needs_invoice", true)
+  } else if (invoiceFilter === "issued") {
+    query = query.not("invoice_number", "is", null)
+  } else if (invoiceFilter === "pending") {
+    query = query.eq("needs_invoice", true).is("invoice_number", null)
+  }
+
+  return query
+}
+
+export async function getOrders(params?: OrderQueryParams & { page?: number }): Promise<{ orders: OrderSummary[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = params?.page ?? 0
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range(from, to)
+
+  query = applyOrderFilters(query, params)
+
+  const { data, error, count } = await query
+
+  if (error) {
+    console.error("Failed to fetch orders:", error)
+    throw new Error("Failed to fetch orders")
+  }
+
+  return { orders: data || [], total: count ?? 0 }
+}
+
+export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSummary[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date")
+    .order("created_at", { ascending: false })
+
+  query = applyOrderFilters(query, params)
 
   const { data, error } = await query
 
@@ -182,20 +230,16 @@ export interface InvoiceSummary {
   needs_invoice: boolean
 }
 
-export async function getInvoices(params?: {
+interface InvoiceQueryParams {
   search?: string
   dateFrom?: string
   dateTo?: string
-}): Promise<InvoiceSummary[]> {
-  await requireAdmin()
-  const supabase = await createClient()
+}
 
-  let query = supabase
-    .from("orders")
-    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice")
-    .not("invoice_number", "is", null)
-    .order("invoice_date", { ascending: false })
-
+function applyInvoiceFilters(
+  query: ReturnType<Awaited<ReturnType<typeof createClient>>["from"]>,
+  params?: InvoiceQueryParams
+) {
   const dateFrom = params?.dateFrom
   if (dateFrom) {
     query = query.gte("invoice_date", `${dateFrom}T00:00:00`)
@@ -214,6 +258,48 @@ export async function getInvoices(params?: {
       query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,invoice_company_name.ilike.%${search}%`)
     }
   }
+
+  return query
+}
+
+export async function getInvoices(params?: InvoiceQueryParams & { page?: number }): Promise<{ invoices: InvoiceSummary[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = params?.page ?? 0
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice", { count: "exact" })
+    .not("invoice_number", "is", null)
+    .order("invoice_date", { ascending: false })
+    .range(from, to)
+
+  query = applyInvoiceFilters(query, params)
+
+  const { data, error, count } = await query
+
+  if (error) {
+    console.error("Failed to fetch invoices:", error)
+    throw new Error("Failed to fetch invoices")
+  }
+
+  return { invoices: (data || []) as InvoiceSummary[], total: count ?? 0 }
+}
+
+export async function getAllInvoices(params?: InvoiceQueryParams): Promise<InvoiceSummary[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice")
+    .not("invoice_number", "is", null)
+    .order("invoice_date", { ascending: false })
+
+  query = applyInvoiceFilters(query, params)
 
   const { data, error } = await query
 
