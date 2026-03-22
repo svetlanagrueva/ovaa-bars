@@ -27,6 +27,7 @@ export default function AdminInvoicesPage() {
   const [dateTo, setDateTo] = useState("")
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [csvLoading, setCsvLoading] = useState(false)
+  const [error, setError] = useState("")
 
   const filters = { search, dateFrom, dateTo }
 
@@ -88,7 +89,7 @@ export default function AdminInvoicesPage() {
       a.click()
       URL.revokeObjectURL(url)
     } catch {
-      // Error exporting
+      setError("Грешка при експорт на CSV")
     } finally {
       setCsvLoading(false)
     }
@@ -109,7 +110,7 @@ export default function AdminInvoicesPage() {
       a.click()
       URL.revokeObjectURL(url)
     } catch {
-      // Error downloading
+      setError("Грешка при изтегляне на PDF")
     } finally {
       setDownloadingId(null)
     }
@@ -124,6 +125,13 @@ export default function AdminInvoicesPage() {
           {csvLoading ? "Експорт..." : `CSV (${total})`}
         </Button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-900">
+          {error}
+          <button className="ml-2 underline" onClick={() => setError("")}>Затвори</button>
+        </div>
+      )}
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
         <div className="flex-1">

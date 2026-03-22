@@ -124,7 +124,7 @@ export default function AdminOrdersPage() {
       a.click()
       URL.revokeObjectURL(url)
     } catch {
-      // Error exporting
+      alert("Грешка при експорт на CSV")
     } finally {
       setCsvLoading(false)
     }
@@ -260,7 +260,9 @@ export default function AdminOrdersPage() {
                       (() => {
                         const isPaid = order.payment_method === "card" || order.status === "delivered"
                         if (!isPaid) return <Badge variant="outline" className="text-xs">Поискана</Badge>
-                        const taxDate = new Date(order.created_at)
+                        const taxDate = order.payment_method === "cod" && order.delivered_at
+                          ? new Date(order.delivered_at)
+                          : new Date(order.created_at)
                         const deadline = new Date(taxDate.getTime() + 5 * 24 * 60 * 60 * 1000)
                         const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
                         return (

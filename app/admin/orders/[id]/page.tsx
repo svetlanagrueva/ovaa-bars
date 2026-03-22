@@ -5,7 +5,6 @@ import Link from "next/link"
 import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, type OrderDetail } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { calculateShippingPrice, COD_FEE } from "@/lib/constants"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,8 +36,10 @@ export default function AdminOrderDetailPage({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [trackingNumber, setTrackingNumber] = useState("")
+  const [cancellationReason, setCancellationReason] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
+  const [pdfLoading, setPdfLoading] = useState(false)
 
   useEffect(() => {
     getOrder(id)
@@ -51,7 +52,12 @@ export default function AdminOrderDetailPage({
     setActionError("")
     setActionLoading(true)
     try {
-      await updateOrderStatus(id, newStatus, newStatus === "shipped" ? trackingNumber : undefined)
+      await updateOrderStatus(
+        id,
+        newStatus,
+        newStatus === "shipped" ? trackingNumber : undefined,
+        newStatus === "cancelled" ? cancellationReason : undefined,
+      )
       // Refresh order data
       const updated = await getOrder(id)
       setOrder(updated)
@@ -167,8 +173,6 @@ export default function AdminOrderDetailPage({
               ))}
               {(() => {
                 const subtotal = order.items.reduce((s, item) => s + item.priceInCents * item.quantity, 0)
-                const shippingPrice = calculateShippingPrice(subtotal, order.logistics_partner || "")
-                const codFee = order.payment_method === "cod" ? COD_FEE : 0
                 return (
                   <>
                     <div className="border-t pt-2 flex items-center justify-between text-sm text-muted-foreground">
@@ -177,12 +181,12 @@ export default function AdminOrderDetailPage({
                     </div>
                     <div className="flex items-center justify-between text-sm text-muted-foreground">
                       <span>Доставка ({getDeliveryLabel(order.logistics_partner)})</span>
-                      <span>{shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}</span>
+                      <span>{order.shipping_fee === 0 ? "Безплатна" : formatPrice(order.shipping_fee)}</span>
                     </div>
-                    {codFee > 0 && (
+                    {order.cod_fee > 0 && (
                       <div className="flex items-center justify-between text-sm text-muted-foreground">
                         <span>Наложен платеж</span>
-                        <span>{formatPrice(codFee)}</span>
+                        <span>{formatPrice(order.cod_fee)}</span>
                       </div>
                     )}
                     {order.promo_code && order.discount_amount > 0 && (
@@ -214,7 +218,7 @@ export default function AdminOrderDetailPage({
               (() => {
                 // Tax event: card = payment at checkout (created_at), COD = delivery
                 const taxEventDate = order.payment_method === "cod"
-                  ? (order.status === "delivered" ? new Date(order.created_at) : null)
+                  ? (order.delivered_at ? new Date(order.delivered_at) : null)
                   : new Date(order.created_at)
                 const deadline = taxEventDate ? new Date(taxEventDate.getTime() + 5 * 24 * 60 * 60 * 1000) : null
                 const now = new Date()
@@ -255,6 +259,7 @@ export default function AdminOrderDetailPage({
             )}
             {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
             {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
+            {order.invoice_egn && <div><span className="text-muted-foreground">ЕГН:</span> {order.invoice_egn}</div>}
             {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
@@ -264,6 +269,7 @@ export default function AdminOrderDetailPage({
                   size="sm"
                   disabled={actionLoading}
                   onClick={async () => {
+                    if (!confirm("Сигурни ли сте, че искате да издадете фактура? Това действие е необратимо.")) return
                     setActionError("")
                     setActionLoading(true)
                     try {
@@ -283,7 +289,9 @@ export default function AdminOrderDetailPage({
               <Button
                 variant="outline"
                 size="sm"
+                disabled={pdfLoading}
                 onClick={async () => {
+                  setPdfLoading(true)
                   try {
                     const { pdfBase64, filename } = await downloadInvoicePDF(id)
                     const blob = new Blob(
@@ -298,10 +306,12 @@ export default function AdminOrderDetailPage({
                     URL.revokeObjectURL(url)
                   } catch {
                     setActionError("Грешка при генериране на PDF")
+                  } finally {
+                    setPdfLoading(false)
                   }
                 }}
               >
-                {order.invoice_number ? "Изтегли фактура" : "Изтегли проформа"}
+                {pdfLoading ? "Генериране..." : order.invoice_number ? "Изтегли фактура" : "Изтегли проформа"}
               </Button>
             </div>
           </CardContent>
@@ -319,7 +329,7 @@ export default function AdminOrderDetailPage({
           )}
 
           {order.status === "confirmed" && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-end gap-3">
                 <div className="flex-1">
                   <label className="mb-1 block text-sm font-medium">Номер на пратка</label>
@@ -336,13 +346,21 @@ export default function AdminOrderDetailPage({
                   {actionLoading ? "Обработка..." : "Маркирай като изпратена"}
                 </Button>
               </div>
-              <Button
-                variant="destructive"
-                onClick={() => handleStatusUpdate("cancelled")}
-                disabled={actionLoading}
-              >
-                Откажи поръчката
-              </Button>
+              <div className="border-t pt-4 space-y-2">
+                <label className="block text-sm font-medium">Причина за отказ</label>
+                <Input
+                  placeholder="Въведете причина..."
+                  value={cancellationReason}
+                  onChange={(e) => setCancellationReason(e.target.value)}
+                />
+                <Button
+                  variant="destructive"
+                  onClick={() => handleStatusUpdate("cancelled")}
+                  disabled={actionLoading}
+                >
+                  Откажи поръчката
+                </Button>
+              </div>
             </div>
           )}
 
@@ -356,25 +374,44 @@ export default function AdminOrderDetailPage({
           )}
 
           {order.status === "pending" && (
-            <div className="flex gap-3">
+            <div className="space-y-4">
               <Button
                 onClick={() => handleStatusUpdate("confirmed")}
                 disabled={actionLoading}
               >
                 {actionLoading ? "Обработка..." : "Потвърди"}
               </Button>
-              <Button
-                variant="destructive"
-                onClick={() => handleStatusUpdate("cancelled")}
-                disabled={actionLoading}
-              >
-                Откажи
-              </Button>
+              <div className="border-t pt-4 space-y-2">
+                <label className="block text-sm font-medium">Причина за отказ</label>
+                <Input
+                  placeholder="Въведете причина..."
+                  value={cancellationReason}
+                  onChange={(e) => setCancellationReason(e.target.value)}
+                />
+                <Button
+                  variant="destructive"
+                  onClick={() => handleStatusUpdate("cancelled")}
+                  disabled={actionLoading}
+                >
+                  Откажи
+                </Button>
+              </div>
             </div>
           )}
 
-          {(order.status === "delivered" || order.status === "cancelled") && (
+          {order.status === "delivered" && (
             <p className="text-sm text-muted-foreground">Няма налични действия за тази поръчка.</p>
+          )}
+
+          {order.status === "cancelled" && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-destructive">Поръчката е отказана</p>
+              {order.cancellation_reason && (
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Причина:</span> {order.cancellation_reason}
+                </p>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>

@@ -17,6 +17,8 @@ create table if not exists orders (
   -- Order details
   items jsonb not null,
   total_amount integer not null check (total_amount > 0),
+  shipping_fee integer not null default 0,
+  cod_fee integer not null default 0,
   status text not null default 'pending' check (status in ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled')),
   tracking_number text,
   payment_method text not null check (payment_method in ('card', 'cod')),
@@ -24,11 +26,13 @@ create table if not exists orders (
   stripe_session_id text unique,
   promo_code text,
   discount_amount integer not null default 0,
+  delivered_at timestamptz,
 
   -- Invoice
   needs_invoice boolean default false,
   invoice_company_name text,
   invoice_eik text,
+  invoice_egn text,
   invoice_vat_number text,
   invoice_mol text,
   invoice_address text,
@@ -43,7 +47,10 @@ create table if not exists orders (
   -- Speedy delivery (optional)
   speedy_office_id integer,
   speedy_office_name text,
-  speedy_office_address text
+  speedy_office_address text,
+
+  -- Cancellation
+  cancellation_reason text
 );
 
 -- Enable Row Level Security
