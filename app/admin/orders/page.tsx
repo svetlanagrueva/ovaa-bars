@@ -1,5 +1,6 @@
 "use client"
 
+import { Suspense } from "react"
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
@@ -42,7 +43,15 @@ const PAYMENT_LABELS: Record<string, string> = {
   cod: "Наложен платеж",
 }
 
-export default function AdminOrdersPage() {
+export default function AdminOrdersPageWrapper() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl px-4 py-8"><p className="text-muted-foreground">Зареждане...</p></div>}>
+      <AdminOrdersPage />
+    </Suspense>
+  )
+}
+
+function AdminOrdersPage() {
   const searchParams = useSearchParams()
 
   const [orders, setOrders] = useState<OrderSummary[]>([])
