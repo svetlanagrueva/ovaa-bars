@@ -3,7 +3,6 @@ import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { getNextInvoiceNumber } from "@/lib/invoice"
 import { generateInvoicePDF } from "@/lib/invoice-pdf"
 import { sendInvoiceEmail } from "@/lib/invoice-email"
 import { getSellerConfig } from "@/lib/seller"
@@ -58,32 +57,29 @@ export async function POST(request: Request) {
     // Generate invoice only when customer requested one (provided company data)
     if (order.needs_invoice && order.invoice_eik) {
       try {
-        const invoiceNumber = await getNextInvoiceNumber()
-        const seller = getSellerConfig()
-        const pdfBuffer = await generateInvoicePDF({
-          type: "invoice",
-          invoiceNumber,
-          invoiceDate: new Date(),
-          order,
-          seller,
+        const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
+          p_order_id: orderId,
         })
 
-        await supabase
-          .from("orders")
-          .update({
-            invoice_number: invoiceNumber,
-            invoice_date: new Date().toISOString(),
+        if (!rpcError && invoiceNumber) {
+          const seller = getSellerConfig()
+          const pdfBuffer = await generateInvoicePDF({
+            type: "invoice",
+            invoiceNumber,
+            invoiceDate: new Date(),
+            order,
+            seller,
           })
-          .eq("id", orderId)
 
-        sendInvoiceEmail({
-          to: order.email,
-          firstName: order.first_name,
-          orderId: order.id,
-          invoiceNumber,
-          type: "invoice",
-          pdfBuffer,
-        })
+          sendInvoiceEmail({
+            to: order.email,
+            firstName: order.first_name,
+            orderId: order.id,
+            invoiceNumber,
+            type: "invoice",
+            pdfBuffer,
+          })
+        }
       } catch (invoiceError) {
         console.error("Failed to generate invoice:", invoiceError)
       }

@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { revalidateTag } from "next/cache"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { getNextInvoiceNumber } from "@/lib/invoice"
 import { generateInvoicePDF } from "@/lib/invoice-pdf"
 import { sendInvoiceEmail } from "@/lib/invoice-email"
 import { getSellerConfig } from "@/lib/seller"
@@ -519,32 +518,31 @@ export async function updateOrderStatus(
   // Generate invoice for COD orders with company data, on delivery (tax event = payment)
   if (newStatus === "delivered" && order.payment_method === "cod" && order.needs_invoice && order.invoice_eik && !order.invoice_number) {
     try {
-      const invoiceNumber = await getNextInvoiceNumber()
-      const seller = getSellerConfig()
-      const pdfBuffer = await generateInvoicePDF({
-        type: "invoice",
-        invoiceNumber,
-        invoiceDate: new Date(),
-        order,
-        seller,
+      const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
+        p_order_id: orderId,
       })
 
-      await supabase
-        .from("orders")
-        .update({
-          invoice_number: invoiceNumber,
-          invoice_date: new Date().toISOString(),
+      if (rpcError || !invoiceNumber) {
+        console.error("Failed to issue invoice number for COD:", rpcError)
+      } else {
+        const seller = getSellerConfig()
+        const pdfBuffer = await generateInvoicePDF({
+          type: "invoice",
+          invoiceNumber,
+          invoiceDate: new Date(),
+          order,
+          seller,
         })
-        .eq("id", orderId)
 
-      sendInvoiceEmail({
-        to: order.email as string,
-        firstName: order.first_name as string,
-        orderId: order.id as string,
-        invoiceNumber,
-        type: "invoice",
-        pdfBuffer,
-      })
+        sendInvoiceEmail({
+          to: order.email as string,
+          firstName: order.first_name as string,
+          orderId: order.id as string,
+          invoiceNumber,
+          type: "invoice",
+          pdfBuffer,
+        })
+      }
     } catch (invoiceError) {
       console.error("Failed to generate invoice for COD delivery:", invoiceError)
     }
@@ -569,36 +567,35 @@ export async function issueInvoice(orderId: string): Promise<{ invoiceNumber: st
   if (error || !order) throw new Error("Order not found")
   if (order.invoice_number) throw new Error("Фактура вече е издадена за тази поръчка")
 
-  const invoiceNumber = await getNextInvoiceNumber()
-  const invoiceDate = new Date()
+  // Atomically allocate invoice number and assign to order (single transaction, no gaps)
+  const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
+    p_order_id: orderId,
+  })
+
+  if (rpcError || !invoiceNumber) {
+    console.error("Failed to issue invoice number:", rpcError)
+    throw new Error(rpcError?.message?.includes("already issued")
+      ? "Фактура вече е издадена за тази поръчка"
+      : "Failed to issue invoice")
+  }
+
+  // Fetch updated order with invoice date
+  const { data: updatedOrder } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  const invoiceDate = updatedOrder?.invoice_date ? new Date(updatedOrder.invoice_date) : new Date()
   const seller = getSellerConfig()
 
   const pdfBuffer = await generateInvoicePDF({
     type: "invoice",
     invoiceNumber,
     invoiceDate,
-    order,
+    order: updatedOrder || order,
     seller,
   })
-
-  const { data: updated, error: updateError } = await supabase
-    .from("orders")
-    .update({
-      invoice_number: invoiceNumber,
-      invoice_date: invoiceDate.toISOString(),
-    })
-    .eq("id", orderId)
-    .is("invoice_number", null)
-    .select("id")
-
-  if (updateError) {
-    console.error("Failed to save invoice:", updateError)
-    throw new Error("Failed to save invoice")
-  }
-
-  if (!updated || updated.length === 0) {
-    throw new Error("Фактура вече е издадена за тази поръчка")
-  }
 
   // Send invoice email to customer
   sendInvoiceEmail({
