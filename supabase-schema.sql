@@ -107,6 +107,11 @@ $$;
 create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
 
+create index if not exists idx_orders_status on orders (status);
+create index if not exists idx_orders_created_at on orders (created_at desc);
+create index if not exists idx_orders_needs_invoice on orders (needs_invoice)
+  where needs_invoice = true and invoice_number is null;
+
 -- Dashboard stats (computed server-side for scalability)
 create or replace function dashboard_stats(
   p_today_start timestamptz,
