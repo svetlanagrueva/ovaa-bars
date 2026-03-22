@@ -30,12 +30,19 @@ vi.mock("@/lib/seller", () => ({
 }))
 
 // Mock Supabase — helper to create thenable query results
-function mockThenableResult(data: unknown, error: unknown = null) {
+function mockThenableResult(data: unknown, error: unknown = null, count: number | null = null) {
   const obj: Record<string, unknown> = {
     eq: vi.fn(() => obj),
+    is: vi.fn(() => obj),
+    not: vi.fn(() => obj),
+    ilike: vi.fn(() => obj),
+    or: vi.fn(() => obj),
+    gte: vi.fn(() => obj),
+    lte: vi.fn(() => obj),
     select: vi.fn(() => obj),
+    range: vi.fn(() => obj),
     then(resolve: (v: unknown) => void) {
-      resolve({ data, error })
+      resolve({ data, error, count })
     },
   }
   return obj
@@ -57,6 +64,13 @@ const mockSupabase = {
   update: vi.fn(() => mockUpdateChain),
   eq: vi.fn(() => mockSupabase),
   order: vi.fn(() => mockSupabase),
+  range: vi.fn(() => mockSupabase),
+  is: vi.fn(() => mockSupabase),
+  not: vi.fn(() => mockSupabase),
+  ilike: vi.fn(() => mockSupabase),
+  or: vi.fn(() => mockSupabase),
+  gte: vi.fn(() => mockSupabase),
+  lte: vi.fn(() => mockSupabase),
   single: vi.fn(),
 }
 
@@ -169,46 +183,46 @@ describe("admin actions", () => {
 
     it("returns orders from database", async () => {
       const fakeOrders = [{ id: "order-1" }, { id: "order-2" }]
-      mockSupabase.order.mockReturnValue(mockThenableResult(fakeOrders))
+      mockSupabase.range.mockReturnValue(mockThenableResult(fakeOrders, null, 2))
 
       const { getOrders } = await import("@/app/actions/admin")
       const result = await getOrders()
 
-      expect(result).toEqual(fakeOrders)
+      expect(result).toEqual({ orders: fakeOrders, total: 2 })
       expect(mockSupabase.from).toHaveBeenCalledWith("orders")
     })
 
     it("returns empty array when no orders exist", async () => {
-      mockSupabase.order.mockReturnValue(mockThenableResult(null))
+      mockSupabase.range.mockReturnValue(mockThenableResult(null, null, 0))
 
       const { getOrders } = await import("@/app/actions/admin")
       const result = await getOrders()
 
-      expect(result).toEqual([])
+      expect(result).toEqual({ orders: [], total: 0 })
     })
 
     it("filters by status when provided", async () => {
-      const resultObj = mockThenableResult([])
-      mockSupabase.order.mockReturnValue(resultObj)
+      const resultObj = mockThenableResult([], null, 0)
+      mockSupabase.range.mockReturnValue(resultObj)
 
       const { getOrders } = await import("@/app/actions/admin")
-      await getOrders("pending")
+      await getOrders({ status: "pending" })
 
       expect(resultObj.eq).toHaveBeenCalledWith("status", "pending")
     })
 
     it("does not filter when status is 'all'", async () => {
-      const resultObj = mockThenableResult([])
-      mockSupabase.order.mockReturnValue(resultObj)
+      const resultObj = mockThenableResult([], null, 0)
+      mockSupabase.range.mockReturnValue(resultObj)
 
       const { getOrders } = await import("@/app/actions/admin")
-      await getOrders("all")
+      await getOrders({ status: "all" })
 
       expect(resultObj.eq).not.toHaveBeenCalled()
     })
 
     it("throws on database error", async () => {
-      mockSupabase.order.mockReturnValue(
+      mockSupabase.range.mockReturnValue(
         mockThenableResult(null, { message: "db error" })
       )
 
