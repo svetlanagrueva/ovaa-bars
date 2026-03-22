@@ -150,7 +150,7 @@ export default function AdminOrderDetailPage({
               <div><span className="text-muted-foreground">Офис Speedy:</span> {order.speedy_office_name} — {order.speedy_office_address}</div>
             )}
             {order.tracking_number && (
-              <div><span className="text-muted-foreground">Номер на пратка:</span> <span className="font-mono">{order.tracking_number}</span></div>
+              <div><span className="text-muted-foreground">Номер на товарителница:</span> <span className="font-mono">{order.tracking_number}</span></div>
             )}
             {order.stripe_session_id && (
               <div><span className="text-muted-foreground">Stripe Session:</span> <span className="font-mono text-xs">{order.stripe_session_id}</span></div>
@@ -318,6 +318,50 @@ export default function AdminOrderDetailPage({
         </Card>
       </div>
 
+      {/* History */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">История</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="relative space-y-0">
+            {[
+              { label: "Поръчка създадена", date: order.created_at, always: true },
+              { label: "Потвърдена", date: order.confirmed_at },
+              { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
+              { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
+              { label: "Доставена", date: order.delivered_at },
+              { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason || undefined },
+            ]
+              .filter((e) => e.always || e.date)
+              .map((event, i, arr) => (
+                <div key={i} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className={`h-3 w-3 rounded-full border-2 ${event.date ? "border-primary bg-primary" : "border-muted-foreground bg-background"}`} />
+                    {i < arr.length - 1 && <div className="w-px flex-1 bg-border" />}
+                  </div>
+                  <div className="pb-5">
+                    <p className={`text-sm font-medium ${event.date ? "text-foreground" : "text-muted-foreground"}`}>
+                      {event.label}
+                    </p>
+                    {event.date && (
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(event.date).toLocaleDateString("bg-BG", {
+                          day: "2-digit", month: "2-digit", year: "numeric",
+                          hour: "2-digit", minute: "2-digit",
+                        })}
+                      </p>
+                    )}
+                    {event.detail && (
+                      <p className="mt-0.5 text-xs text-muted-foreground font-mono">{event.detail}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Actions */}
       <Card className="mt-6">
         <CardHeader>
@@ -332,9 +376,9 @@ export default function AdminOrderDetailPage({
             <div className="space-y-4">
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className="mb-1 block text-sm font-medium">Номер на пратка</label>
+                  <label className="mb-1 block text-sm font-medium">Номер на товарителница</label>
                   <Input
-                    placeholder="Въведете номер на пратка"
+                    placeholder="Въведете номер на товарителница"
                     value={trackingNumber}
                     onChange={(e) => setTrackingNumber(e.target.value)}
                   />
