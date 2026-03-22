@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, vi } from "vitest"
 import { useCartStore } from "@/lib/store/cart"
 import { PRODUCTS } from "@/lib/products"
 import { MAX_QUANTITY } from "@/lib/constants"
 
-const darkChocolate = PRODUCTS[0]
-const raspberry = PRODUCTS[1]
+const darkChocolate = PRODUCTS.find((p) => p.id === "egg-origin-dark-chocolate-box")!
+const raspberry = PRODUCTS.find((p) => p.id === "egg-origin-white-chocolate-raspberry-box")!
 
 describe("cart store", () => {
   beforeEach(() => {
@@ -154,6 +154,104 @@ describe("cart store", () => {
       expect(useCartStore.getState().getTotalPrice()).toBe(
         darkChocolate.priceInCents + raspberry.priceInCents
       )
+    })
+  })
+
+  describe("syncPrices", () => {
+    beforeEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it("updates prices when API returns different price", async () => {
+      useCartStore.getState().addItem(darkChocolate)
+
+      const newPrice = darkChocolate.priceInCents - 500
+      vi.spyOn(global, "fetch").mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ id: darkChocolate.id, priceInCents: newPrice }]),
+      } as Response)
+
+      const changed = await useCartStore.getState().syncPrices()
+
+      expect(changed).toBe(true)
+      expect(useCartStore.getState().items[0].product.priceInCents).toBe(newPrice)
+    })
+
+    it("returns false when prices are unchanged", async () => {
+      useCartStore.getState().addItem(darkChocolate)
+
+      vi.spyOn(global, "fetch").mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{
+          id: darkChocolate.id,
+          priceInCents: darkChocolate.priceInCents,
+          originalPriceInCents: darkChocolate.originalPriceInCents,
+        }]),
+      } as Response)
+
+      const changed = await useCartStore.getState().syncPrices()
+
+      expect(changed).toBe(false)
+    })
+
+    it("returns false when fetch fails", async () => {
+      useCartStore.getState().addItem(darkChocolate)
+
+      vi.spyOn(global, "fetch").mockRejectedValueOnce(new Error("Network error"))
+
+      const changed = await useCartStore.getState().syncPrices()
+
+      expect(changed).toBe(false)
+    })
+
+    it("returns false when API returns non-ok", async () => {
+      useCartStore.getState().addItem(darkChocolate)
+
+      vi.spyOn(global, "fetch").mockResolvedValueOnce({
+        ok: false,
+      } as Response)
+
+      const changed = await useCartStore.getState().syncPrices()
+
+      expect(changed).toBe(false)
+    })
+
+    it("updates originalPriceInCents for sale items", async () => {
+      useCartStore.getState().addItem(darkChocolate)
+
+      vi.spyOn(global, "fetch").mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{
+          id: darkChocolate.id,
+          priceInCents: 2000,
+          originalPriceInCents: darkChocolate.priceInCents,
+        }]),
+      } as Response)
+
+      const changed = await useCartStore.getState().syncPrices()
+
+      expect(changed).toBe(true)
+      expect(useCartStore.getState().items[0].product.priceInCents).toBe(2000)
+      expect(useCartStore.getState().items[0].product.originalPriceInCents).toBe(darkChocolate.priceInCents)
+    })
+
+    it("skips products not in API response", async () => {
+      useCartStore.getState().addItem(darkChocolate)
+      useCartStore.getState().addItem(raspberry)
+
+      vi.spyOn(global, "fetch").mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{
+          id: darkChocolate.id,
+          priceInCents: 1000,
+        }]),
+      } as Response)
+
+      await useCartStore.getState().syncPrices()
+
+      // darkChocolate updated, raspberry unchanged
+      expect(useCartStore.getState().items[0].product.priceInCents).toBe(1000)
+      expect(useCartStore.getState().items[1].product.priceInCents).toBe(raspberry.priceInCents)
     })
   })
 })

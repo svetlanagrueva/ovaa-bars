@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest"
+import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
 
 // Set env var in vi.hoisted so it runs before module-level evaluation
 vi.hoisted(() => {
@@ -9,23 +10,14 @@ vi.hoisted(() => {
 vi.mock("@/lib/stripe", () => ({
   stripe: {
     checkout: {
-      sessions: {
-        create: vi.fn(),
-        retrieve: vi.fn(),
-      },
+      sessions: { create: vi.fn(), retrieve: vi.fn() },
     },
+    coupons: { del: vi.fn(() => Promise.resolve()) },
   },
 }))
 
 // Mock Supabase
-const mockSupabase = {
-  from: vi.fn(() => mockSupabase),
-  insert: vi.fn(() => mockSupabase),
-  update: vi.fn(() => mockSupabase),
-  select: vi.fn(() => mockSupabase),
-  eq: vi.fn(() => mockSupabase),
-  single: vi.fn(),
-}
+const mockSupabase = createSupabaseMock()
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(() => Promise.resolve(mockSupabase)),
@@ -39,12 +31,11 @@ vi.mock("resend", () => ({
 }))
 
 // Mock next/headers
+let mockIp = "127.0.0.1"
 vi.mock("next/headers", () => ({
-  headers: vi.fn(() =>
-    Promise.resolve({
-      get: (name: string) => (name === "x-forwarded-for" ? "127.0.0.1" : null),
-    })
-  ),
+  headers: vi.fn(() => Promise.resolve({
+    get: (name: string) => name === "x-forwarded-for" ? mockIp : null,
+  })),
 }))
 
 // Mock sales module — returns base prices (no active sales in tests)
@@ -62,9 +53,13 @@ vi.mock("@/lib/invoice-email", () => ({
 }))
 vi.mock("@/lib/seller", () => ({
   getSellerConfig: vi.fn(() => ({
-    companyName: "Test", eik: "123", vatNumber: "", mol: "Test",
-    address: "", city: "", postalCode: "", phone: "", email: "", iban: "", bank: "",
+    companyName: "Test Co", eik: "123456789", vatNumber: "", mol: "Test",
+    address: "Test St", city: "Sofia", postalCode: "1000", phone: "",
+    email: "", iban: "", bank: "",
   })),
+}))
+vi.mock("@/lib/invoice", () => ({
+  getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
 }))
 
 // Use dynamic imports to ensure env is set before module loads
@@ -111,6 +106,8 @@ const validSpeedyOffice = {
 describe("Econt office validation – createCheckoutSession", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
   })
 
   it("rejects econt-office delivery without office data", async () => {
@@ -294,6 +291,8 @@ describe("Econt office validation – createCheckoutSession", () => {
 describe("Econt office validation – createCODOrder", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
   })
 
   it("rejects econt-office delivery without office data", async () => {

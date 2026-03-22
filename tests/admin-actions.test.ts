@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
+import { validUUID } from "./helpers/fixtures"
 
 // Mock admin-auth
 const mockCreateAdminSession = vi.fn()
@@ -29,54 +31,8 @@ vi.mock("@/lib/seller", () => ({
   })),
 }))
 
-// Mock Supabase — helper to create thenable query results
-function mockThenableResult(data: unknown, error: unknown = null, count: number | null = null) {
-  const obj: Record<string, unknown> = {
-    eq: vi.fn(() => obj),
-    is: vi.fn(() => obj),
-    not: vi.fn(() => obj),
-    ilike: vi.fn(() => obj),
-    or: vi.fn(() => obj),
-    gte: vi.fn(() => obj),
-    lte: vi.fn(() => obj),
-    select: vi.fn(() => obj),
-    range: vi.fn(() => obj),
-    then(resolve: (v: unknown) => void) {
-      resolve({ data, error, count })
-    },
-  }
-  return obj
-}
-
-// Update chain: .update().eq().eq().select() → thenable with { data: [...], error: null }
-const mockUpdateChain = {
-  eq: vi.fn(() => mockUpdateChain),
-  select: vi.fn(() => mockUpdateChain),
-  then(resolve: (v: unknown) => void) {
-    resolve({ data: [{ id: "updated" }], error: null })
-  },
-}
-
-const mockSupabase: Record<string, ReturnType<typeof vi.fn>> = {
-  from: vi.fn(() => mockSupabase),
-  select: vi.fn(() => mockSupabase),
-  insert: vi.fn(() => mockSupabase),
-  update: vi.fn(() => mockUpdateChain),
-  delete: vi.fn(() => mockSupabase),
-  eq: vi.fn(() => mockSupabase),
-  neq: vi.fn(() => mockSupabase),
-  order: vi.fn(() => mockSupabase),
-  range: vi.fn(() => mockSupabase),
-  limit: vi.fn(() => mockSupabase),
-  is: vi.fn(() => mockSupabase),
-  not: vi.fn(() => mockSupabase),
-  ilike: vi.fn(() => mockSupabase),
-  or: vi.fn(() => mockSupabase),
-  gte: vi.fn(() => mockSupabase),
-  lte: vi.fn(() => mockSupabase),
-  single: vi.fn(),
-  rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
-}
+// Mock Supabase
+const mockSupabase = createSupabaseMock()
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(() => Promise.resolve(mockSupabase)),
@@ -98,6 +54,11 @@ vi.mock("next/navigation", () => ({
   },
 }))
 
+// Mock next/cache
+vi.mock("next/cache", () => ({
+  revalidateTag: vi.fn(),
+}))
+
 // Mock next/headers
 let mockIp = "127.0.0.1"
 vi.mock("next/headers", () => ({
@@ -116,13 +77,7 @@ describe("admin actions", () => {
     mockValidateAdminSession.mockResolvedValue(true)
     // Use unique IP per test to avoid rate-limit interference
     mockIp = `test-${Math.random()}`
-    // Reset mocks that tests override with custom implementations
-    mockSupabase.update = vi.fn(() => mockUpdateChain)
-    mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: null }))
-    mockSupabase.limit = vi.fn(() => mockSupabase)
-    mockSupabase.single = vi.fn()
-    mockSupabase.range = vi.fn(() => mockSupabase)
-    mockSupabase.order = vi.fn(() => mockSupabase)
+    resetSupabaseMock(mockSupabase)
   })
 
   describe("loginAdmin", () => {
@@ -247,7 +202,7 @@ describe("admin actions", () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { getOrder } = await import("@/app/actions/admin")
 
-      await expect(getOrder("550e8400-e29b-41d4-a716-446655440000")).rejects.toThrow(
+      await expect(getOrder(validUUID)).rejects.toThrow(
         "Unauthorized"
       )
     })
@@ -261,11 +216,11 @@ describe("admin actions", () => {
     })
 
     it("returns order detail for valid UUID", async () => {
-      const fakeOrder = { id: "550e8400-e29b-41d4-a716-446655440000", status: "pending" }
+      const fakeOrder = { id: validUUID, status: "pending" }
       mockSupabase.single.mockResolvedValue({ data: fakeOrder, error: null })
 
       const { getOrder } = await import("@/app/actions/admin")
-      const result = await getOrder("550e8400-e29b-41d4-a716-446655440000")
+      const result = await getOrder(validUUID)
 
       expect(result).toEqual(fakeOrder)
     })
@@ -276,13 +231,13 @@ describe("admin actions", () => {
       const { getOrder } = await import("@/app/actions/admin")
 
       await expect(
-        getOrder("550e8400-e29b-41d4-a716-446655440000")
+        getOrder(validUUID)
       ).rejects.toThrow("Order not found")
     })
   })
 
   describe("updateOrderStatus", () => {
-    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -453,7 +408,7 @@ describe("admin actions", () => {
   })
 
   describe("updateAdminNotes", () => {
-    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -494,7 +449,7 @@ describe("admin actions", () => {
   })
 
   describe("issueInvoice", () => {
-    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -561,7 +516,7 @@ describe("admin actions", () => {
   })
 
   describe("downloadInvoicePDF", () => {
-    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -677,8 +632,324 @@ describe("admin actions", () => {
     })
   })
 
+  describe("endSale", () => {
+    const validId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { endSale } = await import("@/app/actions/admin")
+
+      await expect(endSale(validId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { endSale } = await import("@/app/actions/admin")
+
+      await expect(endSale("bad-id")).rejects.toThrow("Invalid sale ID")
+    })
+
+    it("ends an active sale", async () => {
+      const endUpdateChain = {
+        eq: vi.fn(() => endUpdateChain),
+        select: vi.fn(() => endUpdateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validId }], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => endUpdateChain)
+
+      const { endSale } = await import("@/app/actions/admin")
+      const result = await endSale(validId)
+
+      expect(result).toEqual({ success: true })
+    })
+
+    it("throws when sale already ended", async () => {
+      const endUpdateChain = {
+        eq: vi.fn(() => endUpdateChain),
+        select: vi.fn(() => endUpdateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => endUpdateChain)
+
+      const { endSale } = await import("@/app/actions/admin")
+      await expect(endSale(validId)).rejects.toThrow("Промоцията вече е спряна")
+    })
+  })
+
+  describe("getAllOrders", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getAllOrders } = await import("@/app/actions/admin")
+
+      await expect(getAllOrders()).rejects.toThrow("Unauthorized")
+    })
+
+    it("returns all orders in a single batch", async () => {
+      const fakeOrders = Array.from({ length: 5 }, (_, i) => ({ id: `order-${i}` }))
+      mockSupabase.range.mockReturnValue(mockThenableResult(fakeOrders))
+
+      const { getAllOrders } = await import("@/app/actions/admin")
+      const result = await getAllOrders()
+
+      expect(result).toEqual(fakeOrders)
+    })
+
+    it("paginates through multiple batches", async () => {
+      const batch1 = Array.from({ length: 1000 }, (_, i) => ({ id: `order-${i}` }))
+      const batch2 = Array.from({ length: 200 }, (_, i) => ({ id: `order-${1000 + i}` }))
+
+      let callCount = 0
+      mockSupabase.range.mockImplementation(() => {
+        callCount++
+        return mockThenableResult(callCount === 1 ? batch1 : batch2)
+      })
+
+      const { getAllOrders } = await import("@/app/actions/admin")
+      const result = await getAllOrders()
+
+      expect(result.length).toBe(1200)
+      expect(callCount).toBe(2)
+    })
+
+    it("throws on database error", async () => {
+      mockSupabase.range.mockReturnValue(mockThenableResult(null, { message: "db error" }))
+
+      const { getAllOrders } = await import("@/app/actions/admin")
+      await expect(getAllOrders()).rejects.toThrow("Failed to fetch orders")
+    })
+  })
+
+  describe("getAllInvoices", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getAllInvoices } = await import("@/app/actions/admin")
+
+      await expect(getAllInvoices()).rejects.toThrow("Unauthorized")
+    })
+
+    it("returns all invoices in a single batch", async () => {
+      const fakeInvoices = [{ id: "inv-1", invoice_number: "0000000001" }]
+      mockSupabase.range.mockReturnValue(mockThenableResult(fakeInvoices))
+
+      const { getAllInvoices } = await import("@/app/actions/admin")
+      const result = await getAllInvoices()
+
+      expect(result).toEqual(fakeInvoices)
+    })
+
+    it("throws on database error", async () => {
+      mockSupabase.range.mockReturnValue(mockThenableResult(null, { message: "db error" }))
+
+      const { getAllInvoices } = await import("@/app/actions/admin")
+      await expect(getAllInvoices()).rejects.toThrow("Failed to fetch invoices")
+    })
+  })
+
+  describe("createSale", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 2000,
+      })).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects unknown product", async () => {
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "nonexistent-product",
+        salePriceInCents: 2000,
+      })).rejects.toThrow("Продуктът не е намерен")
+    })
+
+    it("rejects non-positive sale price", async () => {
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 0,
+      })).rejects.toThrow("положително число")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: -100,
+      })).rejects.toThrow("положително число")
+    })
+
+    it("rejects non-integer sale price", async () => {
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 19.99,
+      })).rejects.toThrow("положително число")
+    })
+
+    it("rejects sale price >= base price", async () => {
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 2570, // same as base
+      })).rejects.toThrow("по-ниска от базовата")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 3000, // higher than base
+      })).rejects.toThrow("по-ниска от базовата")
+    })
+
+    it("rejects end date in the past", async () => {
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 2000,
+        endsAt: "2020-01-01T00:00:00Z",
+      })).rejects.toThrow("в бъдещето")
+    })
+
+    it("rejects invalid end date", async () => {
+      const { createSale } = await import("@/app/actions/admin")
+
+      await expect(createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 2000,
+        endsAt: "not-a-date",
+      })).rejects.toThrow("Невалидна крайна дата")
+    })
+
+    it("creates sale successfully", async () => {
+      // Mock getLowestPrice30Days chain (history + pastSales)
+      mockSupabase.limit = vi.fn()
+        .mockReturnValueOnce(mockThenableResult([]))  // price history
+        .mockReturnValueOnce(mockThenableResult([]))  // past sales
+      // Mock deactivate existing sale
+      mockSupabase.update = vi.fn(() => mockThenableResult(null))
+      // Mock insert price history + insert sale
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null))
+
+      const { createSale } = await import("@/app/actions/admin")
+      const result = await createSale({
+        productId: "egg-origin-dark-chocolate-box",
+        salePriceInCents: 2000,
+      })
+
+      expect(result).toEqual({ success: true })
+    })
+  })
+
+  describe("createPromoCode", () => {
+    const validInput = {
+      code: "SAVE10",
+      discountType: "percentage" as const,
+      discountValue: 10,
+      minOrderAmount: 0,
+      maxUses: null,
+    }
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode(validInput)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid code format", async () => {
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode({ ...validInput, code: "a" })).rejects.toThrow("2-30 символа")
+      await expect(createPromoCode({ ...validInput, code: "invalid code!" })).rejects.toThrow("2-30 символа")
+      await expect(createPromoCode({ ...validInput, code: "" })).rejects.toThrow("2-30 символа")
+    })
+
+    it("accepts valid code formats", async () => {
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null))
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      const result = await createPromoCode({ ...validInput, code: "AB" })
+      expect(result).toEqual({ success: true })
+    })
+
+    it("rejects non-positive discount value", async () => {
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode({ ...validInput, discountValue: 0 })).rejects.toThrow("положително число")
+      await expect(createPromoCode({ ...validInput, discountValue: -5 })).rejects.toThrow("положително число")
+    })
+
+    it("rejects percentage discount over 100", async () => {
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode({ ...validInput, discountValue: 101 })).rejects.toThrow("100%")
+    })
+
+    it("allows fixed discount over 100", async () => {
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null))
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      const result = await createPromoCode({ ...validInput, discountType: "fixed", discountValue: 500 })
+      expect(result).toEqual({ success: true })
+    })
+
+    it("rejects negative min order amount", async () => {
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode({ ...validInput, minOrderAmount: -1 })).rejects.toThrow("отрицателна")
+    })
+
+    it("rejects non-positive max uses", async () => {
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode({ ...validInput, maxUses: 0 })).rejects.toThrow("положително число")
+      await expect(createPromoCode({ ...validInput, maxUses: -1 })).rejects.toThrow("положително число")
+    })
+
+    it("allows null max uses (unlimited)", async () => {
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null))
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      const result = await createPromoCode({ ...validInput, maxUses: null })
+      expect(result).toEqual({ success: true })
+    })
+
+    it("rejects end date in the past", async () => {
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode({ ...validInput, endsAt: "2020-01-01T00:00:00Z" })).rejects.toThrow("в бъдещето")
+    })
+
+    it("throws on duplicate code", async () => {
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null, { code: "23505", message: "duplicate" }))
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode(validInput)).rejects.toThrow("Вече съществува активен код")
+    })
+
+    it("throws on generic DB error", async () => {
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null, { code: "other", message: "db error" }))
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      await expect(createPromoCode(validInput)).rejects.toThrow("Грешка при създаване")
+    })
+
+    it("creates promo code successfully", async () => {
+      mockSupabase.insert = vi.fn(() => mockThenableResult(null))
+      const { createPromoCode } = await import("@/app/actions/admin")
+
+      const result = await createPromoCode(validInput)
+      expect(result).toEqual({ success: true })
+    })
+  })
+
   describe("deactivatePromoCode", () => {
-    const validId = "550e8400-e29b-41d4-a716-446655440000"
+    const validId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -692,22 +963,116 @@ describe("admin actions", () => {
 
       await expect(deactivatePromoCode("bad-id")).rejects.toThrow("Invalid promo code ID")
     })
-  })
 
-  describe("endSale", () => {
-    const validId = "550e8400-e29b-41d4-a716-446655440000"
+    it("deactivates an active code", async () => {
+      const deactivateChain = {
+        eq: vi.fn(() => deactivateChain),
+        select: vi.fn(() => deactivateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validId }], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => deactivateChain)
 
-    it("throws Unauthorized when not authenticated", async () => {
-      mockValidateAdminSession.mockResolvedValue(false)
-      const { endSale } = await import("@/app/actions/admin")
+      const { deactivatePromoCode } = await import("@/app/actions/admin")
+      const result = await deactivatePromoCode(validId)
 
-      await expect(endSale(validId)).rejects.toThrow("Unauthorized")
+      expect(result).toEqual({ success: true })
     })
 
-    it("rejects invalid UUID", async () => {
-      const { endSale } = await import("@/app/actions/admin")
+    it("throws when code already deactivated", async () => {
+      const deactivateChain = {
+        eq: vi.fn(() => deactivateChain),
+        select: vi.fn(() => deactivateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => deactivateChain)
 
-      await expect(endSale("bad-id")).rejects.toThrow("Invalid sale ID")
+      const { deactivatePromoCode } = await import("@/app/actions/admin")
+      await expect(deactivatePromoCode(validId)).rejects.toThrow("Промо кодът вече е деактивиран")
+    })
+  })
+
+  describe("updateOrderStatus — timestamps and side effects", () => {
+    const validOrderId = validUUID
+
+    it("sets shipped_at and tracking_number when marking as shipped", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId, status: "confirmed",
+          items: [{ productName: "Test", quantity: 1, priceInCents: 1000 }],
+          email: "test@test.com", first_name: "Test",
+        },
+        error: null,
+      })
+
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+      await updateOrderStatus(validOrderId, "shipped", "BG123")
+
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "shipped",
+          shipped_at: expect.any(String),
+          tracking_number: "BG123",
+        })
+      )
+    })
+
+    it("sets delivered_at when marking as delivered", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId, status: "shipped",
+          payment_method: "card", needs_invoice: false,
+        },
+        error: null,
+      })
+
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+      await updateOrderStatus(validOrderId, "delivered")
+
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "delivered",
+          delivered_at: expect.any(String),
+        })
+      )
+    })
+
+    it("sets cancelled_at and reason when cancelling", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "confirmed" },
+        error: null,
+      })
+
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+      await updateOrderStatus(validOrderId, "cancelled", undefined, "Customer requested")
+
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "cancelled",
+          cancelled_at: expect.any(String),
+          cancellation_reason: "Customer requested",
+        })
+      )
+    })
+
+    it("sets confirmed_at when confirming", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "pending" },
+        error: null,
+      })
+
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+      await updateOrderStatus(validOrderId, "confirmed")
+
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "confirmed",
+          confirmed_at: expect.any(String),
+        })
+      )
     })
   })
 })

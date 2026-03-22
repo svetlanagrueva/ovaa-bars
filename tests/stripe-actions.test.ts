@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
+import { validCustomerInfo, validCartItems, singleCartItem, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
 
 // Enable Econt delivery methods for tests
 vi.hoisted(() => {
@@ -9,23 +11,14 @@ vi.hoisted(() => {
 vi.mock("@/lib/stripe", () => ({
   stripe: {
     checkout: {
-      sessions: {
-        create: vi.fn(),
-        retrieve: vi.fn(),
-      },
+      sessions: { create: vi.fn(), retrieve: vi.fn() },
     },
+    coupons: { del: vi.fn(() => Promise.resolve()) },
   },
 }))
 
 // Mock Supabase
-const mockSupabase = {
-  from: vi.fn(() => mockSupabase),
-  insert: vi.fn(() => mockSupabase),
-  update: vi.fn(() => mockSupabase),
-  select: vi.fn(() => mockSupabase),
-  eq: vi.fn(() => mockSupabase),
-  single: vi.fn(),
-}
+const mockSupabase = createSupabaseMock()
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(() => Promise.resolve(mockSupabase)),
@@ -39,9 +32,10 @@ vi.mock("resend", () => ({
 }))
 
 // Mock next/headers
+let mockIp = "127.0.0.1"
 vi.mock("next/headers", () => ({
   headers: vi.fn(() => Promise.resolve({
-    get: (name: string) => name === "x-forwarded-for" ? "127.0.0.1" : null,
+    get: (name: string) => name === "x-forwarded-for" ? mockIp : null,
   })),
 }))
 
@@ -60,9 +54,13 @@ vi.mock("@/lib/invoice-email", () => ({
 }))
 vi.mock("@/lib/seller", () => ({
   getSellerConfig: vi.fn(() => ({
-    companyName: "Test", eik: "123", vatNumber: "", mol: "Test",
-    address: "", city: "", postalCode: "", phone: "", email: "", iban: "", bank: "",
+    companyName: "Test Co", eik: "123456789", vatNumber: "", mol: "Test",
+    address: "Test St", city: "Sofia", postalCode: "1000", phone: "",
+    email: "", iban: "", bank: "",
   })),
+}))
+vi.mock("@/lib/invoice", () => ({
+  getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
 }))
 
 import { createCheckoutSession, confirmOrder, createCODOrder } from "@/app/actions/stripe"
@@ -72,35 +70,11 @@ import { PRODUCTS } from "@/lib/products"
 // Set up sales mock to return base prices (no active sales)
 mockGetProductsWithSales.mockImplementation(() => Promise.resolve([...PRODUCTS]))
 
-const validCartItems = [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }]
-const validCustomerInfo = {
-  firstName: "Иван",
-  lastName: "Петров",
-  email: "ivan@example.com",
-  phone: "+359888123456",
-  city: "София",
-  address: "ул. Тестова 1",
-  postalCode: "1000",
-  notes: "",
-}
-
-const validEcontOffice = {
-  id: 42,
-  name: "София - Дружба",
-  city: "София",
-  fullAddress: "бул. Цариградско шосе 115",
-}
-
-const validSpeedyOffice = {
-  id: 100,
-  name: "Speedy офис София",
-  city: "София",
-  fullAddress: "бул. Ситняково 48",
-}
-
 describe("createCheckoutSession", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
   })
 
   it("creates order in database and Stripe session", async () => {
@@ -248,6 +222,8 @@ describe("createCheckoutSession", () => {
 describe("confirmOrder", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
   })
 
   it("rejects invalid UUID", async () => {
@@ -322,6 +298,8 @@ describe("confirmOrder", () => {
 describe("createCODOrder", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
   })
 
   it("creates order with confirmed status and cod payment method", async () => {
@@ -375,6 +353,8 @@ describe("createCODOrder", () => {
 describe("input validation", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
   })
 
   it("rejects invalid delivery method", async () => {
@@ -458,6 +438,44 @@ describe("input validation", () => {
     ).rejects.toThrow("Notes is too long")
   })
 
+  it("rejects missing required fields", async () => {
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        customerInfo: { ...validCustomerInfo, lastName: "" },
+        deliveryMethod: "speedy-office",
+      })
+    ).rejects.toThrow("Last name is required")
+
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        customerInfo: { ...validCustomerInfo, city: "" },
+        deliveryMethod: "speedy-office",
+      })
+    ).rejects.toThrow("City is required")
+  })
+
+  it("rejects missing Speedy office for office delivery", async () => {
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+      })
+    ).rejects.toThrow("Speedy office")
+  })
+
+  it("rejects missing Econt office for office delivery", async () => {
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "econt-office",
+      })
+    ).rejects.toThrow("Econt office")
+  })
+
   it("confirmOrder returns only status, no PII", async () => {
     const pendingOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -480,5 +498,293 @@ describe("input validation", () => {
     expect(result).not.toHaveProperty("email")
     expect(result).not.toHaveProperty("first_name")
     expect(result).not.toHaveProperty("phone")
+  })
+})
+
+describe("invoice validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
+  })
+
+  it("accepts order without invoice", async () => {
+    const fakeOrder = { id: "order-no-inv", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    const result = await createCODOrder({
+      cartItems: validCartItems,
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+      needsInvoice: false,
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it("accepts valid company invoice data", async () => {
+    const fakeOrder = { id: "order-inv-co", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    const result = await createCODOrder({
+      cartItems: validCartItems,
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+      needsInvoice: true,
+      invoiceInfo: {
+        companyName: "Test EOOD",
+        eik: "123456789",
+        vatNumber: "BG123456789",
+        egn: "",
+        mol: "Иван Петров",
+        invoiceAddress: "София, ул. Тестова 1",
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it("rejects company invoice with invalid EIK", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+        needsInvoice: true,
+        invoiceInfo: {
+          companyName: "Test EOOD",
+          eik: "abc",
+          vatNumber: "",
+          egn: "",
+          mol: "Test",
+          invoiceAddress: "Sofia",
+        },
+      })
+    ).rejects.toThrow("ЕИК трябва да бъде 9 или 13 цифри")
+  })
+
+  it("rejects company invoice with empty EIK", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+        needsInvoice: true,
+        invoiceInfo: {
+          companyName: "Test EOOD",
+          eik: "",
+          vatNumber: "",
+          egn: "",
+          mol: "Test",
+          invoiceAddress: "Sofia",
+        },
+      })
+    ).rejects.toThrow("ЕИК трябва да бъде 9 или 13 цифри")
+  })
+
+  it("rejects company invoice with invalid VAT number", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+        needsInvoice: true,
+        invoiceInfo: {
+          companyName: "Test EOOD",
+          eik: "123456789",
+          vatNumber: "INVALID",
+          egn: "",
+          mol: "Test",
+          invoiceAddress: "Sofia",
+        },
+      })
+    ).rejects.toThrow("Невалиден ДДС номер")
+  })
+
+  it("rejects invoice without MOL", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+        needsInvoice: true,
+        invoiceInfo: {
+          companyName: "",
+          eik: "",
+          vatNumber: "",
+          egn: "",
+          mol: "",
+          invoiceAddress: "Sofia",
+        },
+      })
+    ).rejects.toThrow("МОЛ / Име е задължително")
+  })
+
+  it("rejects invoice without address", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+        needsInvoice: true,
+        invoiceInfo: {
+          companyName: "",
+          eik: "",
+          vatNumber: "",
+          egn: "",
+          mol: "Test Person",
+          invoiceAddress: "",
+        },
+      })
+    ).rejects.toThrow("Адресът е задължителен")
+  })
+
+  it("rejects individual invoice with invalid EGN", async () => {
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+        needsInvoice: true,
+        invoiceInfo: {
+          companyName: "",
+          eik: "",
+          vatNumber: "",
+          egn: "12345",
+          mol: "Test Person",
+          invoiceAddress: "Sofia",
+        },
+      })
+    ).rejects.toThrow("ЕГН трябва да бъде 10 цифри")
+  })
+
+  it("accepts valid individual invoice with EGN", async () => {
+    const fakeOrder = { id: "order-inv-ind", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    const result = await createCODOrder({
+      cartItems: validCartItems,
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+      needsInvoice: true,
+      invoiceInfo: {
+        companyName: "",
+        eik: "",
+        vatNumber: "",
+        egn: "1234567890",
+        mol: "Иван Петров",
+        invoiceAddress: "София, ул. Тестова 1",
+      },
+    })
+
+    expect(result.success).toBe(true)
+  })
+})
+
+describe("createCODOrder — additional", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
+  })
+
+  it("stores shipping_fee and cod_fee on order", async () => {
+    const fakeOrder = { id: "cod-fees", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    await createCODOrder({
+      cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+    })
+
+    const insertCall = mockSupabase.insert.mock.calls[0][0]
+    expect(insertCall.shipping_fee).toBe(300) // speedy office shipping
+    expect(insertCall.cod_fee).toBe(200)
+    expect(insertCall.confirmed_at).toBeTruthy()
+  })
+
+  it("stores invoice data when needsInvoice is true", async () => {
+    const fakeOrder = { id: "cod-inv", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    await createCODOrder({
+      cartItems: validCartItems,
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+      needsInvoice: true,
+      invoiceInfo: {
+        companyName: "Firm",
+        eik: "123456789",
+        vatNumber: "",
+        egn: "",
+        mol: "Boss",
+        invoiceAddress: "Sofia",
+      },
+    })
+
+    const insertCall = mockSupabase.insert.mock.calls[0][0]
+    expect(insertCall.needs_invoice).toBe(true)
+    expect(insertCall.invoice_company_name).toBe("Firm")
+    expect(insertCall.invoice_eik).toBe("123456789")
+    expect(insertCall.invoice_mol).toBe("Boss")
+  })
+
+  it("stores Speedy office data", async () => {
+    const fakeOrder = { id: "cod-speedy", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    await createCODOrder({
+      cartItems: validCartItems,
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+    })
+
+    const insertCall = mockSupabase.insert.mock.calls[0][0]
+    expect(insertCall.speedy_office_id).toBe(100)
+    expect(insertCall.speedy_office_name).toBe("Speedy офис София")
+  })
+
+  it("throws when DB insert fails", async () => {
+    mockSupabase.single.mockResolvedValueOnce({ data: null, error: { message: "DB err" } })
+
+    await expect(
+      createCODOrder({
+        cartItems: validCartItems,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    ).rejects.toThrow("Failed to create order")
+  })
+
+  it("applies free shipping for orders over threshold", async () => {
+    const fakeOrder = { id: "cod-free-ship", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    // 2 boxes = 51.40 EUR > 30 EUR threshold → free office shipping
+    await createCODOrder({
+      cartItems: validCartItems,
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+    })
+
+    const insertCall = mockSupabase.insert.mock.calls[0][0]
+    expect(insertCall.shipping_fee).toBe(0)
+    // total = 5140 (products) + 0 (shipping) + 200 (cod) = 5340
+    expect(insertCall.total_amount).toBe(5340)
   })
 })
