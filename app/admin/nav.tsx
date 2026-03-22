@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 
 const links = [
   { href: "/admin/orders", label: "Поръчки" },
+  { href: "/admin/invoices", label: "Фактури" },
   { href: "/admin/sales", label: "Промоции" },
   { href: "/admin/promo-codes", label: "Промо кодове" },
 ]

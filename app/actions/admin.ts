@@ -81,6 +81,9 @@ export interface OrderSummary {
   total_amount: number
   logistics_partner: string
   tracking_number: string | null
+  needs_invoice: boolean
+  invoice_number: string | null
+  invoice_date: string | null
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -112,17 +115,47 @@ export interface OrderDetail extends OrderSummary {
   discount_amount: number
 }
 
-export async function getOrders(status?: string): Promise<OrderSummary[]> {
+export async function getOrders(params?: {
+  status?: string
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+}): Promise<OrderSummary[]> {
   await requireAdmin()
   const supabase = await createClient()
 
   let query = supabase
     .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number")
+    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date")
     .order("created_at", { ascending: false })
 
+  const status = params?.status
   if (status && status !== "all") {
     query = query.eq("status", status)
+  }
+
+  const dateFrom = params?.dateFrom
+  if (dateFrom) {
+    query = query.gte("created_at", `${dateFrom}T00:00:00`)
+  }
+
+  const dateTo = params?.dateTo
+  if (dateTo) {
+    query = query.lte("created_at", `${dateTo}T23:59:59`)
+  }
+
+  const search = params?.search?.trim().toLowerCase()
+  if (search) {
+    // Search by order ID prefix, name, or email
+    const uuidPrefix = /^#?[0-9a-f-]+$/i.test(search)
+    if (uuidPrefix) {
+      const cleanId = search.replace(/^#/, "")
+      query = query.ilike("id", `${cleanId}%`)
+    } else if (search.includes("@")) {
+      query = query.ilike("email", `%${search}%`)
+    } else {
+      query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`)
+    }
   }
 
   const { data, error } = await query
@@ -133,6 +166,63 @@ export async function getOrders(status?: string): Promise<OrderSummary[]> {
   }
 
   return data || []
+}
+
+export interface InvoiceSummary {
+  id: string
+  created_at: string
+  first_name: string
+  last_name: string
+  email: string
+  total_amount: number
+  invoice_number: string
+  invoice_date: string
+  invoice_company_name: string | null
+  invoice_eik: string | null
+  needs_invoice: boolean
+}
+
+export async function getInvoices(params?: {
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+}): Promise<InvoiceSummary[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice")
+    .not("invoice_number", "is", null)
+    .order("invoice_date", { ascending: false })
+
+  const dateFrom = params?.dateFrom
+  if (dateFrom) {
+    query = query.gte("invoice_date", `${dateFrom}T00:00:00`)
+  }
+
+  const dateTo = params?.dateTo
+  if (dateTo) {
+    query = query.lte("invoice_date", `${dateTo}T23:59:59`)
+  }
+
+  const search = params?.search?.trim().toLowerCase()
+  if (search) {
+    if (/^\d+$/.test(search)) {
+      query = query.ilike("invoice_number", `%${search}%`)
+    } else {
+      query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,invoice_company_name.ilike.%${search}%`)
+    }
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    console.error("Failed to fetch invoices:", error)
+    throw new Error("Failed to fetch invoices")
+  }
+
+  return (data || []) as InvoiceSummary[]
 }
 
 export async function getOrder(orderId: string): Promise<OrderDetail> {
@@ -263,6 +353,60 @@ export async function updateOrderStatus(
   }
 
   return { success: true }
+}
+
+export async function issueInvoice(orderId: string): Promise<{ invoiceNumber: string }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Order not found")
+  if (order.invoice_number) throw new Error("Фактура вече е издадена за тази поръчка")
+
+  const invoiceNumber = await getNextInvoiceNumber()
+  const invoiceDate = new Date()
+  const seller = getSellerConfig()
+
+  const pdfBuffer = await generateInvoicePDF({
+    type: "invoice",
+    invoiceNumber,
+    invoiceDate,
+    order,
+    seller,
+  })
+
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({
+      invoice_number: invoiceNumber,
+      invoice_date: invoiceDate.toISOString(),
+    })
+    .eq("id", orderId)
+
+  if (updateError) {
+    console.error("Failed to save invoice:", updateError)
+    throw new Error("Failed to save invoice")
+  }
+
+  // Send invoice email to customer
+  sendInvoiceEmail({
+    to: order.email,
+    firstName: order.first_name,
+    orderId: order.id,
+    invoiceNumber,
+    type: "invoice",
+    pdfBuffer,
+  })
+
+  return { invoiceNumber }
 }
 
 export async function downloadInvoicePDF(orderId: string): Promise<{ pdfBase64: string; filename: string }> {
@@ -475,7 +619,7 @@ export async function createSale(data: {
     throw new Error("Грешка при създаване на промоцията")
   }
 
-  revalidateTag("active-sales", "page")
+  revalidateTag("active-sales")
   return { success: true }
 }
 
@@ -503,7 +647,7 @@ export async function endSale(saleId: string) {
     throw new Error("Промоцията вече е спряна")
   }
 
-  revalidateTag("active-sales", "page")
+  revalidateTag("active-sales")
   return { success: true }
 }
 

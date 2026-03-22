@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, downloadInvoicePDF, type OrderDetail } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, type OrderDetail } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -186,8 +186,45 @@ export default function AdminOrderDetailPage({
           <CardContent className="space-y-2 text-sm">
             {order.invoice_number ? (
               <div><span className="text-muted-foreground">Номер:</span> <span className="font-mono">{order.invoice_number}</span></div>
+            ) : order.needs_invoice ? (
+              (() => {
+                // Tax event: card = payment at checkout (created_at), COD = delivery
+                const taxEventDate = order.payment_method === "cod"
+                  ? (order.status === "delivered" ? new Date(order.created_at) : null)
+                  : new Date(order.created_at)
+                const deadline = taxEventDate ? new Date(taxEventDate.getTime() + 5 * 24 * 60 * 60 * 1000) : null
+                const now = new Date()
+                const daysLeft = deadline ? Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null
+
+                return (
+                  <div className="space-y-2">
+                    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                      Клиентът е поискал фактура
+                    </div>
+                    {daysLeft !== null && (
+                      <div className={`rounded-md px-3 py-2 text-sm font-medium ${
+                        daysLeft <= 0
+                          ? "border border-red-300 bg-red-50 text-red-900"
+                          : daysLeft <= 2
+                            ? "border border-amber-300 bg-amber-50 text-amber-900"
+                            : "border border-border bg-secondary text-foreground"
+                      }`}>
+                        {daysLeft <= 0
+                          ? `Срокът за издаване е изтекъл! (${deadline!.toLocaleDateString("bg-BG")})`
+                          : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} за издаване (до ${deadline!.toLocaleDateString("bg-BG")})`
+                        }
+                      </div>
+                    )}
+                    {order.payment_method === "cod" && order.status !== "delivered" && (
+                      <div className="text-xs text-muted-foreground">
+                        Срокът започва след доставка (наложен платеж)
+                      </div>
+                    )}
+                  </div>
+                )
+              })()
             ) : (
-              <div className="text-muted-foreground">Фактура не е издадена{order.payment_method === "cod" ? " (ще бъде издадена при доставка)" : ""}</div>
+              <div className="text-muted-foreground">Фактура не е поискана</div>
             )}
             {order.invoice_date && (
               <div><span className="text-muted-foreground">Дата:</span> {new Date(order.invoice_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
@@ -197,30 +234,52 @@ export default function AdminOrderDetailPage({
             {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={async () => {
-                try {
-                  const { pdfBase64, filename } = await downloadInvoicePDF(id)
-                  const blob = new Blob(
-                    [Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0))],
-                    { type: "application/pdf" }
-                  )
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement("a")
-                  a.href = url
-                  a.download = filename
-                  a.click()
-                  URL.revokeObjectURL(url)
-                } catch {
-                  setActionError("Грешка при генериране на фактура")
-                }
-              }}
-            >
-              {order.invoice_number ? "Изтегли фактура" : "Изтегли проформа"}
-            </Button>
+            <div className="flex gap-2 pt-2">
+              {!order.invoice_number && (
+                <Button
+                  size="sm"
+                  disabled={actionLoading}
+                  onClick={async () => {
+                    setActionError("")
+                    setActionLoading(true)
+                    try {
+                      await issueInvoice(id)
+                      const updated = await getOrder(id)
+                      setOrder(updated)
+                    } catch (err) {
+                      setActionError(err instanceof Error ? err.message : "Грешка при издаване на фактура")
+                    } finally {
+                      setActionLoading(false)
+                    }
+                  }}
+                >
+                  Издай фактура
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const { pdfBase64, filename } = await downloadInvoicePDF(id)
+                    const blob = new Blob(
+                      [Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0))],
+                      { type: "application/pdf" }
+                    )
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement("a")
+                    a.href = url
+                    a.download = filename
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  } catch {
+                    setActionError("Грешка при генериране на PDF")
+                  }
+                }}
+              >
+                {order.invoice_number ? "Изтегли фактура" : "Изтегли проформа"}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
