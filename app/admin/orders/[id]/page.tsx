@@ -152,9 +152,6 @@ export default function AdminOrderDetailPage({
             {order.tracking_number && (
               <div><span className="text-muted-foreground">Номер на товарителница:</span> <span className="font-mono">{order.tracking_number}</span></div>
             )}
-            {order.stripe_session_id && (
-              <div><span className="text-muted-foreground">Stripe Session:</span> <span className="font-mono text-xs">{order.stripe_session_id}</span></div>
-            )}
           </CardContent>
         </Card>
 
