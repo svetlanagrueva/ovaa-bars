@@ -52,6 +52,9 @@ create table if not exists orders (
   speedy_office_name text,
   speedy_office_address text,
 
+  -- Admin
+  admin_notes text,
+
   -- Cancellation
   cancellation_reason text
 );

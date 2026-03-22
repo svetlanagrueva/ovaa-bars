@@ -181,6 +181,7 @@ export interface OrderDetail extends OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   cancelled_at: string | null
+  admin_notes: string | null
   cancellation_reason: string | null
   invoice_egn: string | null
 }
@@ -546,6 +547,27 @@ export async function updateOrderStatus(
     } catch (invoiceError) {
       console.error("Failed to generate invoice for COD delivery:", invoiceError)
     }
+  }
+
+  return { success: true }
+}
+
+export async function updateAdminNotes(orderId: string, notes: string) {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (notes.length > 5000) throw new Error("Notes too long")
+
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("orders")
+    .update({ admin_notes: notes.trim() || null })
+    .eq("id", orderId)
+
+  if (error) {
+    console.error("Failed to update admin notes:", error)
+    throw new Error("Failed to update notes")
   }
 
   return { success: true }
