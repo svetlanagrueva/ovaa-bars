@@ -689,13 +689,50 @@ export async function createCODOrder(data: CODOrderData) {
     throw new Error("Failed to create order")
   }
 
-  // Send confirmation email
+  // Send confirmation email and notify admin
   sendCODConfirmationEmail(order, shippingPrice, codFee, deliveryMethod)
+  notifyAdminNewOrder(order, "cod")
 
   return { success: true, orderId: order.id }
 }
 
 // Non-blocking email helpers
+
+function notifyAdminNewOrder(order: Record<string, unknown>, paymentMethod: string) {
+  if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
+
+  const resend = new Resend(process.env.RESEND_API_KEY)
+  const orderItems = order.items as Array<{ productName: string; quantity: number; priceInCents: number }>
+  const itemsList = orderItems
+    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+    .join("\n")
+
+  resend.emails.send({
+    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    to: process.env.ADMIN_EMAIL,
+    subject: `Нова поръчка #${(order.id as string).slice(0, 8)} — ${formatPrice(order.total_amount as number)}`,
+    text: `
+Нова поръчка!
+
+Поръчка: #${(order.id as string).slice(0, 8)}
+Клиент: ${order.first_name} ${order.last_name}
+Имейл: ${order.email}
+Телефон: ${order.phone}
+Град: ${order.city}
+Плащане: ${paymentMethod === "card" ? "Карта" : "Наложен платеж"}
+
+Продукти:
+${itemsList}
+
+Обща сума: ${formatPrice(order.total_amount as number)}
+
+Виж в админ панела:
+${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
+    `.trim(),
+  }).catch((err) => {
+    console.error(`Failed to send admin notification for order ${order.id}:`, err)
+  })
+}
 
 function sendConfirmationEmail(order: Record<string, unknown>) {
   if (!process.env.RESEND_API_KEY) return
@@ -738,8 +775,8 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Поздрави,
 Екипът на Egg Origin
     `.trim(),
-  }).catch(() => {
-    // Email sending failed — don't block order confirmation
+  }).catch((err) => {
+    console.error(`Failed to send confirmation email for order ${order.id}:`, err)
   })
 }
 
@@ -792,7 +829,7 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Поздрави,
 Екипът на Egg Origin
     `.trim(),
-  }).catch(() => {
-    // Email sending failed — don't block order completion
+  }).catch((err) => {
+    console.error(`Failed to send COD confirmation email for order ${order.id}:`, err)
   })
 }

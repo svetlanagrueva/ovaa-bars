@@ -1,7 +1,9 @@
 "use client"
 
+import { Suspense } from "react"
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Search, Download } from "lucide-react"
 import { getOrders, getAllOrders, type OrderSummary } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
@@ -41,16 +43,26 @@ const PAYMENT_LABELS: Record<string, string> = {
   cod: "Наложен платеж",
 }
 
-export default function AdminOrdersPage() {
+export default function AdminOrdersPageWrapper() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl px-4 py-8"><p className="text-muted-foreground">Зареждане...</p></div>}>
+      <AdminOrdersPage />
+    </Suspense>
+  )
+}
+
+function AdminOrdersPage() {
+  const searchParams = useSearchParams()
+
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [status, setStatus] = useState("all")
+  const [status, setStatus] = useState(searchParams.get("status") || "all")
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [invoiceFilter, setInvoiceFilter] = useState("all")
+  const [invoiceFilter, setInvoiceFilter] = useState(searchParams.get("invoiceFilter") || "all")
   const [csvLoading, setCsvLoading] = useState(false)
 
   const filters = { status, search, dateFrom, dateTo, invoiceFilter }
@@ -96,21 +108,28 @@ export default function AdminOrdersPage() {
     try {
       const allOrders = await getAllOrders(filters)
 
-      const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Сума", "Плащане", "Доставка", "Статус", "Фактура №", "Фактура дата"]
-      const rows = allOrders.map((o) => [
-        o.id.slice(0, 8),
-        new Date(o.created_at).toLocaleDateString("bg-BG"),
-        `${o.first_name} ${o.last_name}`,
-        o.email,
-        o.phone,
-        o.city,
-        (o.total_amount / 100).toFixed(2),
-        o.payment_method === "card" ? "Карта" : "Наложен платеж",
-        o.logistics_partner || "",
-        STATUS_LABELS[o.status] || o.status,
-        o.invoice_number || "",
-        o.invoice_date ? new Date(o.invoice_date).toLocaleDateString("bg-BG") : "",
-      ])
+      const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Продукти", "Промо отстъпка", "Доставка такса", "НП такса", "Общо", "Плащане", "Доставка", "Статус", "Фактура №", "Фактура дата"]
+      const rows = allOrders.map((o) => {
+        const productRevenue = o.total_amount - (o.shipping_fee || 0) - (o.cod_fee || 0) + (o.discount_amount || 0)
+        return [
+          o.id.slice(0, 8),
+          new Date(o.created_at).toLocaleDateString("bg-BG"),
+          `${o.first_name} ${o.last_name}`,
+          o.email,
+          o.phone,
+          o.city,
+          (productRevenue / 100).toFixed(2),
+          o.discount_amount ? `-${(o.discount_amount / 100).toFixed(2)}` : "0.00",
+          ((o.shipping_fee || 0) / 100).toFixed(2),
+          ((o.cod_fee || 0) / 100).toFixed(2),
+          (o.total_amount / 100).toFixed(2),
+          o.payment_method === "card" ? "Карта" : "Наложен платеж",
+          o.logistics_partner || "",
+          STATUS_LABELS[o.status] || o.status,
+          o.invoice_number || "",
+          o.invoice_date ? new Date(o.invoice_date).toLocaleDateString("bg-BG") : "",
+        ]
+      })
 
       const csvContent = "\uFEFF" + [headers, ...rows]
         .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))

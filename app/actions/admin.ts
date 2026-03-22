@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { revalidateTag } from "next/cache"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { getNextInvoiceNumber } from "@/lib/invoice"
 import { generateInvoicePDF } from "@/lib/invoice-pdf"
 import { sendInvoiceEmail } from "@/lib/invoice-email"
 import { getSellerConfig } from "@/lib/seller"
@@ -55,7 +54,7 @@ export async function loginAdmin(password: string) {
 
   loginAttempts.delete(ip)
   await createAdminSession()
-  redirect("/admin/orders")
+  redirect("/admin/dashboard")
 }
 
 export async function logoutAdmin() {
@@ -66,6 +65,65 @@ export async function logoutAdmin() {
 async function requireAdmin() {
   const valid = await validateAdminSession()
   if (!valid) throw new Error("Unauthorized")
+}
+
+export interface DashboardStats {
+  today: { orders: number; revenue: number }
+  week: { orders: number; revenue: number }
+  month: { orders: number; revenue: number }
+  pendingOrders: number
+  invoicesAwaiting: number
+  recentOrders: Array<{
+    id: string
+    created_at: string
+    first_name: string
+    last_name: string
+    total_amount: number
+    status: string
+    payment_method: string
+  }>
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  const day = now.getDay()
+  const diffToMonday = day === 0 ? 6 : day - 1
+  const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday).toISOString()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+
+  // Single SQL call for all aggregated stats
+  const { data: statsData, error: statsError } = await supabase.rpc("dashboard_stats", {
+    p_today_start: todayStart,
+    p_week_start: weekStart,
+    p_month_start: monthStart,
+  })
+
+  if (statsError) {
+    console.error("Failed to fetch dashboard stats:", statsError)
+    throw new Error("Failed to fetch dashboard stats")
+  }
+
+  const s = statsData || {}
+
+  // Recent orders (last 10) — small fixed query, fine to fetch as rows
+  const { data: recentOrders } = await supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, total_amount, status, payment_method")
+    .order("created_at", { ascending: false })
+    .limit(10)
+
+  return {
+    today: { orders: s.today_orders ?? 0, revenue: s.today_revenue ?? 0 },
+    week: { orders: s.week_orders ?? 0, revenue: s.week_revenue ?? 0 },
+    month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
+    pendingOrders: s.pending_orders ?? 0,
+    invoicesAwaiting: s.invoices_awaiting ?? 0,
+    recentOrders: recentOrders || [],
+  }
 }
 
 export interface OrderSummary {
@@ -81,6 +139,9 @@ export interface OrderSummary {
   total_amount: number
   logistics_partner: string
   tracking_number: string | null
+  shipping_fee: number
+  cod_fee: number
+  discount_amount: number
   needs_invoice: boolean
   invoice_number: string | null
   invoice_date: string | null
@@ -120,6 +181,7 @@ export interface OrderDetail extends OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   cancelled_at: string | null
+  admin_notes: string | null
   cancellation_reason: string | null
   invoice_egn: string | null
 }
@@ -191,7 +253,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
 
   let query = supabase
     .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
+    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
     .order("created_at", { ascending: false })
     .range(from, to)
 
@@ -218,7 +280,7 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
   while (true) {
     let query = supabase
       .from("orders")
-      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
+      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
 
@@ -457,35 +519,55 @@ export async function updateOrderStatus(
   // Generate invoice for COD orders with company data, on delivery (tax event = payment)
   if (newStatus === "delivered" && order.payment_method === "cod" && order.needs_invoice && order.invoice_eik && !order.invoice_number) {
     try {
-      const invoiceNumber = await getNextInvoiceNumber()
-      const seller = getSellerConfig()
-      const pdfBuffer = await generateInvoicePDF({
-        type: "invoice",
-        invoiceNumber,
-        invoiceDate: new Date(),
-        order,
-        seller,
+      const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
+        p_order_id: orderId,
       })
 
-      await supabase
-        .from("orders")
-        .update({
-          invoice_number: invoiceNumber,
-          invoice_date: new Date().toISOString(),
+      if (rpcError || !invoiceNumber) {
+        console.error("Failed to issue invoice number for COD:", rpcError)
+      } else {
+        const seller = getSellerConfig()
+        const pdfBuffer = await generateInvoicePDF({
+          type: "invoice",
+          invoiceNumber,
+          invoiceDate: new Date(),
+          order,
+          seller,
         })
-        .eq("id", orderId)
 
-      sendInvoiceEmail({
-        to: order.email as string,
-        firstName: order.first_name as string,
-        orderId: order.id as string,
-        invoiceNumber,
-        type: "invoice",
-        pdfBuffer,
-      })
+        sendInvoiceEmail({
+          to: order.email as string,
+          firstName: order.first_name as string,
+          orderId: order.id as string,
+          invoiceNumber,
+          type: "invoice",
+          pdfBuffer,
+        })
+      }
     } catch (invoiceError) {
       console.error("Failed to generate invoice for COD delivery:", invoiceError)
     }
+  }
+
+  return { success: true }
+}
+
+export async function updateAdminNotes(orderId: string, notes: string) {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (notes.length > 5000) throw new Error("Notes too long")
+
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("orders")
+    .update({ admin_notes: notes.trim() || null })
+    .eq("id", orderId)
+
+  if (error) {
+    console.error("Failed to update admin notes:", error)
+    throw new Error("Failed to update notes")
   }
 
   return { success: true }
@@ -507,36 +589,35 @@ export async function issueInvoice(orderId: string): Promise<{ invoiceNumber: st
   if (error || !order) throw new Error("Order not found")
   if (order.invoice_number) throw new Error("Фактура вече е издадена за тази поръчка")
 
-  const invoiceNumber = await getNextInvoiceNumber()
-  const invoiceDate = new Date()
+  // Atomically allocate invoice number and assign to order (single transaction, no gaps)
+  const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
+    p_order_id: orderId,
+  })
+
+  if (rpcError || !invoiceNumber) {
+    console.error("Failed to issue invoice number:", rpcError)
+    throw new Error(rpcError?.message?.includes("already issued")
+      ? "Фактура вече е издадена за тази поръчка"
+      : "Failed to issue invoice")
+  }
+
+  // Fetch updated order with invoice date
+  const { data: updatedOrder } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  const invoiceDate = updatedOrder?.invoice_date ? new Date(updatedOrder.invoice_date) : new Date()
   const seller = getSellerConfig()
 
   const pdfBuffer = await generateInvoicePDF({
     type: "invoice",
     invoiceNumber,
     invoiceDate,
-    order,
+    order: updatedOrder || order,
     seller,
   })
-
-  const { data: updated, error: updateError } = await supabase
-    .from("orders")
-    .update({
-      invoice_number: invoiceNumber,
-      invoice_date: invoiceDate.toISOString(),
-    })
-    .eq("id", orderId)
-    .is("invoice_number", null)
-    .select("id")
-
-  if (updateError) {
-    console.error("Failed to save invoice:", updateError)
-    throw new Error("Failed to save invoice")
-  }
-
-  if (!updated || updated.length === 0) {
-    throw new Error("Фактура вече е издадена за тази поръчка")
-  }
 
   // Send invoice email to customer
   sendInvoiceEmail({
@@ -626,8 +707,8 @@ ${itemsList}
 Поздрави,
 Екипът на Egg Origin
     `.trim(),
-  }).catch(() => {
-    // Non-blocking
+  }).catch((err) => {
+    console.error(`Failed to send shipping email for order ${order.id}:`, err)
   })
 }
 

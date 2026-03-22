@@ -3,7 +3,6 @@ import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { getNextInvoiceNumber } from "@/lib/invoice"
 import { generateInvoicePDF } from "@/lib/invoice-pdf"
 import { sendInvoiceEmail } from "@/lib/invoice-email"
 import { getSellerConfig } from "@/lib/seller"
@@ -58,35 +57,66 @@ export async function POST(request: Request) {
     // Generate invoice only when customer requested one (provided company data)
     if (order.needs_invoice && order.invoice_eik) {
       try {
-        const invoiceNumber = await getNextInvoiceNumber()
-        const seller = getSellerConfig()
-        const pdfBuffer = await generateInvoicePDF({
-          type: "invoice",
-          invoiceNumber,
-          invoiceDate: new Date(),
-          order,
-          seller,
+        const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
+          p_order_id: orderId,
         })
 
-        await supabase
-          .from("orders")
-          .update({
-            invoice_number: invoiceNumber,
-            invoice_date: new Date().toISOString(),
+        if (!rpcError && invoiceNumber) {
+          const seller = getSellerConfig()
+          const pdfBuffer = await generateInvoicePDF({
+            type: "invoice",
+            invoiceNumber,
+            invoiceDate: new Date(),
+            order,
+            seller,
           })
-          .eq("id", orderId)
 
-        sendInvoiceEmail({
-          to: order.email,
-          firstName: order.first_name,
-          orderId: order.id,
-          invoiceNumber,
-          type: "invoice",
-          pdfBuffer,
-        })
+          sendInvoiceEmail({
+            to: order.email,
+            firstName: order.first_name,
+            orderId: order.id,
+            invoiceNumber,
+            type: "invoice",
+            pdfBuffer,
+          })
+        }
       } catch (invoiceError) {
         console.error("Failed to generate invoice:", invoiceError)
       }
+    }
+
+    // Notify admin
+    if (process.env.RESEND_API_KEY && process.env.ADMIN_EMAIL) {
+      const adminResend = new Resend(process.env.RESEND_API_KEY)
+      const adminItems = (order.items as Array<{ productName: string; quantity: number; priceInCents: number }>)
+        .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+        .join("\n")
+
+      adminResend.emails.send({
+        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+        to: process.env.ADMIN_EMAIL,
+        subject: `Нова поръчка #${order.id.slice(0, 8)} — ${formatPrice(order.total_amount)}`,
+        text: `
+Нова поръчка!
+
+Поръчка: #${order.id.slice(0, 8)}
+Клиент: ${order.first_name} ${order.last_name}
+Имейл: ${order.email}
+Телефон: ${order.phone}
+Град: ${order.city}
+Плащане: Карта
+
+Продукти:
+${adminItems}
+
+Обща сума: ${formatPrice(order.total_amount)}
+
+Виж в админ панела:
+${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
+        `.trim(),
+      }).catch((err) => {
+        console.error(`Failed to send admin notification for order ${orderId}:`, err)
+      })
     }
 
     // Send confirmation email
@@ -129,8 +159,8 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Поздрави,
 Екипът на Egg Origin
         `.trim(),
-      }).catch(() => {
-        // Non-blocking
+      }).catch((err) => {
+        console.error(`Failed to send confirmation email for order ${orderId}:`, err)
       })
     }
   }

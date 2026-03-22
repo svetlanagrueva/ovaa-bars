@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation"
 import { logoutAdmin } from "@/app/actions/admin"
 import { Button } from "@/components/ui/button"
 
-const links = [
+const links: Array<{ href: string; label: string; exact?: boolean }> = [
+  { href: "/admin/dashboard", label: "Табло", exact: true },
   { href: "/admin/orders", label: "Поръчки" },
   { href: "/admin/invoices", label: "Фактури" },
   { href: "/admin/sales", label: "Промоции" },
@@ -29,7 +30,7 @@ export function AdminNav() {
                 key={link.href}
                 href={link.href}
                 className={`text-sm font-medium transition-colors ${
-                  pathname.startsWith(link.href)
+                  (link.exact ? pathname === link.href : pathname.startsWith(link.href))
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground"
                 }`}

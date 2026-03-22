@@ -57,14 +57,17 @@ const mockUpdateChain = {
   },
 }
 
-const mockSupabase = {
+const mockSupabase: Record<string, ReturnType<typeof vi.fn>> = {
   from: vi.fn(() => mockSupabase),
   select: vi.fn(() => mockSupabase),
   insert: vi.fn(() => mockSupabase),
   update: vi.fn(() => mockUpdateChain),
+  delete: vi.fn(() => mockSupabase),
   eq: vi.fn(() => mockSupabase),
+  neq: vi.fn(() => mockSupabase),
   order: vi.fn(() => mockSupabase),
   range: vi.fn(() => mockSupabase),
+  limit: vi.fn(() => mockSupabase),
   is: vi.fn(() => mockSupabase),
   not: vi.fn(() => mockSupabase),
   ilike: vi.fn(() => mockSupabase),
@@ -72,6 +75,7 @@ const mockSupabase = {
   gte: vi.fn(() => mockSupabase),
   lte: vi.fn(() => mockSupabase),
   single: vi.fn(),
+  rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
 }
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -112,6 +116,13 @@ describe("admin actions", () => {
     mockValidateAdminSession.mockResolvedValue(true)
     // Use unique IP per test to avoid rate-limit interference
     mockIp = `test-${Math.random()}`
+    // Reset mocks that tests override with custom implementations
+    mockSupabase.update = vi.fn(() => mockUpdateChain)
+    mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: null }))
+    mockSupabase.limit = vi.fn(() => mockSupabase)
+    mockSupabase.single = vi.fn()
+    mockSupabase.range = vi.fn(() => mockSupabase)
+    mockSupabase.order = vi.fn(() => mockSupabase)
   })
 
   describe("loginAdmin", () => {
@@ -121,7 +132,7 @@ describe("admin actions", () => {
       await expect(loginAdmin("correct-password")).rejects.toThrow("NEXT_REDIRECT")
 
       expect(mockCreateAdminSession).toHaveBeenCalledOnce()
-      expect(mockRedirect).toHaveBeenCalledWith("/admin/orders")
+      expect(mockRedirect).toHaveBeenCalledWith("/admin/dashboard")
     })
 
     it("throws on wrong password without creating session", async () => {
@@ -379,6 +390,324 @@ describe("admin actions", () => {
       await expect(
         updateOrderStatus(validOrderId, "confirmed")
       ).rejects.toThrow("Order not found")
+    })
+
+    it("rejects tracking number over 200 chars", async () => {
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+
+      await expect(
+        updateOrderStatus(validOrderId, "shipped", "x".repeat(201))
+      ).rejects.toThrow("Tracking number is too long")
+    })
+
+    it("rejects cancellation reason over 1000 chars", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "confirmed" },
+        error: null,
+      })
+
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+
+      await expect(
+        updateOrderStatus(validOrderId, "cancelled", undefined, "x".repeat(1001))
+      ).rejects.toThrow("Cancellation reason is too long")
+    })
+  })
+
+  describe("getDashboardStats", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getDashboardStats } = await import("@/app/actions/admin")
+
+      await expect(getDashboardStats()).rejects.toThrow("Unauthorized")
+    })
+
+    it("returns stats from RPC and recent orders", async () => {
+      const mockRpcResult = {
+        today_orders: 3, today_revenue: 5000,
+        week_orders: 10, week_revenue: 20000,
+        month_orders: 25, month_revenue: 50000,
+        pending_orders: 2, invoices_awaiting: 1,
+      }
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: mockRpcResult, error: null }))
+      const recentOrders = [{ id: "order-1" }, { id: "order-2" }]
+      mockSupabase.limit = vi.fn(() => mockThenableResult(recentOrders))
+
+      const { getDashboardStats } = await import("@/app/actions/admin")
+      const result = await getDashboardStats()
+
+      expect(result.today).toEqual({ orders: 3, revenue: 5000 })
+      expect(result.week).toEqual({ orders: 10, revenue: 20000 })
+      expect(result.month).toEqual({ orders: 25, revenue: 50000 })
+      expect(result.pendingOrders).toBe(2)
+      expect(result.invoicesAwaiting).toBe(1)
+      expect(result.recentOrders).toEqual(recentOrders)
+    })
+
+    it("throws on RPC error", async () => {
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: { message: "rpc failed" } }))
+
+      const { getDashboardStats } = await import("@/app/actions/admin")
+      await expect(getDashboardStats()).rejects.toThrow("Failed to fetch dashboard stats")
+    })
+  })
+
+  describe("updateAdminNotes", () => {
+    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { updateAdminNotes } = await import("@/app/actions/admin")
+
+      await expect(updateAdminNotes(validOrderId, "test")).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { updateAdminNotes } = await import("@/app/actions/admin")
+
+      await expect(updateAdminNotes("bad-id", "note")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects notes over 5000 chars", async () => {
+      const { updateAdminNotes } = await import("@/app/actions/admin")
+
+      await expect(updateAdminNotes(validOrderId, "x".repeat(5001))).rejects.toThrow("Notes too long")
+    })
+
+    it("updates notes successfully", async () => {
+      mockSupabase.update = vi.fn(() => mockThenableResult(null))
+
+      const { updateAdminNotes } = await import("@/app/actions/admin")
+      const result = await updateAdminNotes(validOrderId, "Customer called")
+
+      expect(result).toEqual({ success: true })
+    })
+
+    it("clears notes when empty string", async () => {
+      mockSupabase.update = vi.fn(() => mockThenableResult(null))
+
+      const { updateAdminNotes } = await import("@/app/actions/admin")
+      const result = await updateAdminNotes(validOrderId, "")
+
+      expect(result).toEqual({ success: true })
+    })
+  })
+
+  describe("issueInvoice", () => {
+    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { issueInvoice } = await import("@/app/actions/admin")
+
+      await expect(issueInvoice(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { issueInvoice } = await import("@/app/actions/admin")
+
+      await expect(issueInvoice("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("throws when order already has invoice", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, invoice_number: "0000000001" },
+        error: null,
+      })
+
+      const { issueInvoice } = await import("@/app/actions/admin")
+      await expect(issueInvoice(validOrderId)).rejects.toThrow("Фактура вече е издадена")
+    })
+
+    it("throws when order not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: null,
+        error: { message: "not found" },
+      })
+
+      const { issueInvoice } = await import("@/app/actions/admin")
+      await expect(issueInvoice(validOrderId)).rejects.toThrow("Order not found")
+    })
+
+    it("issues invoice via RPC and returns number", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, invoice_number: null, email: "test@test.com", first_name: "Test" },
+        error: null,
+      })
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: "0000000001", error: null }))
+      // Second .single() for fetching updated order
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, invoice_number: "0000000001", invoice_date: new Date().toISOString() },
+        error: null,
+      })
+
+      const { issueInvoice } = await import("@/app/actions/admin")
+      const result = await issueInvoice(validOrderId)
+
+      expect(result).toEqual({ invoiceNumber: "0000000001" })
+      expect(mockSupabase.rpc).toHaveBeenCalledWith("issue_invoice_number", { p_order_id: validOrderId })
+    })
+
+    it("throws when RPC fails", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, invoice_number: null },
+        error: null,
+      })
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: { message: "rpc error" } }))
+
+      const { issueInvoice } = await import("@/app/actions/admin")
+      await expect(issueInvoice(validOrderId)).rejects.toThrow("Failed to issue invoice")
+    })
+  })
+
+  describe("downloadInvoicePDF", () => {
+    const validOrderId = "550e8400-e29b-41d4-a716-446655440000"
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { downloadInvoicePDF } = await import("@/app/actions/admin")
+
+      await expect(downloadInvoicePDF(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { downloadInvoicePDF } = await import("@/app/actions/admin")
+
+      await expect(downloadInvoicePDF("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("returns PDF for order with invoice", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          invoice_number: "0000000001",
+          invoice_date: "2026-01-01T00:00:00Z",
+          items: [{ productName: "Test", quantity: 1, priceInCents: 1000 }],
+        },
+        error: null,
+      })
+
+      const { downloadInvoicePDF } = await import("@/app/actions/admin")
+      const result = await downloadInvoicePDF(validOrderId)
+
+      expect(result.filename).toBe("faktura-0000000001.pdf")
+      expect(result.pdfBase64).toBeTruthy()
+    })
+
+    it("returns proforma PDF for order without invoice", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          invoice_number: null,
+          created_at: "2026-01-01T00:00:00Z",
+          items: [{ productName: "Test", quantity: 1, priceInCents: 1000 }],
+        },
+        error: null,
+      })
+
+      const { downloadInvoicePDF } = await import("@/app/actions/admin")
+      const result = await downloadInvoicePDF(validOrderId)
+
+      expect(result.filename).toBe(`proforma-${validOrderId.slice(0, 8)}.pdf`)
+      expect(result.pdfBase64).toBeTruthy()
+    })
+  })
+
+  describe("getInvoices", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getInvoices } = await import("@/app/actions/admin")
+
+      await expect(getInvoices()).rejects.toThrow("Unauthorized")
+    })
+
+    it("returns paginated invoices", async () => {
+      const fakeInvoices = [{ id: "inv-1", invoice_number: "0000000001" }]
+      mockSupabase.range.mockReturnValue(mockThenableResult(fakeInvoices, null, 1))
+
+      const { getInvoices } = await import("@/app/actions/admin")
+      const result = await getInvoices()
+
+      expect(result).toEqual({ invoices: fakeInvoices, total: 1 })
+    })
+
+    it("throws on database error", async () => {
+      mockSupabase.range.mockReturnValue(mockThenableResult(null, { message: "db error" }))
+
+      const { getInvoices } = await import("@/app/actions/admin")
+      await expect(getInvoices()).rejects.toThrow("Failed to fetch invoices")
+    })
+  })
+
+  describe("getSales", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getSales } = await import("@/app/actions/admin")
+
+      await expect(getSales()).rejects.toThrow("Unauthorized")
+    })
+
+    it("returns sales from database", async () => {
+      const fakeSales = [{ id: "sale-1", product_id: "prod-1" }]
+      mockSupabase.order.mockReturnValue(mockThenableResult(fakeSales))
+
+      const { getSales } = await import("@/app/actions/admin")
+      const result = await getSales()
+
+      expect(result).toEqual(fakeSales)
+    })
+  })
+
+  describe("getPromoCodes", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getPromoCodes } = await import("@/app/actions/admin")
+
+      await expect(getPromoCodes()).rejects.toThrow("Unauthorized")
+    })
+
+    it("returns promo codes from database", async () => {
+      const fakeCodes = [{ id: "code-1", code: "SAVE10" }]
+      mockSupabase.order.mockReturnValue(mockThenableResult(fakeCodes))
+
+      const { getPromoCodes } = await import("@/app/actions/admin")
+      const result = await getPromoCodes()
+
+      expect(result).toEqual(fakeCodes)
+    })
+  })
+
+  describe("deactivatePromoCode", () => {
+    const validId = "550e8400-e29b-41d4-a716-446655440000"
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { deactivatePromoCode } = await import("@/app/actions/admin")
+
+      await expect(deactivatePromoCode(validId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { deactivatePromoCode } = await import("@/app/actions/admin")
+
+      await expect(deactivatePromoCode("bad-id")).rejects.toThrow("Invalid promo code ID")
+    })
+  })
+
+  describe("endSale", () => {
+    const validId = "550e8400-e29b-41d4-a716-446655440000"
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { endSale } = await import("@/app/actions/admin")
+
+      await expect(endSale(validId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { endSale } = await import("@/app/actions/admin")
+
+      await expect(endSale("bad-id")).rejects.toThrow("Invalid sale ID")
     })
   })
 })

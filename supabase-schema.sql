@@ -52,6 +52,9 @@ create table if not exists orders (
   speedy_office_name text,
   speedy_office_address text,
 
+  -- Admin
+  admin_notes text,
+
   -- Cancellation
   cancellation_reason text
 );
@@ -106,6 +109,72 @@ $$;
 
 create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
+
+-- Atomically allocate invoice number and assign to order (no gaps possible)
+create or replace function issue_invoice_number(p_order_id uuid)
+returns text
+language plpgsql
+as $$
+declare
+  next_num bigint;
+  inv_number text;
+begin
+  -- Check order exists and has no invoice yet
+  if not exists (select 1 from orders where id = p_order_id and invoice_number is null) then
+    raise exception 'Order not found or invoice already issued';
+  end if;
+
+  -- Allocate next number
+  update invoice_counter
+  set current_number = current_number + 1
+  where id = 1
+  returning current_number into next_num;
+
+  inv_number := lpad(next_num::text, 10, '0');
+
+  -- Assign to order atomically
+  update orders
+  set invoice_number = inv_number,
+      invoice_date = now()
+  where id = p_order_id and invoice_number is null;
+
+  return inv_number;
+end;
+$$;
+
+create index if not exists idx_orders_status on orders (status);
+create index if not exists idx_orders_created_at on orders (created_at desc);
+create index if not exists idx_orders_needs_invoice on orders (needs_invoice)
+  where needs_invoice = true and invoice_number is null;
+
+-- Dashboard stats (computed server-side for scalability)
+create or replace function dashboard_stats(
+  p_today_start timestamptz,
+  p_week_start timestamptz,
+  p_month_start timestamptz
+)
+returns json
+language plpgsql
+as $$
+declare
+  result json;
+begin
+  select json_build_object(
+    'today_orders', coalesce(sum(case when created_at >= p_today_start then 1 else 0 end), 0),
+    'today_revenue', coalesce(sum(case when created_at >= p_today_start then total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0) else 0 end), 0),
+    'week_orders', coalesce(sum(case when created_at >= p_week_start then 1 else 0 end), 0),
+    'week_revenue', coalesce(sum(case when created_at >= p_week_start then total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0) else 0 end), 0),
+    'month_orders', coalesce(count(*), 0),
+    'month_revenue', coalesce(sum(total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0)), 0),
+    'pending_orders', (select count(*) from orders where status = 'pending'),
+    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled')
+  ) into result
+  from orders
+  where created_at >= p_month_start and status != 'cancelled';
+
+  return result;
+end;
+$$;
 
 -- Product sales (admin-managed promotions)
 create table if not exists product_sales (

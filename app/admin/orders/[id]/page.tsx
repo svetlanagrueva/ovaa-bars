@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, type OrderDetail } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, updateAdminNotes, type OrderDetail } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -40,10 +40,13 @@ export default function AdminOrderDetailPage({
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
   const [pdfLoading, setPdfLoading] = useState(false)
+  const [adminNotes, setAdminNotes] = useState("")
+  const [notesSaving, setNotesSaving] = useState(false)
+  const [notesSaved, setNotesSaved] = useState(false)
 
   useEffect(() => {
     getOrder(id)
-      .then(setOrder)
+      .then((o) => { setOrder(o); setAdminNotes(o.admin_notes || "") })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [id])
@@ -359,6 +362,45 @@ export default function AdminOrderDetailPage({
                 </div>
               ))
             })()}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Admin Notes */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">Вътрешни бележки</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <textarea
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            rows={3}
+            placeholder="Добави бележка..."
+            value={adminNotes}
+            onChange={(e) => { setAdminNotes(e.target.value); setNotesSaved(false) }}
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={notesSaving || adminNotes === (order.admin_notes || "")}
+              onClick={async () => {
+                setNotesSaving(true)
+                try {
+                  await updateAdminNotes(id, adminNotes)
+                  const updated = await getOrder(id)
+                  setOrder(updated)
+                  setNotesSaved(true)
+                } catch {
+                  setActionError("Грешка при запазване на бележки")
+                } finally {
+                  setNotesSaving(false)
+                }
+              }}
+            >
+              {notesSaving ? "Запазване..." : "Запази"}
+            </Button>
+            {notesSaved && <span className="text-xs text-muted-foreground">Запазено</span>}
           </div>
         </CardContent>
       </Card>
