@@ -107,6 +107,35 @@ $$;
 create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
 
+-- Dashboard stats (computed server-side for scalability)
+create or replace function dashboard_stats(
+  p_today_start timestamptz,
+  p_week_start timestamptz,
+  p_month_start timestamptz
+)
+returns json
+language plpgsql
+as $$
+declare
+  result json;
+begin
+  select json_build_object(
+    'today_orders', coalesce(sum(case when created_at >= p_today_start then 1 else 0 end), 0),
+    'today_revenue', coalesce(sum(case when created_at >= p_today_start then total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0) else 0 end), 0),
+    'week_orders', coalesce(sum(case when created_at >= p_week_start then 1 else 0 end), 0),
+    'week_revenue', coalesce(sum(case when created_at >= p_week_start then total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0) else 0 end), 0),
+    'month_orders', coalesce(count(*), 0),
+    'month_revenue', coalesce(sum(total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0)), 0),
+    'pending_orders', (select count(*) from orders where status = 'pending'),
+    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled')
+  ) into result
+  from orders
+  where created_at >= p_month_start and status != 'cancelled';
+
+  return result;
+end;
+$$;
+
 -- Product sales (admin-managed promotions)
 create table if not exists product_sales (
   id uuid primary key default gen_random_uuid(),

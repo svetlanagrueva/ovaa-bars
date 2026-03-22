@@ -96,35 +96,21 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday).toISOString()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-  // Fetch all non-cancelled orders for the current month (covers today/week/month)
-  const { data: monthOrders } = await supabase
-    .from("orders")
-    .select("id, created_at, total_amount, shipping_fee, cod_fee, discount_amount, status")
-    .gte("created_at", monthStart)
-    .neq("status", "cancelled")
+  // Single SQL call for all aggregated stats
+  const { data: statsData, error: statsError } = await supabase.rpc("dashboard_stats", {
+    p_today_start: todayStart,
+    p_week_start: weekStart,
+    p_month_start: monthStart,
+  })
 
-  const orders = monthOrders || []
+  if (statsError) {
+    console.error("Failed to fetch dashboard stats:", statsError)
+    throw new Error("Failed to fetch dashboard stats")
+  }
 
-  const todayOrders = orders.filter((o) => o.created_at >= todayStart)
-  const weekOrders = orders.filter((o) => o.created_at >= weekStart)
+  const s = statsData || {}
 
-  const sum = (list: typeof orders) => list.reduce((s, o) => s + o.total_amount - (o.shipping_fee || 0) - (o.cod_fee || 0), 0)
-
-  // Pending orders count
-  const { count: pendingCount } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "pending")
-
-  // Invoices awaiting issuance
-  const { count: invoicesAwaitingCount } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("needs_invoice", true)
-    .is("invoice_number", null)
-    .neq("status", "cancelled")
-
-  // Recent orders (last 10)
+  // Recent orders (last 10) — small fixed query, fine to fetch as rows
   const { data: recentOrders } = await supabase
     .from("orders")
     .select("id, created_at, first_name, last_name, total_amount, status, payment_method")
@@ -132,11 +118,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .limit(10)
 
   return {
-    today: { orders: todayOrders.length, revenue: sum(todayOrders) },
-    week: { orders: weekOrders.length, revenue: sum(weekOrders) },
-    month: { orders: orders.length, revenue: sum(orders) },
-    pendingOrders: pendingCount ?? 0,
-    invoicesAwaiting: invoicesAwaitingCount ?? 0,
+    today: { orders: s.today_orders ?? 0, revenue: s.today_revenue ?? 0 },
+    week: { orders: s.week_orders ?? 0, revenue: s.week_revenue ?? 0 },
+    month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
+    pendingOrders: s.pending_orders ?? 0,
+    invoicesAwaiting: s.invoices_awaiting ?? 0,
     recentOrders: recentOrders || [],
   }
 }
