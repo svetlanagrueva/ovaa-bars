@@ -124,7 +124,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .is("invoice_number", null)
     .neq("status", "cancelled")
 
-  // Recent orders (last 5)
+  // Recent orders (last 10)
   const { data: recentOrders } = await supabase
     .from("orders")
     .select("id, created_at, first_name, last_name, total_amount, status, payment_method")

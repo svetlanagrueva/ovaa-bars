@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Search, Download } from "lucide-react"
 import { getOrders, getAllOrders, type OrderSummary } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
@@ -42,15 +43,17 @@ const PAYMENT_LABELS: Record<string, string> = {
 }
 
 export default function AdminOrdersPage() {
+  const searchParams = useSearchParams()
+
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [status, setStatus] = useState("all")
+  const [status, setStatus] = useState(searchParams.get("status") || "all")
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [invoiceFilter, setInvoiceFilter] = useState("all")
+  const [invoiceFilter, setInvoiceFilter] = useState(searchParams.get("invoiceFilter") || "all")
   const [csvLoading, setCsvLoading] = useState(false)
 
   const filters = { status, search, dateFrom, dateTo, invoiceFilter }

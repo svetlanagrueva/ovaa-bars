@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Package, FileText, TrendingUp, Clock } from "lucide-react"
+import { Package, FileText, Clock } from "lucide-react"
 import { getDashboardStats, type DashboardStats } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -39,8 +39,8 @@ export default function AdminDashboardPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8">
         <h1 className="text-2xl font-bold mb-6">Табло</h1>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i}>
               <CardContent className="p-6">
                 <div className="h-16 animate-pulse rounded bg-secondary" />
