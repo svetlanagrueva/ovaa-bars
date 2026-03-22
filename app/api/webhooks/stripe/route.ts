@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     // Atomically update only pending orders to avoid double-processing
     const { data: order, error } = await supabase
       .from("orders")
-      .update({ status: "confirmed" })
+      .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
       .eq("id", orderId)
       .eq("status", "pending")
       .select()

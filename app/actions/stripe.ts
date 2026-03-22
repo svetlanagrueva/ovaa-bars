@@ -579,7 +579,7 @@ export async function confirmOrder(orderId: string) {
 
   const { data: updatedOrder, error: updateError } = await supabase
     .from("orders")
-    .update({ status: "confirmed" })
+    .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
     .eq("id", orderId)
     .eq("status", "pending")
     .select()
@@ -663,6 +663,7 @@ export async function createCODOrder(data: CODOrderData) {
       shipping_fee: shippingPrice,
       cod_fee: codFee,
       status: "confirmed",
+      confirmed_at: new Date().toISOString(),
       payment_method: "cod",
       needs_invoice: needsInvoice || false,
       invoice_company_name: invoiceInfo?.companyName || null,
