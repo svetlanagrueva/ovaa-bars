@@ -752,7 +752,7 @@ export async function createSale(data: {
     throw new Error("Грешка при създаване на промоцията")
   }
 
-  revalidateTag("active-sales")
+  revalidateTag("active-sales", "max")
   return { success: true }
 }
 
@@ -780,7 +780,7 @@ export async function endSale(saleId: string) {
     throw new Error("Промоцията вече е спряна")
   }
 
-  revalidateTag("active-sales")
+  revalidateTag("active-sales", "max")
   return { success: true }
 }
 
