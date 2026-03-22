@@ -116,7 +116,10 @@ export interface OrderDetail extends OrderSummary {
   discount_amount: number
   shipping_fee: number
   cod_fee: number
+  confirmed_at: string | null
+  shipped_at: string | null
   delivered_at: string | null
+  cancelled_at: string | null
   cancellation_reason: string | null
   invoice_egn: string | null
 }
@@ -412,15 +415,21 @@ export async function updateOrderStatus(
   }
 
   // Build update payload
+  const now = new Date().toISOString()
   const updateData: Record<string, unknown> = { status: newStatus }
-  if (newStatus === "shipped" && trackingNumber) {
-    updateData.tracking_number = trackingNumber.trim()
+  if (newStatus === "confirmed") {
+    updateData.confirmed_at = now
+  }
+  if (newStatus === "shipped") {
+    updateData.shipped_at = now
+    if (trackingNumber) updateData.tracking_number = trackingNumber.trim()
   }
   if (newStatus === "delivered") {
-    updateData.delivered_at = new Date().toISOString()
+    updateData.delivered_at = now
   }
-  if (newStatus === "cancelled" && cancellationReason) {
-    updateData.cancellation_reason = cancellationReason.trim()
+  if (newStatus === "cancelled") {
+    updateData.cancelled_at = now
+    if (cancellationReason) updateData.cancellation_reason = cancellationReason.trim()
   }
 
   // Atomic update — only update if status hasn't changed (prevents race conditions)

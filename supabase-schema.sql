@@ -26,7 +26,10 @@ create table if not exists orders (
   stripe_session_id text unique,
   promo_code text,
   discount_amount integer not null default 0,
+  confirmed_at timestamptz,
+  shipped_at timestamptz,
   delivered_at timestamptz,
+  cancelled_at timestamptz,
 
   -- Invoice
   needs_invoice boolean default false,

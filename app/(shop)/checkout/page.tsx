@@ -218,7 +218,8 @@ export default function CheckoutPage() {
         })
 
         if (result.success) {
-          clearCart()
+          // Don't clear cart here — the success page handles it after confirmation.
+          // Clearing here triggers the empty-cart redirect before navigation completes.
           router.push(`/checkout/success?order_id=${result.orderId}`)
         }
       } else {
