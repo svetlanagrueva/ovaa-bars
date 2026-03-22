@@ -5,6 +5,7 @@ import Link from "next/link"
 import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, type OrderDetail } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
+import { calculateShippingPrice, COD_FEE } from "@/lib/constants"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -164,16 +165,39 @@ export default function AdminOrderDetailPage({
                   <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
                 </div>
               ))}
-              {order.promo_code && order.discount_amount > 0 && (
-                <div className="flex items-center justify-between text-sm text-green-600">
-                  <span>Промо код: {order.promo_code}</span>
-                  <span>-{formatPrice(order.discount_amount)}</span>
-                </div>
-              )}
-              <div className="border-t pt-2 flex items-center justify-between font-medium">
-                <span>Общо</span>
-                <span>{formatPrice(order.total_amount)}</span>
-              </div>
+              {(() => {
+                const subtotal = order.items.reduce((s, item) => s + item.priceInCents * item.quantity, 0)
+                const shippingPrice = calculateShippingPrice(subtotal, order.logistics_partner || "")
+                const codFee = order.payment_method === "cod" ? COD_FEE : 0
+                return (
+                  <>
+                    <div className="border-t pt-2 flex items-center justify-between text-sm text-muted-foreground">
+                      <span>Междинна сума</span>
+                      <span>{formatPrice(subtotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <span>Доставка ({getDeliveryLabel(order.logistics_partner)})</span>
+                      <span>{shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}</span>
+                    </div>
+                    {codFee > 0 && (
+                      <div className="flex items-center justify-between text-sm text-muted-foreground">
+                        <span>Наложен платеж</span>
+                        <span>{formatPrice(codFee)}</span>
+                      </div>
+                    )}
+                    {order.promo_code && order.discount_amount > 0 && (
+                      <div className="flex items-center justify-between text-sm text-green-600">
+                        <span>Промо код: {order.promo_code}</span>
+                        <span>-{formatPrice(order.discount_amount)}</span>
+                      </div>
+                    )}
+                    <div className="border-t pt-2 flex items-center justify-between font-medium">
+                      <span>Общо</span>
+                      <span>{formatPrice(order.total_amount)}</span>
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           </CardContent>
         </Card>
