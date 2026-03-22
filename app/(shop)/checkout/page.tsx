@@ -39,13 +39,12 @@ interface BillingInfo {
   firstName: string
   lastName: string
   address: string
-  addressLine2: string
   company: string
   eik: string
   vatNumber: string
+  egn: string
   city: string
   postalCode: string
-  phone: string
 }
 
 export default function CheckoutPage() {
@@ -79,20 +78,19 @@ export default function CheckoutPage() {
     notes: "",
   })
 
-  const [useShippingAsBilling, setUseShippingAsBilling] = useState(true)
+  const [wantsInvoice, setWantsInvoice] = useState(false)
   const [billingType, setBillingType] = useState<"individual" | "company">("individual")
 
   const [billingInfo, setBillingInfo] = useState<BillingInfo>({
     firstName: "",
     lastName: "",
     address: "",
-    addressLine2: "",
     company: "",
     eik: "",
     vatNumber: "",
+    egn: "",
     city: "",
     postalCode: "",
-    phone: "",
   })
 
   useEffect(() => {
@@ -110,12 +108,12 @@ export default function CheckoutPage() {
   const shippingPrice = calculateShippingPrice(totalPrice, deliveryMethod)
   const codFee = paymentMethod === "cod" ? COD_FEE : 0
 
-  // Clear promo if cart is now below minimum (server will re-validate anyway)
+  // Clear promo if cart total changes (server will re-validate anyway)
   useEffect(() => {
     if (!appliedPromo) return
-    // Re-validate will happen server-side; just clear client-side to avoid confusion
     setAppliedPromo(null)
     setPromoCode("")
+    setPromoError("Количката се промени. Моля, приложете кода отново.")
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPrice])
 
@@ -190,20 +188,18 @@ export default function CheckoutPage() {
         ? { id: selectedSpeedyOffice.id, name: selectedSpeedyOffice.name, city: selectedSpeedyOffice.city, fullAddress: selectedSpeedyOffice.fullAddress }
         : undefined
 
-      const billingName = useShippingAsBilling
-        ? [customerInfo.firstName, customerInfo.lastName].filter(Boolean).join(" ")
-        : [billingInfo.firstName, billingInfo.lastName].filter(Boolean).join(" ")
-      const computedInvoiceAddress = useShippingAsBilling
-        ? [customerInfo.city, customerInfo.address, customerInfo.postalCode].filter(Boolean).join(", ")
-        : [billingInfo.city, billingInfo.address, billingInfo.addressLine2, billingInfo.postalCode].filter(Boolean).join(", ")
+      const billingName = [billingInfo.firstName, billingInfo.lastName].filter(Boolean).join(" ")
+        || [customerInfo.firstName, customerInfo.lastName].filter(Boolean).join(" ")
+      const computedInvoiceAddress = wantsInvoice
+        ? [billingInfo.city, billingInfo.address, billingInfo.postalCode].filter(Boolean).join(", ")
+        : ""
 
-      // Invoice is generated only when billing type is "company" (Bulgarian standard)
-      const isCompanyBilling = !useShippingAsBilling && billingType === "company"
-      const invoiceData = isCompanyBilling
+      const invoiceData = wantsInvoice
         ? {
-            companyName: billingInfo.company.trim(),
-            eik: billingInfo.eik.trim(),
-            vatNumber: billingInfo.vatNumber.trim(),
+            companyName: billingType === "company" ? billingInfo.company.trim() : "",
+            eik: billingType === "company" ? billingInfo.eik.trim() : "",
+            vatNumber: billingType === "company" ? billingInfo.vatNumber.trim() : "",
+            egn: billingType === "individual" ? billingInfo.egn.trim() : "",
             mol: billingName,
             invoiceAddress: computedInvoiceAddress,
           }
@@ -214,7 +210,7 @@ export default function CheckoutPage() {
           cartItems,
           customerInfo,
           deliveryMethod,
-          needsInvoice: isCompanyBilling,
+          needsInvoice: wantsInvoice,
           invoiceInfo: invoiceData,
           econtOffice,
           speedyOffice,
@@ -230,7 +226,7 @@ export default function CheckoutPage() {
           cartItems,
           customerInfo,
           deliveryMethod,
-          needsInvoice: isCompanyBilling,
+          needsInvoice: wantsInvoice,
           invoiceInfo: invoiceData,
           econtOffice,
           speedyOffice,
@@ -495,24 +491,23 @@ export default function CheckoutPage() {
                       4
                     </span>
                     <FileText className="h-4 w-4" />
-                    Адрес за фактуриране
+                    Фактура
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-start space-x-3">
                     <Checkbox
-                      id="useShippingAsBilling"
-                      checked={useShippingAsBilling}
-                      onCheckedChange={(checked) => setUseShippingAsBilling(checked === true)}
+                      id="wantsInvoice"
+                      checked={wantsInvoice}
+                      onCheckedChange={(checked) => setWantsInvoice(checked === true)}
                     />
-                    <Label htmlFor="useShippingAsBilling" className="cursor-pointer leading-snug">
-                      Използване на адреса за доставка като адрес за фактуриране
+                    <Label htmlFor="wantsInvoice" className="cursor-pointer leading-snug">
+                      Искам фактура
                     </Label>
                   </div>
 
-                  {!useShippingAsBilling && (
+                  {wantsInvoice && (
                     <div className="space-y-4 pt-4 border-t border-border">
-                      {/* Billing type tabs */}
                       <div className="grid grid-cols-2 rounded-lg border border-border overflow-hidden">
                         <button
                           type="button"
@@ -534,35 +529,10 @@ export default function CheckoutPage() {
                           }`}
                           onClick={() => setBillingType("company")}
                         >
-                          Фирма
+                          Юридическо лице
                         </button>
                       </div>
 
-                      {/* Shared fields */}
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label htmlFor="billingFirstName">Име *</Label>
-                          <Input
-                            id="billingFirstName"
-                            name="firstName"
-                            value={billingInfo.firstName}
-                            onChange={handleBillingChange}
-                            required={!useShippingAsBilling}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="billingLastName">Фамилия *</Label>
-                          <Input
-                            id="billingLastName"
-                            name="lastName"
-                            value={billingInfo.lastName}
-                            onChange={handleBillingChange}
-                            required={!useShippingAsBilling}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Company-specific fields */}
                       {billingType === "company" && (
                         <>
                           <div className="space-y-2">
@@ -572,18 +542,18 @@ export default function CheckoutPage() {
                               name="company"
                               value={billingInfo.company}
                               onChange={handleBillingChange}
-                              required={billingType === "company"}
+                              required={wantsInvoice && billingType === "company"}
                             />
                           </div>
                           <div className="grid gap-4 sm:grid-cols-2">
                             <div className="space-y-2">
-                              <Label htmlFor="billingEik">Булстат *</Label>
+                              <Label htmlFor="billingEik">ЕИК / Булстат *</Label>
                               <Input
                                 id="billingEik"
                                 name="eik"
                                 value={billingInfo.eik}
                                 onChange={handleBillingChange}
-                                required={billingType === "company"}
+                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -597,28 +567,80 @@ export default function CheckoutPage() {
                               />
                             </div>
                           </div>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="billingFirstName">МОЛ - Име *</Label>
+                              <Input
+                                id="billingFirstName"
+                                name="firstName"
+                                value={billingInfo.firstName}
+                                onChange={handleBillingChange}
+                                required={wantsInvoice && billingType === "company"}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="billingLastName">МОЛ - Фамилия *</Label>
+                              <Input
+                                id="billingLastName"
+                                name="lastName"
+                                value={billingInfo.lastName}
+                                onChange={handleBillingChange}
+                                required={wantsInvoice && billingType === "company"}
+                              />
+                            </div>
+                          </div>
                         </>
                       )}
 
-                      {/* Address fields */}
+                      {billingType === "individual" && (
+                        <>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="billingFirstName">Име *</Label>
+                              <Input
+                                id="billingFirstName"
+                                name="firstName"
+                                value={billingInfo.firstName}
+                                onChange={handleBillingChange}
+                                required={wantsInvoice && billingType === "individual"}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="billingLastName">Фамилия *</Label>
+                              <Input
+                                id="billingLastName"
+                                name="lastName"
+                                value={billingInfo.lastName}
+                                onChange={handleBillingChange}
+                                required={wantsInvoice && billingType === "individual"}
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="billingEgn">ЕГН *</Label>
+                            <Input
+                              id="billingEgn"
+                              name="egn"
+                              value={billingInfo.egn}
+                              onChange={handleBillingChange}
+                              required={wantsInvoice && billingType === "individual"}
+                              placeholder="10 цифри"
+                              maxLength={10}
+                            />
+                          </div>
+                        </>
+                      )}
+
                       <div className="space-y-2">
-                        <Label htmlFor="billingAddress">Адрес *</Label>
+                        <Label htmlFor="billingAddress">
+                          {billingType === "company" ? "Адрес по регистрация *" : "Адрес *"}
+                        </Label>
                         <Input
                           id="billingAddress"
                           name="address"
                           value={billingInfo.address}
                           onChange={handleBillingChange}
-                          required={!useShippingAsBilling}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="billingAddressLine2">Етаж, апартамент и т.н.</Label>
-                        <Input
-                          id="billingAddressLine2"
-                          name="addressLine2"
-                          value={billingInfo.addressLine2}
-                          onChange={handleBillingChange}
-                          placeholder="Незадължително"
+                          required={wantsInvoice}
                         />
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -629,30 +651,18 @@ export default function CheckoutPage() {
                             name="city"
                             value={billingInfo.city}
                             onChange={handleBillingChange}
-                            required={!useShippingAsBilling}
+                            required={wantsInvoice}
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="billingPostalCode">Пощенски код *</Label>
+                          <Label htmlFor="billingPostalCode">Пощенски код</Label>
                           <Input
                             id="billingPostalCode"
                             name="postalCode"
                             value={billingInfo.postalCode}
                             onChange={handleBillingChange}
-                            required={!useShippingAsBilling}
                           />
                         </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="billingPhone">Телефон</Label>
-                        <Input
-                          id="billingPhone"
-                          name="phone"
-                          type="tel"
-                          value={billingInfo.phone}
-                          onChange={handleBillingChange}
-                          placeholder="Незадължително"
-                        />
                       </div>
                     </div>
                   )}
@@ -690,7 +700,7 @@ export default function CheckoutPage() {
                         <span>Спестявате</span>
                         <span>-{formatPrice(items.reduce((s, item) =>
                           s + (isOnSale(item.product)
-                            ? (item.product.originalPriceInCents! - item.product.priceInCents) * item.quantity
+                            ? ((item.product.originalPriceInCents ?? item.product.priceInCents) - item.product.priceInCents) * item.quantity
                             : 0), 0))}
                         </span>
                       </div>

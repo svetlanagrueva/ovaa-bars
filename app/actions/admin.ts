@@ -81,6 +81,10 @@ export interface OrderSummary {
   total_amount: number
   logistics_partner: string
   tracking_number: string | null
+  needs_invoice: boolean
+  invoice_number: string | null
+  invoice_date: string | null
+  delivered_at: string | null
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -110,29 +114,229 @@ export interface OrderDetail extends OrderSummary {
   invoice_date: string | null
   promo_code: string | null
   discount_amount: number
+  shipping_fee: number
+  cod_fee: number
+  delivered_at: string | null
+  cancellation_reason: string | null
+  invoice_egn: string | null
 }
 
-export async function getOrders(status?: string): Promise<OrderSummary[]> {
-  await requireAdmin()
-  const supabase = await createClient()
+interface OrderQueryParams {
+  status?: string
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+  invoiceFilter?: string
+}
 
-  let query = supabase
-    .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number")
-    .order("created_at", { ascending: false })
+const ORDERS_PAGE_SIZE = 100
 
+function escapeIlike(value: string): string {
+  return value.replace(/%/g, "\\%").replace(/_/g, "\\_")
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyOrderFilters(query: any, params?: OrderQueryParams) {
+  const status = params?.status
   if (status && status !== "all") {
     query = query.eq("status", status)
   }
 
-  const { data, error } = await query
+  const dateFrom = params?.dateFrom
+  if (dateFrom) {
+    query = query.gte("created_at", `${dateFrom}T00:00:00`)
+  }
+
+  const dateTo = params?.dateTo
+  if (dateTo) {
+    query = query.lte("created_at", `${dateTo}T23:59:59`)
+  }
+
+  const search = params?.search?.trim().toLowerCase()
+  if (search) {
+    const escaped = escapeIlike(search)
+    const uuidPrefix = /^#?[0-9a-f-]+$/i.test(search)
+    if (uuidPrefix) {
+      const cleanId = search.replace(/^#/, "")
+      query = query.ilike("id", `${cleanId}%`)
+    } else if (search.includes("@")) {
+      query = query.ilike("email", `%${escaped}%`)
+    } else {
+      query = query.or(`first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%`)
+    }
+  }
+
+  const invoiceFilter = params?.invoiceFilter
+  if (invoiceFilter === "requested") {
+    query = query.eq("needs_invoice", true)
+  } else if (invoiceFilter === "issued") {
+    query = query.not("invoice_number", "is", null)
+  } else if (invoiceFilter === "pending") {
+    query = query.eq("needs_invoice", true).is("invoice_number", null)
+  }
+
+  return query
+}
+
+export async function getOrders(params?: OrderQueryParams & { page?: number }): Promise<{ orders: OrderSummary[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = params?.page ?? 0
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range(from, to)
+
+  query = applyOrderFilters(query, params)
+
+  const { data, error, count } = await query
 
   if (error) {
     console.error("Failed to fetch orders:", error)
     throw new Error("Failed to fetch orders")
   }
 
-  return data || []
+  return { orders: data || [], total: count ?? 0 }
+}
+
+export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSummary[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const results: OrderSummary[] = []
+  let from = 0
+  const batchSize = 1000
+
+  while (true) {
+    let query = supabase
+      .from("orders")
+      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
+      .order("created_at", { ascending: false })
+      .range(from, from + batchSize - 1)
+
+    query = applyOrderFilters(query, params)
+
+    const { data, error } = await query
+    if (error) {
+      console.error("Failed to fetch orders:", error)
+      throw new Error("Failed to fetch orders")
+    }
+
+    results.push(...(data || []))
+    if (!data || data.length < batchSize) break
+    from += batchSize
+  }
+
+  return results
+}
+
+export interface InvoiceSummary {
+  id: string
+  created_at: string
+  first_name: string
+  last_name: string
+  email: string
+  total_amount: number
+  invoice_number: string
+  invoice_date: string
+  invoice_company_name: string | null
+  invoice_eik: string | null
+  needs_invoice: boolean
+}
+
+interface InvoiceQueryParams {
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
+  const dateFrom = params?.dateFrom
+  if (dateFrom) {
+    query = query.gte("invoice_date", `${dateFrom}T00:00:00`)
+  }
+
+  const dateTo = params?.dateTo
+  if (dateTo) {
+    query = query.lte("invoice_date", `${dateTo}T23:59:59`)
+  }
+
+  const search = params?.search?.trim().toLowerCase()
+  if (search) {
+    const escaped = escapeIlike(search)
+    if (/^\d+$/.test(search)) {
+      query = query.ilike("invoice_number", `%${escaped}%`)
+    } else {
+      query = query.or(`first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%,invoice_company_name.ilike.%${escaped}%`)
+    }
+  }
+
+  return query
+}
+
+export async function getInvoices(params?: InvoiceQueryParams & { page?: number }): Promise<{ invoices: InvoiceSummary[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = params?.page ?? 0
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice", { count: "exact" })
+    .not("invoice_number", "is", null)
+    .order("invoice_date", { ascending: false })
+    .range(from, to)
+
+  query = applyInvoiceFilters(query, params)
+
+  const { data, error, count } = await query
+
+  if (error) {
+    console.error("Failed to fetch invoices:", error)
+    throw new Error("Failed to fetch invoices")
+  }
+
+  return { invoices: (data || []) as InvoiceSummary[], total: count ?? 0 }
+}
+
+export async function getAllInvoices(params?: InvoiceQueryParams): Promise<InvoiceSummary[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const results: InvoiceSummary[] = []
+  let from = 0
+  const batchSize = 1000
+
+  while (true) {
+    let query = supabase
+      .from("orders")
+      .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice")
+      .not("invoice_number", "is", null)
+      .order("invoice_date", { ascending: false })
+      .range(from, from + batchSize - 1)
+
+    query = applyInvoiceFilters(query, params)
+
+    const { data, error } = await query
+    if (error) {
+      console.error("Failed to fetch invoices:", error)
+      throw new Error("Failed to fetch invoices")
+    }
+
+    results.push(...((data || []) as InvoiceSummary[]))
+    if (!data || data.length < batchSize) break
+    from += batchSize
+  }
+
+  return results
 }
 
 export async function getOrder(orderId: string): Promise<OrderDetail> {
@@ -169,6 +373,7 @@ export async function updateOrderStatus(
   orderId: string,
   newStatus: string,
   trackingNumber?: string,
+  cancellationReason?: string,
 ) {
   await requireAdmin()
 
@@ -179,6 +384,12 @@ export async function updateOrderStatus(
 
   if (newStatus === "shipped" && (!trackingNumber || trackingNumber.trim().length === 0)) {
     throw new Error("Tracking number is required for shipping")
+  }
+  if (trackingNumber && trackingNumber.length > 200) {
+    throw new Error("Tracking number is too long")
+  }
+  if (cancellationReason && cancellationReason.length > 1000) {
+    throw new Error("Cancellation reason is too long")
   }
 
   const supabase = await createClient()
@@ -204,6 +415,12 @@ export async function updateOrderStatus(
   const updateData: Record<string, unknown> = { status: newStatus }
   if (newStatus === "shipped" && trackingNumber) {
     updateData.tracking_number = trackingNumber.trim()
+  }
+  if (newStatus === "delivered") {
+    updateData.delivered_at = new Date().toISOString()
+  }
+  if (newStatus === "cancelled" && cancellationReason) {
+    updateData.cancellation_reason = cancellationReason.trim()
   }
 
   // Atomic update — only update if status hasn't changed (prevents race conditions)
@@ -263,6 +480,66 @@ export async function updateOrderStatus(
   }
 
   return { success: true }
+}
+
+export async function issueInvoice(orderId: string): Promise<{ invoiceNumber: string }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Order not found")
+  if (order.invoice_number) throw new Error("Фактура вече е издадена за тази поръчка")
+
+  const invoiceNumber = await getNextInvoiceNumber()
+  const invoiceDate = new Date()
+  const seller = getSellerConfig()
+
+  const pdfBuffer = await generateInvoicePDF({
+    type: "invoice",
+    invoiceNumber,
+    invoiceDate,
+    order,
+    seller,
+  })
+
+  const { data: updated, error: updateError } = await supabase
+    .from("orders")
+    .update({
+      invoice_number: invoiceNumber,
+      invoice_date: invoiceDate.toISOString(),
+    })
+    .eq("id", orderId)
+    .is("invoice_number", null)
+    .select("id")
+
+  if (updateError) {
+    console.error("Failed to save invoice:", updateError)
+    throw new Error("Failed to save invoice")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Фактура вече е издадена за тази поръчка")
+  }
+
+  // Send invoice email to customer
+  sendInvoiceEmail({
+    to: order.email,
+    firstName: order.first_name,
+    orderId: order.id,
+    invoiceNumber,
+    type: "invoice",
+    pdfBuffer,
+  })
+
+  return { invoiceNumber }
 }
 
 export async function downloadInvoicePDF(orderId: string): Promise<{ pdfBase64: string; filename: string }> {
@@ -475,7 +752,7 @@ export async function createSale(data: {
     throw new Error("Грешка при създаване на промоцията")
   }
 
-  revalidateTag("active-sales", "page")
+  revalidateTag("active-sales", "max")
   return { success: true }
 }
 
@@ -503,7 +780,7 @@ export async function endSale(saleId: string) {
     throw new Error("Промоцията вече е спряна")
   }
 
-  revalidateTag("active-sales", "page")
+  revalidateTag("active-sales", "max")
   return { success: true }
 }
 

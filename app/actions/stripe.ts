@@ -29,6 +29,7 @@ interface InvoiceInfo {
   companyName: string
   eik: string
   vatNumber: string
+  egn: string
   mol: string
   invoiceAddress: string
 }
@@ -351,10 +352,47 @@ function validateOfficeData(
   }
 }
 
+function validateInvoiceInfo(needsInvoice: boolean | undefined, invoiceInfo: InvoiceInfo | undefined) {
+  if (!needsInvoice) return
+  if (!invoiceInfo) return
+  const isCompany = !!(invoiceInfo.companyName || invoiceInfo.eik)
+
+  // Company invoice validation
+  if (isCompany) {
+    if (!invoiceInfo.companyName?.trim()) {
+      throw new Error("Името на фирмата е задължително за фактура")
+    }
+    if (!invoiceInfo.eik?.trim() || !/^\d{9,13}$/.test(invoiceInfo.eik.trim())) {
+      throw new Error("ЕИК трябва да бъде 9 или 13 цифри")
+    }
+    if (invoiceInfo.vatNumber?.trim() && !/^BG\d{9,13}$/.test(invoiceInfo.vatNumber.trim())) {
+      throw new Error("Невалиден ДДС номер (формат: BG + ЕИК)")
+    }
+    if (invoiceInfo.companyName.length > MAX_FIELD_LENGTH) {
+      throw new Error("Името на фирмата е твърде дълго")
+    }
+  }
+
+  // Individual invoice validation
+  if (!isCompany) {
+    if (invoiceInfo.egn?.trim() && !/^\d{10}$/.test(invoiceInfo.egn.trim())) {
+      throw new Error("ЕГН трябва да бъде 10 цифри")
+    }
+  }
+
+  if (!invoiceInfo.mol?.trim()) {
+    throw new Error("МОЛ / Име е задължително за фактура")
+  }
+  if (!invoiceInfo.invoiceAddress?.trim()) {
+    throw new Error("Адресът е задължителен за фактура")
+  }
+}
+
 export async function createCheckoutSession(data: CheckoutData) {
   const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice, speedyOffice } = data
 
   validateCustomerInfo(customerInfo)
+  validateInvoiceInfo(needsInvoice, invoiceInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
   validateAddressForDelivery(deliveryMethod, customerInfo.address)
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
@@ -421,6 +459,8 @@ export async function createCheckoutSession(data: CheckoutData) {
       logistics_partner: deliveryMethod,
       items: orderItems,
       total_amount: totalAmount,
+      shipping_fee: shippingPrice,
+      cod_fee: 0,
       status: "pending",
       payment_method: "card",
       needs_invoice: needsInvoice || false,
@@ -429,6 +469,7 @@ export async function createCheckoutSession(data: CheckoutData) {
       invoice_vat_number: invoiceInfo?.vatNumber || null,
       invoice_mol: invoiceInfo?.mol || null,
       invoice_address: invoiceInfo?.invoiceAddress || null,
+      invoice_egn: invoiceInfo?.egn || null,
       econt_office_id: econtOffice?.id ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
@@ -571,6 +612,7 @@ export async function createCODOrder(data: CODOrderData) {
   const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice, speedyOffice } = data
 
   validateCustomerInfo(customerInfo)
+  validateInvoiceInfo(needsInvoice, invoiceInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
   validateAddressForDelivery(deliveryMethod, customerInfo.address)
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
@@ -618,6 +660,8 @@ export async function createCODOrder(data: CODOrderData) {
       logistics_partner: deliveryMethod,
       items: orderItems,
       total_amount: totalAmount,
+      shipping_fee: shippingPrice,
+      cod_fee: codFee,
       status: "confirmed",
       payment_method: "cod",
       needs_invoice: needsInvoice || false,
@@ -626,6 +670,7 @@ export async function createCODOrder(data: CODOrderData) {
       invoice_vat_number: invoiceInfo?.vatNumber || null,
       invoice_mol: invoiceInfo?.mol || null,
       invoice_address: invoiceInfo?.invoiceAddress || null,
+      invoice_egn: invoiceInfo?.egn || null,
       econt_office_id: econtOffice?.id ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
