@@ -96,21 +96,28 @@ export default function AdminOrdersPage() {
     try {
       const allOrders = await getAllOrders(filters)
 
-      const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Сума", "Плащане", "Доставка", "Статус", "Фактура №", "Фактура дата"]
-      const rows = allOrders.map((o) => [
-        o.id.slice(0, 8),
-        new Date(o.created_at).toLocaleDateString("bg-BG"),
-        `${o.first_name} ${o.last_name}`,
-        o.email,
-        o.phone,
-        o.city,
-        (o.total_amount / 100).toFixed(2),
-        o.payment_method === "card" ? "Карта" : "Наложен платеж",
-        o.logistics_partner || "",
-        STATUS_LABELS[o.status] || o.status,
-        o.invoice_number || "",
-        o.invoice_date ? new Date(o.invoice_date).toLocaleDateString("bg-BG") : "",
-      ])
+      const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Продукти", "Промо отстъпка", "Доставка такса", "НП такса", "Общо", "Плащане", "Доставка", "Статус", "Фактура №", "Фактура дата"]
+      const rows = allOrders.map((o) => {
+        const productRevenue = o.total_amount - (o.shipping_fee || 0) - (o.cod_fee || 0) + (o.discount_amount || 0)
+        return [
+          o.id.slice(0, 8),
+          new Date(o.created_at).toLocaleDateString("bg-BG"),
+          `${o.first_name} ${o.last_name}`,
+          o.email,
+          o.phone,
+          o.city,
+          (productRevenue / 100).toFixed(2),
+          o.discount_amount ? `-${(o.discount_amount / 100).toFixed(2)}` : "0.00",
+          ((o.shipping_fee || 0) / 100).toFixed(2),
+          ((o.cod_fee || 0) / 100).toFixed(2),
+          (o.total_amount / 100).toFixed(2),
+          o.payment_method === "card" ? "Карта" : "Наложен платеж",
+          o.logistics_partner || "",
+          STATUS_LABELS[o.status] || o.status,
+          o.invoice_number || "",
+          o.invoice_date ? new Date(o.invoice_date).toLocaleDateString("bg-BG") : "",
+        ]
+      })
 
       const csvContent = "\uFEFF" + [headers, ...rows]
         .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))

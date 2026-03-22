@@ -55,7 +55,7 @@ export async function loginAdmin(password: string) {
 
   loginAttempts.delete(ip)
   await createAdminSession()
-  redirect("/admin/orders")
+  redirect("/admin/dashboard")
 }
 
 export async function logoutAdmin() {
@@ -66,6 +66,79 @@ export async function logoutAdmin() {
 async function requireAdmin() {
   const valid = await validateAdminSession()
   if (!valid) throw new Error("Unauthorized")
+}
+
+export interface DashboardStats {
+  today: { orders: number; revenue: number }
+  week: { orders: number; revenue: number }
+  month: { orders: number; revenue: number }
+  pendingOrders: number
+  invoicesAwaiting: number
+  recentOrders: Array<{
+    id: string
+    created_at: string
+    first_name: string
+    last_name: string
+    total_amount: number
+    status: string
+    payment_method: string
+  }>
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  const day = now.getDay()
+  const diffToMonday = day === 0 ? 6 : day - 1
+  const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday).toISOString()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+
+  // Fetch all non-cancelled orders for the current month (covers today/week/month)
+  const { data: monthOrders } = await supabase
+    .from("orders")
+    .select("id, created_at, total_amount, shipping_fee, cod_fee, discount_amount, status")
+    .gte("created_at", monthStart)
+    .neq("status", "cancelled")
+
+  const orders = monthOrders || []
+
+  const todayOrders = orders.filter((o) => o.created_at >= todayStart)
+  const weekOrders = orders.filter((o) => o.created_at >= weekStart)
+
+  const sum = (list: typeof orders) => list.reduce((s, o) => s + o.total_amount - (o.shipping_fee || 0) - (o.cod_fee || 0), 0)
+
+  // Pending orders count
+  const { count: pendingCount } = await supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending")
+
+  // Invoices awaiting issuance
+  const { count: invoicesAwaitingCount } = await supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("needs_invoice", true)
+    .is("invoice_number", null)
+    .neq("status", "cancelled")
+
+  // Recent orders (last 5)
+  const { data: recentOrders } = await supabase
+    .from("orders")
+    .select("id, created_at, first_name, last_name, total_amount, status, payment_method")
+    .order("created_at", { ascending: false })
+    .limit(10)
+
+  return {
+    today: { orders: todayOrders.length, revenue: sum(todayOrders) },
+    week: { orders: weekOrders.length, revenue: sum(weekOrders) },
+    month: { orders: orders.length, revenue: sum(orders) },
+    pendingOrders: pendingCount ?? 0,
+    invoicesAwaiting: invoicesAwaitingCount ?? 0,
+    recentOrders: recentOrders || [],
+  }
 }
 
 export interface OrderSummary {
@@ -81,6 +154,9 @@ export interface OrderSummary {
   total_amount: number
   logistics_partner: string
   tracking_number: string | null
+  shipping_fee: number
+  cod_fee: number
+  discount_amount: number
   needs_invoice: boolean
   invoice_number: string | null
   invoice_date: string | null
@@ -191,7 +267,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
 
   let query = supabase
     .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
+    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
     .order("created_at", { ascending: false })
     .range(from, to)
 
@@ -218,7 +294,7 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
   while (true) {
     let query = supabase
       .from("orders")
-      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
+      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
 
