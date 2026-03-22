@@ -135,10 +135,8 @@ function escapeIlike(value: string): string {
   return value.replace(/%/g, "\\%").replace(/_/g, "\\_")
 }
 
-function applyOrderFilters(
-  query: ReturnType<Awaited<ReturnType<typeof createClient>>["from"]>,
-  params?: OrderQueryParams
-) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyOrderFilters(query: any, params?: OrderQueryParams) {
   const status = params?.status
   if (status && status !== "all") {
     query = query.eq("status", status)
@@ -257,10 +255,8 @@ interface InvoiceQueryParams {
   dateTo?: string
 }
 
-function applyInvoiceFilters(
-  query: ReturnType<Awaited<ReturnType<typeof createClient>>["from"]>,
-  params?: InvoiceQueryParams
-) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
   const dateFrom = params?.dateFrom
   if (dateFrom) {
     query = query.gte("invoice_date", `${dateFrom}T00:00:00`)
