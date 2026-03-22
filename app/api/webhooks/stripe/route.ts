@@ -85,6 +85,40 @@ export async function POST(request: Request) {
       }
     }
 
+    // Notify admin
+    if (process.env.RESEND_API_KEY && process.env.ADMIN_EMAIL) {
+      const adminResend = new Resend(process.env.RESEND_API_KEY)
+      const adminItems = (order.items as Array<{ productName: string; quantity: number; priceInCents: number }>)
+        .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+        .join("\n")
+
+      adminResend.emails.send({
+        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+        to: process.env.ADMIN_EMAIL,
+        subject: `Нова поръчка #${order.id.slice(0, 8)} — ${formatPrice(order.total_amount)}`,
+        text: `
+Нова поръчка!
+
+Поръчка: #${order.id.slice(0, 8)}
+Клиент: ${order.first_name} ${order.last_name}
+Имейл: ${order.email}
+Телефон: ${order.phone}
+Град: ${order.city}
+Плащане: Карта
+
+Продукти:
+${adminItems}
+
+Обща сума: ${formatPrice(order.total_amount)}
+
+Виж в админ панела:
+${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
+        `.trim(),
+      }).catch((err) => {
+        console.error(`Failed to send admin notification for order ${orderId}:`, err)
+      })
+    }
+
     // Send confirmation email
     if (process.env.RESEND_API_KEY) {
       const resend = new Resend(process.env.RESEND_API_KEY)
