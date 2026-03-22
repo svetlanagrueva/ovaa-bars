@@ -325,39 +325,43 @@ export default function AdminOrderDetailPage({
         </CardHeader>
         <CardContent>
           <div className="relative space-y-0">
-            {[
-              { label: "Поръчка създадена", date: order.created_at, always: true },
-              { label: "Потвърдена", date: order.confirmed_at },
-              { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
-              { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
-              { label: "Доставена", date: order.delivered_at },
-              { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason || undefined },
-            ]
-              .filter((e) => e.always || e.date)
-              .map((event, i, arr) => (
+            {(() => {
+              // For orders created before timestamps were added, fall back to created_at
+              const confirmedFallback = !order.confirmed_at && order.status !== "pending" ? order.created_at : null
+              const events = [
+                { label: "Поръчка създадена", date: order.created_at },
+                { label: "Потвърдена", date: order.confirmed_at || confirmedFallback },
+                { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
+                { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
+                { label: "Доставена", date: order.delivered_at },
+                { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
+              ]
+                .filter((e) => e.date)
+                .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
+
+              return events.map((event, i) => (
                 <div key={i} className="flex gap-3">
                   <div className="flex flex-col items-center">
-                    <div className={`h-3 w-3 rounded-full border-2 ${event.date ? "border-primary bg-primary" : "border-muted-foreground bg-background"}`} />
-                    {i < arr.length - 1 && <div className="w-px flex-1 bg-border" />}
+                    <div className="h-3 w-3 rounded-full border-2 border-primary bg-primary" />
+                    {i < events.length - 1 && <div className="w-px flex-1 bg-border" />}
                   </div>
                   <div className="pb-5">
-                    <p className={`text-sm font-medium ${event.date ? "text-foreground" : "text-muted-foreground"}`}>
+                    <p className="text-sm font-medium text-foreground">
                       {event.label}
                     </p>
-                    {event.date && (
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(event.date).toLocaleDateString("bg-BG", {
-                          day: "2-digit", month: "2-digit", year: "numeric",
-                          hour: "2-digit", minute: "2-digit",
-                        })}
-                      </p>
-                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(event.date!).toLocaleDateString("bg-BG", {
+                        day: "2-digit", month: "2-digit", year: "numeric",
+                        hour: "2-digit", minute: "2-digit",
+                      })}
+                    </p>
                     {event.detail && (
                       <p className="mt-0.5 text-xs text-muted-foreground font-mono">{event.detail}</p>
                     )}
                   </div>
                 </div>
-              ))}
+              ))
+            })()}
           </div>
         </CardContent>
       </Card>
