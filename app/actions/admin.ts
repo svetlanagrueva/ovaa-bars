@@ -707,8 +707,8 @@ ${itemsList}
 Поздрави,
 Екипът на Egg Origin
     `.trim(),
-  }).catch(() => {
-    // Non-blocking
+  }).catch((err) => {
+    console.error(`Failed to send shipping email for order ${order.id}:`, err)
   })
 }
 

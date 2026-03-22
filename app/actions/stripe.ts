@@ -738,8 +738,8 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Поздрави,
 Екипът на Egg Origin
     `.trim(),
-  }).catch(() => {
-    // Email sending failed — don't block order confirmation
+  }).catch((err) => {
+    console.error(`Failed to send confirmation email for order ${order.id}:`, err)
   })
 }
 
@@ -792,7 +792,7 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Поздрави,
 Екипът на Egg Origin
     `.trim(),
-  }).catch(() => {
-    // Email sending failed — don't block order completion
+  }).catch((err) => {
+    console.error(`Failed to send COD confirmation email for order ${order.id}:`, err)
   })
 }

@@ -125,8 +125,8 @@ ${order.address ? `Адрес: ${order.address}` : ""}
 Поздрави,
 Екипът на Egg Origin
         `.trim(),
-      }).catch(() => {
-        // Non-blocking
+      }).catch((err) => {
+        console.error(`Failed to send confirmation email for order ${orderId}:`, err)
       })
     }
   }
