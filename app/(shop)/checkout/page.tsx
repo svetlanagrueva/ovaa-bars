@@ -181,7 +181,7 @@ export default function CheckoutPage() {
       }))
 
       const econtOffice = deliveryMethod === "econt-office" && selectedEcontOffice
-        ? { id: selectedEcontOffice.id, name: selectedEcontOffice.name, city: selectedEcontOffice.city, fullAddress: selectedEcontOffice.fullAddress }
+        ? { id: selectedEcontOffice.id, code: selectedEcontOffice.code, name: selectedEcontOffice.name, city: selectedEcontOffice.city, fullAddress: selectedEcontOffice.fullAddress }
         : undefined
 
       const speedyOffice = deliveryMethod === "speedy-office" && selectedSpeedyOffice

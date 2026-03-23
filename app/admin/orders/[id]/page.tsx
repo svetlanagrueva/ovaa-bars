@@ -1,14 +1,74 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useEffect, useState, useRef, useCallback, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, updateAdminNotes, type OrderDetail } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, updateAdminNotes, generateShipment, getShipmentDefaults, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+
+// Office code → name lookup component (fetches office list once, looks up on code change)
+function OfficeCodeInput({ shipmentForm, setShipmentForm, courier }: {
+  shipmentForm: ShipmentFormData
+  setShipmentForm: (fn: ShipmentFormData | ((prev: ShipmentFormData | null) => ShipmentFormData | null)) => void
+  courier: string
+}) {
+  const officesRef = useRef<Array<Record<string, unknown>> | null>(null)
+  const isSpeedy = courier === "speedy"
+
+  const loadOffices = useCallback(async () => {
+    if (officesRef.current) return officesRef.current
+    try {
+      const endpoint = isSpeedy ? "/api/speedy/offices" : "/api/econt/offices"
+      const res = await fetch(endpoint)
+      if (!res.ok) return []
+      const data = await res.json()
+      const offices = data.offices || data
+      officesRef.current = offices
+      return offices
+    } catch {
+      return []
+    }
+  }, [isSpeedy])
+
+  const lookupOfficeName = useCallback(async (code: string) => {
+    const offices = await loadOffices()
+    const match = offices.find((o: Record<string, unknown>) =>
+      isSpeedy ? String(o.id) === code : String(o.code) === code
+    )
+    setShipmentForm((prev) => prev ? { ...prev, recipientOfficeName: match?.name as string || "" } : prev)
+  }, [loadOffices, isSpeedy, setShipmentForm])
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-3">
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">Офис {isSpeedy ? "ID" : "код"}</label>
+        <Input
+          value={isSpeedy ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
+          onChange={(e) => {
+            const val = e.target.value
+            if (isSpeedy) {
+              setShipmentForm({ ...shipmentForm, recipientOfficeId: val })
+            } else {
+              setShipmentForm({ ...shipmentForm, recipientOfficeCode: val })
+            }
+          }}
+          onBlur={(e) => {
+            const val = e.target.value.trim()
+            if (val) lookupOfficeName(val)
+          }}
+        />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+        <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
+      </div>
+    </div>
+  )
+}
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Чакаща",
@@ -40,6 +100,11 @@ export default function AdminOrderDetailPage({
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
   const [pdfLoading, setPdfLoading] = useState(false)
+  const [shipmentForm, setShipmentForm] = useState<ShipmentFormData | null>(null)
+  const [shipmentDisplay, setShipmentDisplay] = useState<ShipmentDisplayInfo | null>(null)
+  const [shipmentOpen, setShipmentOpen] = useState(false)
+  const [shipmentLoading, setShipmentLoading] = useState(false)
+  const [shipmentSuccess, setShipmentSuccess] = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
   const [notesSaved, setNotesSaved] = useState(false)
@@ -417,11 +482,157 @@ export default function AdminOrderDetailPage({
 
           {order.status === "confirmed" && (
             <div className="space-y-4">
+              {!order.tracking_number && (order.logistics_partner?.startsWith("speedy") || order.logistics_partner?.startsWith("econt")) && (
+                <>
+                  {!shipmentOpen ? (
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        setActionError("")
+                        try {
+                          const { form, display } = await getShipmentDefaults(id)
+                          setShipmentForm(form)
+                          setShipmentDisplay(display)
+                          setShipmentOpen(true)
+                        } catch (err) {
+                          setActionError(err instanceof Error ? err.message : "Грешка")
+                        }
+                      }}
+                    >
+                      Генерирай товарителница ({order.logistics_partner?.startsWith("speedy") ? "Speedy" : "Еконт"})
+                    </Button>
+                  ) : shipmentForm && (
+                    <div className="rounded-lg border border-border p-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">
+                          Товарителница — {shipmentDisplay?.courier === "speedy" ? "Speedy" : "Еконт"} ({shipmentDisplay?.deliveryType === "office" ? "до офис" : "до адрес"})
+                        </h3>
+                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setShipmentOpen(false)}>Затвори</button>
+                      </div>
+
+                      {/* Sender */}
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Подател</p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
+                            <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                            <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
+                          </div>
+                        </div>
+                        {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
+                            <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                          </div>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                              <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                              <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                              <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Receiver */}
+                      <div className="space-y-2 border-t pt-3">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Получател</p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Име</label>
+                            <Input value={shipmentForm.recipientName} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientName: e.target.value })} />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                            <Input value={shipmentForm.recipientPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPhone: e.target.value })} />
+                          </div>
+                        </div>
+                        {shipmentDisplay?.deliveryType === "office" ? (
+                          <OfficeCodeInput shipmentForm={shipmentForm} setShipmentForm={setShipmentForm} courier={shipmentDisplay?.courier || ""} />
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                              <Input value={shipmentForm.recipientCity} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientCity: e.target.value })} />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                              <Input value={shipmentForm.recipientAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientAddress: e.target.value })} />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                              <Input value={shipmentForm.recipientPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPostalCode: e.target.value })} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Shipment details */}
+                      <div className="space-y-2 border-t pt-3">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Пратка</p>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Тегло (кг)</label>
+                            <Input type="number" step="0.1" min="0.1" max="50" value={shipmentForm.weight} onChange={(e) => setShipmentForm({ ...shipmentForm, weight: parseFloat(e.target.value) || 0 })} />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Съдържание</label>
+                            <Input value={shipmentForm.contents} onChange={(e) => setShipmentForm({ ...shipmentForm, contents: e.target.value })} />
+                          </div>
+                          {(shipmentDisplay?.codAmount ?? 0) > 0 && (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Наложен платеж (EUR)</label>
+                              <Input value={shipmentDisplay!.codAmount.toFixed(2)} disabled className="bg-secondary" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 pt-2">
+                        <Button
+                          disabled={shipmentLoading}
+                          onClick={async () => {
+                            setShipmentLoading(true)
+                            setActionError("")
+                            try {
+                              const { trackingNumber: tn } = await generateShipment(id, shipmentForm)
+                              setTrackingNumber(tn)
+                              setShipmentOpen(false)
+                              const updated = await getOrder(id)
+                              setOrder(updated)
+                              setShipmentSuccess(tn)
+                            } catch (err) {
+                              setActionError(err instanceof Error ? err.message : "Грешка при генериране на товарителница")
+                            } finally {
+                              setShipmentLoading(false)
+                            }
+                          }}
+                        >
+                          {shipmentLoading ? "Генериране..." : "Изпрати към куриера"}
+                        </Button>
+                        <Button variant="ghost" onClick={() => setShipmentOpen(false)}>Отказ</Button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="flex items-end gap-3">
                 <div className="flex-1">
                   <label className="mb-1 block text-sm font-medium">Номер на товарителница</label>
                   <Input
-                    placeholder="Въведете номер на товарителница"
+                    placeholder={order.tracking_number || "Въведете номер на товарителница"}
                     value={trackingNumber}
                     onChange={(e) => setTrackingNumber(e.target.value)}
                   />
@@ -502,6 +713,31 @@ export default function AdminOrderDetailPage({
           )}
         </CardContent>
       </Card>
+
+      {/* Shipment success modal */}
+      {shipmentSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShipmentSuccess(null)} onKeyDown={(e) => { if (e.key === "Escape") setShipmentSuccess(null) }} role="dialog" aria-modal="true">
+          <div className="mx-4 w-full max-w-md rounded-lg bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-center mb-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              </div>
+            </div>
+            <h3 className="text-center text-lg font-semibold">Товарителница генерирана</h3>
+            <p className="mt-2 text-center text-sm text-muted-foreground">
+              Номер: <span className="font-mono font-medium text-foreground">{shipmentSuccess}</span>
+            </p>
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              Маркирайте поръчката като изпратена, когато сте готови.
+            </p>
+            <Button className="mt-5 w-full" onClick={() => setShipmentSuccess(null)}>
+              Разбрах
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 
 export interface EcontOfficeOption {
   id: number
+  code: string
   name: string
   city: string
   fullAddress: string

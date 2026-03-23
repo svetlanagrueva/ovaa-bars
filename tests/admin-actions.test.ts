@@ -31,6 +31,16 @@ vi.mock("@/lib/seller", () => ({
   })),
 }))
 
+// Mock courier clients (imported by admin actions via generateShipment)
+const mockSpeedyCreateShipment = vi.fn(() => Promise.resolve({ trackingNumber: "SPEEDY123", shipmentId: "1" }))
+const mockEcontCreateShipment = vi.fn(() => Promise.resolve({ trackingNumber: "ECONT123", pdfUrl: null }))
+vi.mock("@/lib/speedy", () => ({
+  createShipment: (...args: unknown[]) => mockSpeedyCreateShipment(...args),
+}))
+vi.mock("@/lib/econt", () => ({
+  createShipment: (...args: unknown[]) => mockEcontCreateShipment(...args),
+}))
+
 // Mock Supabase
 const mockSupabase = createSupabaseMock()
 
@@ -1073,6 +1083,352 @@ describe("admin actions", () => {
           confirmed_at: expect.any(String),
         })
       )
+    })
+  })
+
+  describe("getShipmentDefaults", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getShipmentDefaults } = await import("@/app/actions/admin")
+
+      await expect(getShipmentDefaults(validUUID)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { getShipmentDefaults } = await import("@/app/actions/admin")
+
+      await expect(getShipmentDefaults("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("returns form data and display info for Econt office order", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validUUID,
+          first_name: "Ivan",
+          last_name: "Petrov",
+          phone: "+359888123456",
+          city: "Sofia",
+          address: "ul. Test 1",
+          postal_code: "1000",
+          logistics_partner: "econt-office",
+          payment_method: "cod",
+          total_amount: 5000,
+          econt_office_code: "1056",
+          econt_office_name: "Sofia Mladost 1",
+          speedy_office_id: null,
+          speedy_office_name: null,
+          items: [{ productName: "Dark Chocolate", quantity: 2 }],
+        },
+        error: null,
+      })
+
+      const { getShipmentDefaults } = await import("@/app/actions/admin")
+      const result = await getShipmentDefaults(validUUID)
+
+      expect(result.form.recipientName).toBe("Ivan Petrov")
+      expect(result.form.recipientOfficeCode).toBe("1056")
+      expect(result.form.recipientOfficeName).toBe("Sofia Mladost 1")
+      expect(result.form.weight).toBe(1.0)
+      expect(result.form.contents).toContain("Dark Chocolate x2")
+      expect(result.display.courier).toBe("econt")
+      expect(result.display.deliveryType).toBe("office")
+      expect(result.display.codAmount).toBe(50)
+    })
+
+    it("returns form data for Speedy address order", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validUUID,
+          first_name: "Maria",
+          last_name: "Ivanova",
+          phone: "+359899111222",
+          city: "Plovdiv",
+          address: "ul. Central 5",
+          postal_code: "4000",
+          logistics_partner: "speedy-address",
+          payment_method: "card",
+          total_amount: 2570,
+          econt_office_code: null,
+          econt_office_name: null,
+          speedy_office_id: null,
+          speedy_office_name: null,
+          items: [{ productName: "Mix Box", quantity: 1 }],
+        },
+        error: null,
+      })
+
+      const { getShipmentDefaults } = await import("@/app/actions/admin")
+      const result = await getShipmentDefaults(validUUID)
+
+      expect(result.form.recipientName).toBe("Maria Ivanova")
+      expect(result.form.recipientCity).toBe("Plovdiv")
+      expect(result.form.recipientAddress).toBe("ul. Central 5")
+      expect(result.display.courier).toBe("speedy")
+      expect(result.display.deliveryType).toBe("address")
+      expect(result.display.codAmount).toBe(0)
+    })
+  })
+
+  describe("generateShipment", () => {
+    const validForm: import("@/app/actions/admin").ShipmentFormData = {
+      senderName: "Test Co",
+      senderPhone: "0888111222",
+      senderEmail: "test@test.com",
+      senderAddress: "Test St 1",
+      senderCity: "Sofia",
+      senderPostalCode: "1000",
+      senderOfficeCode: "1056",
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888123456",
+      recipientCity: "Sofia",
+      recipientAddress: "ul. Test 1",
+      recipientPostalCode: "1000",
+      recipientOfficeId: "100",
+      recipientOfficeCode: "1056",
+      recipientOfficeName: "Sofia Mladost 1",
+      weight: 1.5,
+      contents: "Dark Chocolate x2",
+    }
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment("bad-id", validForm)).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects weight below 0.1 kg", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, { ...validForm, weight: 0.05 })).rejects.toThrow("между 0.1 и 50")
+    })
+
+    it("rejects weight above 50 kg", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, { ...validForm, weight: 51 })).rejects.toThrow("между 0.1 и 50")
+    })
+
+    it("rejects empty recipient name", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, { ...validForm, recipientName: "" })).rejects.toThrow("Името на получателя")
+    })
+
+    it("rejects empty recipient phone", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, { ...validForm, recipientPhone: "  " })).rejects.toThrow("Телефонът на получателя")
+    })
+
+    it("rejects empty contents", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, { ...validForm, contents: "" })).rejects.toThrow("Съдържанието е задължително")
+    })
+
+    it("rejects contents over 200 chars", async () => {
+      const { generateShipment } = await import("@/app/actions/admin")
+
+      await expect(generateShipment(validUUID, { ...validForm, contents: "x".repeat(201) })).rejects.toThrow("Съдържанието е твърде дълго")
+    })
+
+    it("creates Econt shipment for econt-office order", async () => {
+      // Lock succeeds
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({
+          data: {
+            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            logistics_partner: "econt-office", payment_method: "card", total_amount: 2570,
+          },
+          error: null,
+        })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+      mockEcontCreateShipment.mockResolvedValueOnce({ trackingNumber: "ECONT999", pdfUrl: null })
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      const result = await generateShipment(validUUID, validForm)
+
+      expect(result.trackingNumber).toBe("ECONT999")
+      expect(mockEcontCreateShipment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientName: "Ivan Petrov",
+          officeCode: "1056",
+          weight: 1.5,
+        })
+      )
+    })
+
+    it("creates Speedy shipment for speedy-office order", async () => {
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({
+          data: {
+            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            logistics_partner: "speedy-office", payment_method: "cod", total_amount: 5000,
+          },
+          error: null,
+        })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+      mockSpeedyCreateShipment.mockResolvedValueOnce({ trackingNumber: "SPD456", shipmentId: "2" })
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      const result = await generateShipment(validUUID, validForm)
+
+      expect(result.trackingNumber).toBe("SPD456")
+      expect(mockSpeedyCreateShipment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientName: "Ivan Petrov",
+          officeId: 100,
+          codAmount: 50, // 5000 / 100
+        })
+      )
+    })
+
+    it("uses COD amount from order, not from form", async () => {
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({
+          data: {
+            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            logistics_partner: "econt-office", payment_method: "cod", total_amount: 3000,
+          },
+          error: null,
+        })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      await generateShipment(validUUID, validForm)
+
+      // COD amount should be 30.00 EUR (from order.total_amount / 100), not whatever the form has
+      expect(mockEcontCreateShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ codAmount: 30 })
+      )
+    })
+
+    it("does not pass COD for card payments", async () => {
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({
+          data: {
+            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            logistics_partner: "econt-office", payment_method: "card", total_amount: 3000,
+          },
+          error: null,
+        })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      await generateShipment(validUUID, validForm)
+
+      expect(mockEcontCreateShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ codAmount: undefined })
+      )
+    })
+
+    it("rejects when order is not confirmed", async () => {
+      // Lock fails (status is not confirmed)
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({ data: null, error: { message: "no rows" } })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+      // Fallback check returns shipped status
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { status: "shipped", tracking_number: null },
+        error: null,
+      })
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("потвърдени поръчки")
+    })
+
+    it("rejects when order already has tracking number", async () => {
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({ data: null, error: { message: "no rows" } })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { status: "confirmed", tracking_number: "EXISTING123" },
+        error: null,
+      })
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("вече има товарителница")
+    })
+
+    it("rolls back lock when courier API fails", async () => {
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({
+          data: {
+            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            logistics_partner: "econt-office", payment_method: "card", total_amount: 2570,
+          },
+          error: null,
+        })),
+      }
+      mockSupabase.update = vi.fn(() => lockChain)
+      mockEcontCreateShipment.mockRejectedValueOnce(new Error("Econt API timeout"))
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("Econt API timeout")
+
+      // Verify rollback was called — update was called at least twice (lock + rollback)
+      expect(mockSupabase.update).toHaveBeenCalledTimes(2)
+      // Second call should set tracking_number to null
+      expect(mockSupabase.update).toHaveBeenLastCalledWith({ tracking_number: null })
+    })
+
+    it("reports orphaned shipment when DB save fails", async () => {
+      const callCount = { n: 0 }
+      const lockChain = {
+        eq: vi.fn(() => lockChain),
+        is: vi.fn(() => lockChain),
+        select: vi.fn(() => lockChain),
+        single: vi.fn(() => Promise.resolve({
+          data: {
+            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            logistics_partner: "econt-office", payment_method: "card", total_amount: 2570,
+          },
+          error: null,
+        })),
+      }
+      mockSupabase.update = vi.fn(() => {
+        callCount.n++
+        if (callCount.n === 1) return lockChain // lock succeeds
+        // Save fails (second update call)
+        return mockThenableResult(null, { message: "DB timeout" })
+      })
+
+      const { generateShipment } = await import("@/app/actions/admin")
+      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("не можа да бъде запазена")
     })
   })
 })
