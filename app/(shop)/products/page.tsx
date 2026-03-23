@@ -15,15 +15,15 @@ export default async function ProductsPage() {
     <div className="bg-background py-16 sm:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-xs font-medium uppercase tracking-[0.3em] text-muted-foreground">
-            Нашите Продукти
+          <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
+            Продукти
           </p>
-          <h1 className="mt-4 text-3xl font-light tracking-tight text-foreground sm:text-4xl">
+          <h1 className="mt-6 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
             Чист протеин, на ново ниво
           </h1>
-          <p className="mt-6 text-base leading-relaxed text-muted-foreground">
-            Всеки бар Egg Origin съдържа 20g пълноценен яйчен протеин с всички есенциални аминокиселини.
-            Без суроватка, без добавена захар, без излишни съставки - само функционално хранене за ежедневна употреба.
+          <p className="mt-6 text-sm leading-loose tracking-wide text-muted-foreground">
+            20g пълноценен яйчен протеин с всички есенциални аминокиселини.
+            Без суроватка, без добавена захар, без излишни съставки.
           </p>
         </div>
 
@@ -35,12 +35,12 @@ export default async function ProductsPage() {
 
         {/* Benefits Grid */}
         <div className="mt-24 border-t border-border pt-16">
-          <p className="text-xs font-medium uppercase tracking-[0.3em] text-muted-foreground">
+          <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
             Защо Egg Origin
           </p>
           <div className="mt-8 grid gap-12 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <p className="text-sm font-medium text-foreground">Пълноценен Протеин</p>
+              <p className="text-sm font-medium tracking-wide text-foreground">Пълноценен Протеин</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Яйчният протеин съдържа всички есенциални аминокиселини за оптимално мускулно възстановяване.
               </p>

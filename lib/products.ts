@@ -37,7 +37,7 @@ export const PRODUCTS: Product[] = [
 Тази кутия съдържа 12 индивидуално опаковани бара - вашият месечен запас от чист, функционален протеин.`,
     priceInCents: 2570, // 25.70 EUR
     image: '/images/dark-chocolate-bar.png',
-    images: ['/images/dark-chocolate-bar.png'],
+    images: ['/images/dark-chocolate-bar.png', '/images/dark-chocolate-single-bar.png'],
     badge: 'Бестселър',
     boxContents: '12 x бара Тъмен Шоколад',
     barsCount: 12,
@@ -78,7 +78,7 @@ export const PRODUCTS: Product[] = [
 Тази кутия съдържа 12 индивидуално опаковани бара - идеални за вкъщи, в офиса или в спортната чанта.`,
     priceInCents: 2570, // 25.70 EUR
     image: '/images/white-chocolate-raspberry-bar.png',
-    images: ['/images/white-chocolate-raspberry-bar.png'],
+    images: ['/images/white-chocolate-raspberry-bar.png', '/images/white-chocolate-single-bar.png'],
     badge: 'Ново',
     boxContents: '12 x бара Бял Шоколад с Малини',
     barsCount: 12,
@@ -119,7 +119,7 @@ export const PRODUCTS: Product[] = [
 Перфектното въведение в Egg Origin или чудесен начин да споделите с приятели и семейство.`,
     priceInCents: 2570, // 25.70 EUR
     image: '/images/dark-chocolate-bar.png',
-    images: ['/images/dark-chocolate-bar.png', '/images/white-chocolate-raspberry-bar.png'],
+    images: ['/images/dark-chocolate-bar.png', '/images/white-chocolate-raspberry-bar.png', '/images/dark-chocolate-single-bar.png', '/images/white-chocolate-single-bar.png'],
     badge: 'Популярен',
     boxContents: '6 x Тъмен Шоколад + 6 x Бял Шоколад с Малини',
     barsCount: 12,

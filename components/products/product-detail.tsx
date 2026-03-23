@@ -53,16 +53,16 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
         <div className="grid gap-12 lg:grid-cols-2">
           {/* Product Images */}
           <div className="space-y-4">
-            <div className="relative aspect-square overflow-hidden bg-secondary">
+            <div className="relative aspect-[3/4] overflow-hidden bg-secondary">
               <Image
                 src={product.images[selectedImage] || "/placeholder.svg"}
                 alt={product.name}
                 fill
-                className="object-contain p-8"
+                className="object-contain"
                 priority
               />
               {product.badge && (
-                <Badge className="absolute left-4 top-4 bg-primary text-primary-foreground">
+                <Badge className="absolute left-4 top-4 bg-primary text-primary-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
                   {product.badge}
                 </Badge>
               )}
@@ -81,7 +81,7 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
                       src={image || "/placeholder.svg"}
                       alt={`${product.name} - Снимка ${index + 1}`}
                       fill
-                      className="object-contain p-2"
+                      className="object-cover"
                     />
                   </button>
                 ))}
@@ -95,13 +95,13 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
               {product.name}
             </h1>
 
-            <p className="mt-2 text-lg text-muted-foreground">
+            <p className="mt-2 text-sm tracking-wide text-muted-foreground">
               {product.boxContents}
             </p>
 
             <div className="mt-6 flex flex-wrap gap-2">
               {product.nutritionHighlights.map((highlight) => (
-                <Badge key={highlight} variant="secondary" className="text-sm">
+                <Badge key={highlight} variant="secondary" className="text-[10px] font-normal tracking-wide">
                   {highlight}
                 </Badge>
               ))}

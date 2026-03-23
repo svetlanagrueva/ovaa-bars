@@ -19,45 +19,45 @@ export function ProductCard({ product }: ProductCardProps) {
   const addItem = useCartStore((state) => state.addItem)
 
   return (
-    <Card className="group overflow-hidden transition-shadow hover:shadow-lg">
+    <Card className="group overflow-hidden border-border transition-colors hover:border-foreground/30">
       <Link href={`/products/${product.slug}`} className="block">
-        <div className="relative aspect-square overflow-hidden bg-secondary">
+        <div className="relative aspect-[3/4] overflow-hidden bg-secondary">
           <Image
             src={product.image || "/placeholder.svg"}
             alt={product.name}
             fill
-            className="object-contain p-4 transition-transform duration-300 group-hover:scale-105"
+            className="object-cover transition-transform duration-300 group-hover:scale-105"
           />
           {product.badge && (
-            <Badge className="absolute left-3 top-3 bg-primary text-primary-foreground">
+            <Badge className="absolute left-3 top-3 bg-primary text-primary-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
               {product.badge}
             </Badge>
           )}
         </div>
       </Link>
-      <CardContent className="p-4">
+      <CardContent className="p-5">
         <Link href={`/products/${product.slug}`}>
-          <h3 className="text-lg font-semibold text-foreground hover:text-primary transition-colors">
+          <h3 className="text-base font-medium tracking-wide text-foreground transition-colors hover:text-muted-foreground">
             {product.name}
           </h3>
         </Link>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs tracking-wide text-muted-foreground">
           {product.boxContents}
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {product.nutritionHighlights.map((highlight) => (
-            <Badge key={highlight} variant="secondary" className="text-xs">
+            <Badge key={highlight} variant="secondary" className="text-[10px] font-normal tracking-wide">
               {highlight}
             </Badge>
           ))}
         </div>
       </CardContent>
-      <CardFooter className="flex items-center justify-between p-4 pt-0">
+      <CardFooter className="flex items-center justify-between border-t border-border p-5">
         <PriceDisplay product={product} size="sm" />
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            size="sm" 
+          <Button
+            variant="outline"
+            size="sm"
             asChild
           >
             <Link href={`/products/${product.slug}`}>
@@ -77,9 +77,9 @@ export function ProductCard({ product }: ProductCardProps) {
               })
             }}
             size="sm"
-            className="gap-2"
+            className="gap-1.5 text-[11px] uppercase tracking-[0.15em]"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-3.5 w-3.5" />
             Добави
           </Button>
         </div>
