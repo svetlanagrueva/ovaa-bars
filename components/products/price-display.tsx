@@ -26,12 +26,12 @@ export function PriceDisplay({ product, quantity = 1, showPerBar = false, size =
             {formatPrice(product.originalPriceInCents! * quantity)}
           </span>
         )}
-        <span className={`font-bold ${onSale ? "text-destructive" : "text-foreground"} ${isLarge ? "text-3xl font-light" : "text-xl"}`}>
+        <span className={`tracking-wide ${onSale ? "text-destructive" : "text-foreground"} ${isLarge ? "text-3xl font-light" : "text-base font-medium"}`}>
           {formatPrice(product.priceInCents * quantity)}
         </span>
       </div>
       {showPerBar && (
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs tracking-wide text-muted-foreground">
           {onSale && (
             <span className="line-through mr-1">
               {formatPrice(Math.round(product.originalPriceInCents! / product.barsCount))}

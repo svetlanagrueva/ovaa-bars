@@ -25,16 +25,17 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="text-2xl font-light tracking-[0.2em] uppercase text-foreground">Egg Origin</span>
+        <Link href="/" className="flex items-center">
+          <span className="text-sm font-bold tracking-[0.35em] uppercase text-foreground">Egg</span>
+          <span className="text-sm font-light tracking-[0.35em] uppercase text-foreground"> Origin</span>
         </Link>
 
-        <nav className="hidden items-center gap-8 md:flex">
+        <nav className="hidden items-center gap-10 md:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="text-base font-medium text-muted-foreground transition-colors hover:text-primary"
+              className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground transition-colors hover:text-foreground"
             >
               {link.label}
             </Link>
@@ -43,16 +44,14 @@ export function Header() {
 
         <div className="flex items-center gap-4">
           <Link href="/cart" className="relative">
-            <Button 
-              variant={mounted && totalItems > 0 ? "default" : "outline"} 
-              size="sm" 
-              className="relative gap-2 px-4"
+            <Button
+              variant={mounted && totalItems > 0 ? "default" : "outline"}
+              size="sm"
+              className="relative gap-2 px-4 text-[11px] uppercase tracking-[0.15em]"
             >
               <ShoppingCart className="h-4 w-4" />
               {mounted && totalItems > 0 ? (
-                <span className="font-medium">
-                  {totalItems} {totalItems === 1 ? "продукт" : totalItems >= 2 && totalItems <= 4 ? "продукта" : "продукти"}
-                </span>
+                <span className="font-medium">{totalItems}</span>
               ) : (
                 <span className="hidden sm:inline">Количка</span>
               )}
