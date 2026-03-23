@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">65.26% </span>
+                <span class="strong">64.88% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>171/262</span>
+                <span class='fraction'>170/262</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">63.42% </span>
+                <span class="strong">63.9% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>189/298</span>
+                <span class='fraction'>193/302</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">66.66% </span>
+                <span class="strong">63.63% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>22/33</span>
+                <span class='fraction'>21/33</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">64.91% </span>
+                <span class="strong">64.51% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>161/248</span>
+                <span class='fraction'>160/248</span>
             </div>
         
             
@@ -898,7 +898,11 @@
 <a name='L833'></a><a href='#L833'>833</a>
 <a name='L834'></a><a href='#L834'>834</a>
 <a name='L835'></a><a href='#L835'>835</a>
-<a name='L836'></a><a href='#L836'>836</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L836'></a><a href='#L836'>836</a>
+<a name='L837'></a><a href='#L837'>837</a>
+<a name='L838'></a><a href='#L838'>838</a>
+<a name='L839'></a><a href='#L839'>839</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -988,7 +992,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">13x</span>
 <span class="cline-any cline-yes">13x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">13x</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1382,6 +1386,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">11x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
@@ -1547,6 +1552,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1771,6 +1777,7 @@ interface InvoiceInfo {
 &nbsp;
 interface EcontOfficeData {
   id: number
+  code: string
   name: string
   city: string
   fullAddress: string
@@ -1823,7 +1830,7 @@ const COD_RATE_LIMIT_MAX = 3 // max 3 COD orders per IP per hour
 function checkCODRateLimit(ip: string) {
   const now = Date.now()
   const timestamps = (codRateLimit.get(ip) || []).filter(
-    (t) =&gt; now - t &lt; COD_RATE_LIMIT_WINDOW_MS
+<span class="fstat-no" title="function not covered" >    (t</span>) =&gt; <span class="cstat-no" title="statement not covered" >now - t &lt; COD_RATE_LIMIT_WINDOW_MS</span>
   )
   <span class="missing-if-branch" title="if path not taken" >I</span>if (timestamps.length &gt;= COD_RATE_LIMIT_MAX) {
 <span class="cstat-no" title="statement not covered" >    throw new Error("Too many orders. Please try again later.")</span>
@@ -2206,6 +2213,7 @@ export async function createCheckoutSession(data: CheckoutData) {
       invoice_address: invoiceInfo?.invoiceAddress || null,
       invoice_egn: invoiceInfo?.egn || null,
       econt_office_id: econtOffice?.id ?? null,
+      econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
       speedy_office_id: speedyOffice?.id ?? null,
@@ -2408,6 +2416,7 @@ export async function createCODOrder(data: CODOrderData) {
       invoice_address: invoiceInfo?.invoiceAddress || null,
       invoice_egn: invoiceInfo?.egn || null,
       econt_office_id: econtOffice?.id ?? null,
+      econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
       speedy_office_id: speedyOffice?.id ?? null,
@@ -2575,7 +2584,7 @@ ${order.address ? `Адрес: ${order.address}` : ""}
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-22T15:37:05.612Z
+                at 2026-03-23T08:00:18.352Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -44,6 +44,7 @@ create table if not exists orders (
 
   -- Econt delivery (optional)
   econt_office_id integer,
+  econt_office_code text,
   econt_office_name text,
   econt_office_address text,
 

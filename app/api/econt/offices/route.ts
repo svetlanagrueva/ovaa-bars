@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
     const offices = await getOffices(city)
     const slim = offices.map((o) => ({
       id: o.id,
+      code: o.code,
       name: o.name,
       city: o.address?.city?.name || '',
       fullAddress: o.address?.fullAddress || '',

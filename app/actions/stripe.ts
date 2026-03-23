@@ -36,6 +36,7 @@ interface InvoiceInfo {
 
 interface EcontOfficeData {
   id: number
+  code: string
   name: string
   city: string
   fullAddress: string
@@ -471,6 +472,7 @@ export async function createCheckoutSession(data: CheckoutData) {
       invoice_address: invoiceInfo?.invoiceAddress || null,
       invoice_egn: invoiceInfo?.egn || null,
       econt_office_id: econtOffice?.id ?? null,
+      econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
       speedy_office_id: speedyOffice?.id ?? null,
@@ -673,6 +675,7 @@ export async function createCODOrder(data: CODOrderData) {
       invoice_address: invoiceInfo?.invoiceAddress || null,
       invoice_egn: invoiceInfo?.egn || null,
       econt_office_id: econtOffice?.id ?? null,
+      econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
       econt_office_address: econtOffice?.fullAddress ?? null,
       speedy_office_id: speedyOffice?.id ?? null,

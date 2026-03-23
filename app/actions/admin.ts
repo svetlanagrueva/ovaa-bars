@@ -12,6 +12,8 @@ import { Resend } from "resend"
 import { redirect } from "next/navigation"
 import { createHmac, timingSafeEqual } from "crypto"
 import { headers } from "next/headers"
+import { createShipment as createSpeedyShipment } from "@/lib/speedy"
+import { createShipment as createEcontShipment } from "@/lib/econt"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -165,6 +167,7 @@ export interface OrderDetail extends OrderSummary {
   invoice_mol: string | null
   invoice_address: string | null
   econt_office_id: number | null
+  econt_office_code: string | null
   econt_office_name: string | null
   econt_office_address: string | null
   speedy_office_id: number | null
@@ -550,6 +553,185 @@ export async function updateOrderStatus(
   }
 
   return { success: true }
+}
+
+export interface ShipmentFormData {
+  senderName: string
+  senderPhone: string
+  senderEmail: string
+  senderAddress: string
+  senderCity: string
+  senderPostalCode: string
+  senderOfficeCode: string
+  recipientName: string
+  recipientPhone: string
+  recipientCity: string
+  recipientAddress: string
+  recipientPostalCode: string
+  recipientOfficeId: string
+  recipientOfficeCode: string
+  recipientOfficeName: string
+  weight: number
+  contents: string
+}
+
+// Display-only fields returned by getShipmentDefaults (not sent back to server)
+export interface ShipmentDisplayInfo {
+  codAmount: number
+  courier: string
+  deliveryType: string
+}
+
+export async function getShipmentDefaults(orderId: string): Promise<{ form: ShipmentFormData; display: ShipmentDisplayInfo }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Order not found")
+  const items = order.items as Array<{ productName: string; quantity: number }>
+  const contents = items.map((i) => `${i.productName} x${i.quantity}`).join(", ")
+  const partner = order.logistics_partner || ""
+  const isCod = order.payment_method === "cod"
+  const isOffice = partner.endsWith("-office")
+
+  return {
+    form: {
+      senderName: process.env.SELLER_COMPANY_NAME || "",
+      senderPhone: process.env.SELLER_PHONE || "",
+      senderEmail: process.env.SELLER_EMAIL || "",
+      senderAddress: process.env.SELLER_ADDRESS || "",
+      senderCity: process.env.SELLER_CITY || "",
+      senderPostalCode: process.env.SELLER_POSTAL_CODE || "",
+      senderOfficeCode: process.env.SELLER_ECONT_OFFICE_CODE || "",
+      recipientName: `${order.first_name} ${order.last_name}`,
+      recipientPhone: order.phone,
+      recipientCity: order.city,
+      recipientAddress: order.address || "",
+      recipientPostalCode: order.postal_code || "",
+      recipientOfficeId: isOffice ? String(order.speedy_office_id || "") : "",
+      recipientOfficeCode: isOffice ? (order.econt_office_code || "") : "",
+      recipientOfficeName: isOffice
+        ? (order.speedy_office_name || order.econt_office_name || "")
+        : "",
+      weight: 1.0,
+      contents,
+    },
+    display: {
+      codAmount: isCod ? order.total_amount / 100 : 0,
+      courier: partner.startsWith("speedy") ? "speedy" : "econt",
+      deliveryType: isOffice ? "office" : "address",
+    },
+  }
+}
+
+export async function generateShipment(orderId: string, form: ShipmentFormData): Promise<{ trackingNumber: string }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!form.weight || form.weight < 0.1 || form.weight > 50) throw new Error("Теглото трябва да е между 0.1 и 50 кг")
+  if (!form.recipientName.trim()) throw new Error("Името на получателя е задължително")
+  if (!form.recipientPhone.trim()) throw new Error("Телефонът на получателя е задължителен")
+  if (!form.contents.trim()) throw new Error("Съдържанието е задължително")
+  if (form.contents.length > 200) throw new Error("Съдържанието е твърде дълго")
+
+  const supabase = await createClient()
+
+  // Atomic lock: set tracking_number to a placeholder to prevent concurrent shipment creation
+  const { data: locked, error: lockError } = await supabase
+    .from("orders")
+    .update({ tracking_number: "__generating__" })
+    .eq("id", orderId)
+    .eq("status", "confirmed")
+    .is("tracking_number", null)
+    .select("id, status, tracking_number, logistics_partner, payment_method, total_amount")
+    .single()
+
+  if (lockError || !locked) {
+    // Check why lock failed
+    const { data: existing } = await supabase.from("orders").select("status, tracking_number").eq("id", orderId).single()
+    if (!existing) throw new Error("Order not found")
+    if (existing.status !== "confirmed") throw new Error("Товарителница може да се генерира само за потвърдени поръчки")
+    if (existing.tracking_number) throw new Error("Тази поръчка вече има товарителница")
+    throw new Error("Не може да се генерира товарителница в момента. Опитайте отново.")
+  }
+
+  const order = locked
+
+  // Use courier/delivery type from the order, not from the form (prevent tampering)
+  const partner = order.logistics_partner as string
+  const courier = partner.startsWith("speedy") ? "speedy" : "econt"
+  const deliveryType = partner.endsWith("-office") ? "office" : "address"
+
+  // Use COD amount from the order, not from the form (prevent tampering)
+  const isCod = order.payment_method === "cod"
+  const codAmount = isCod ? order.total_amount / 100 : undefined
+
+  let trackingNumber: string
+
+  try {
+    if (courier === "speedy") {
+      const result = await createSpeedyShipment({
+        recipientName: form.recipientName.trim(),
+        recipientPhone: form.recipientPhone.trim(),
+        officeId: deliveryType === "office" ? Number(form.recipientOfficeId) || undefined : undefined,
+        weight: form.weight,
+        contents: form.contents,
+        codAmount,
+      })
+      trackingNumber = result.trackingNumber
+    } else {
+      const result = await createEcontShipment({
+        senderName: form.senderName.trim(),
+        senderPhone: form.senderPhone.trim(),
+        senderEmail: form.senderEmail.trim(),
+        senderOfficeCode: form.senderOfficeCode.trim() || undefined,
+        senderCity: form.senderCity.trim(),
+        senderAddress: form.senderAddress.trim(),
+        senderPostalCode: form.senderPostalCode.trim(),
+        recipientName: form.recipientName.trim(),
+        recipientPhone: form.recipientPhone.trim(),
+        officeCode: deliveryType === "office" ? form.recipientOfficeCode : undefined,
+        address: deliveryType === "address" ? {
+          city: form.recipientCity.trim(),
+          postCode: form.recipientPostalCode.trim(),
+          street: form.recipientAddress.trim(),
+          num: "",
+        } : undefined,
+        weight: form.weight,
+        contents: form.contents,
+        codAmount,
+      })
+      trackingNumber = result.trackingNumber
+    }
+  } catch (courierError) {
+    // Rollback the lock — clear the placeholder so the admin can retry
+    await supabase.from("orders").update({ tracking_number: null }).eq("id", orderId).eq("tracking_number", "__generating__")
+    throw courierError
+  }
+
+  // Save the real tracking number (replacing the placeholder)
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({ tracking_number: trackingNumber })
+    .eq("id", orderId)
+    .eq("tracking_number", "__generating__")
+
+  if (updateError) {
+    console.error("Failed to save tracking number:", updateError)
+    console.error(`ORPHANED SHIPMENT: order=${orderId} tracking=${trackingNumber} courier=${courier}`)
+    throw new Error(`Товарителницата е създадена (${trackingNumber}), но не можа да бъде запазена. Въведете номера ръчно.`)
+  }
+
+  return { trackingNumber }
 }
 
 export async function updateAdminNotes(orderId: string, notes: string) {

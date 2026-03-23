@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 
 export interface EcontOfficeOption {
   id: number
+  code: string
   name: string
   city: string
   fullAddress: string
@@ -102,7 +103,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
           onBlur={(e) => {
             const value = e.target.value.trim()
             if (value) {
-              onSelect({ id: 0, name: value, city: "", fullAddress: value })
+              onSelect({ id: 0, code: "", name: value, city: "", fullAddress: value })
             }
           }}
         />
