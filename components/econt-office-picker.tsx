@@ -103,7 +103,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
           onBlur={(e) => {
             const value = e.target.value.trim()
             if (value) {
-              onSelect({ id: 0, name: value, city: "", fullAddress: value })
+              onSelect({ id: 0, code: "", name: value, city: "", fullAddress: value })
             }
           }}
         />
