@@ -31,11 +31,10 @@ The olive-green primary is the dark chocolate box colour. The cream background i
 
 ## Typography Rules
 
-### Logo lockup — critical
-Must always split weight: `EGG` in `font-bold` + `Origin` in `font-light`. Both uppercase with `tracking-[0.3em]` or wider. This mirrors the packaging exactly.
+### Logo lockup
+Uniform weight throughout — `font-medium tracking-[0.35em] uppercase`. Do not split EGG bold / Origin light on the website; that treatment belongs on the physical packaging only.
 ```jsx
-<span className="font-bold tracking-[0.35em] uppercase">Egg</span>
-<span className="font-light tracking-[0.35em] uppercase"> Origin</span>
+<span className="font-medium tracking-[0.35em] uppercase">Egg Origin</span>
 ```
 
 ### Eyebrow / label text

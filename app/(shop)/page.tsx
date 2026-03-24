@@ -16,10 +16,8 @@ export default async function HomePage() {
         <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8">
           <div className="grid items-center gap-16 lg:grid-cols-2">
             <div className="max-w-xl">
-              <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground">
-                <span className="font-bold">Egg</span><span className="font-light"> Origin</span>
-                <span className="mx-3 opacity-40">—</span>
-                <span className="font-light">Яйчен Протеин</span>
+              <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
+                Egg Origin — Яйчен Протеин
               </p>
               <h1 className="mt-8 text-balance text-4xl font-light tracking-wide text-foreground sm:text-5xl lg:text-6xl">
                 Чиста храна за{" "}
@@ -134,15 +132,15 @@ export default async function HomePage() {
               Виж всички
             </Link>
           </div>
-          <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-12 grid grid-cols-2 gap-3 sm:gap-8 lg:grid-cols-3">
             {PRODUCTS.map((product) => (
               <ProductCard key={product.id} product={product} />
             ))}
           </div>
-          <div className="mt-8 sm:hidden">
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/products">Виж всички продукти</Link>
-            </Button>
+          <div className="mt-8 text-center sm:hidden">
+            <Link href="/products" className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground hover:text-foreground">
+              Виж всички
+            </Link>
           </div>
         </div>
       </section>
