@@ -93,21 +93,6 @@ insert into invoice_counter (id, current_number)
 values (1, 0)
 on conflict (id) do nothing;
 
-create or replace function next_invoice_number()
-returns bigint
-language plpgsql
-as $$
-declare
-  next_num bigint;
-begin
-  update invoice_counter
-  set current_number = current_number + 1
-  where id = 1
-  returning current_number into next_num;
-  return next_num;
-end;
-$$;
-
 create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
 
@@ -239,3 +224,69 @@ create policy "Deny public reads on promo codes" on promo_codes for select using
 create policy "Deny public inserts on promo codes" on promo_codes for insert with check (false);
 create policy "Deny public updates on promo codes" on promo_codes for update using (false);
 create policy "Deny public deletes on promo codes" on promo_codes for delete using (false);
+
+-- ─── Inventory ────────────────────────────────────────────────────────────────
+
+-- Append-only audit log of all inventory movements.
+-- type:
+--   batch_in    — new stock added (has batch_id, expiry_date)
+--   order_out   — stock consumed by a confirmed order (has order_id)
+--   cancellation — stock restored when an order is cancelled (has order_id)
+--   adjustment  — manual correction (has notes)
+-- quantity is always positive; direction is encoded in type.
+create table if not exists inventory_log (
+  id          bigint generated always as identity primary key,
+  sku         text not null,
+  type        text not null check (type in ('batch_in', 'order_out', 'adjustment', 'cancellation')),
+  quantity    integer not null check (quantity > 0),
+  batch_id    text,
+  expiry_date date,
+  order_id    uuid references orders(id),
+  notes       text,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists idx_inventory_log_sku        on inventory_log (sku);
+create index if not exists idx_inventory_log_created_at on inventory_log (created_at desc);
+create index if not exists idx_inventory_log_order_id   on inventory_log (order_id) where order_id is not null;
+
+-- Running total per SKU — updated by trigger on every inventory_log insert.
+-- Read this table for real-time stock checks (never aggregate inventory_log directly).
+create table if not exists inventory_current (
+  sku        text primary key,
+  quantity   integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+-- Trigger: keep inventory_current in sync with every inventory_log insert
+create or replace function update_inventory_current()
+returns trigger as $$
+begin
+  insert into inventory_current (sku, quantity, updated_at)
+  values (new.sku, 0, now())
+  on conflict (sku) do nothing;
+
+  update inventory_current
+  set
+    quantity = quantity + case
+      when new.type in ('batch_in', 'cancellation') then  new.quantity
+      when new.type in ('order_out', 'adjustment')  then -new.quantity
+    end,
+    updated_at = now()
+  where sku = new.sku;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create or replace trigger trg_update_inventory_current
+after insert on inventory_log
+for each row execute function update_inventory_current();
+
+alter table inventory_log     enable row level security;
+alter table inventory_current enable row level security;
+create policy "Deny public reads on inventory_log"     on inventory_log     for select using (false);
+create policy "Deny public inserts on inventory_log"   on inventory_log     for insert with check (false);
+create policy "Deny public reads on inventory_current" on inventory_current for select using (false);
+create policy "Deny public inserts on inventory_current" on inventory_current for insert with check (false);
+create policy "Deny public updates on inventory_current" on inventory_current for update using (false);
