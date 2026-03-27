@@ -21,7 +21,7 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Card className="group overflow-hidden border-border transition-colors hover:border-foreground/30">
       <Link href={`/products/${product.slug}`} className="block">
-        <div className="relative aspect-[3/4] overflow-hidden bg-secondary">
+        <div className="relative aspect-square overflow-hidden bg-secondary sm:aspect-[3/4]">
           <Image
             src={product.image || "/placeholder.svg"}
             alt={product.name}
@@ -35,16 +35,16 @@ export function ProductCard({ product }: ProductCardProps) {
           )}
         </div>
       </Link>
-      <CardContent className="p-5">
+      <CardContent className="p-3 sm:p-5">
         <Link href={`/products/${product.slug}`}>
-          <h3 className="text-base font-medium tracking-wide text-foreground transition-colors hover:text-muted-foreground">
+          <h3 className="text-sm font-medium tracking-wide text-foreground transition-colors hover:text-muted-foreground sm:text-base">
             {product.name}
           </h3>
         </Link>
-        <p className="mt-1 text-xs tracking-wide text-muted-foreground">
+        <p className="mt-1 text-[11px] tracking-wide text-muted-foreground sm:text-xs">
           {product.boxContents}
         </p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-2 hidden flex-wrap gap-1.5 sm:flex">
           {product.nutritionHighlights.map((highlight) => (
             <Badge key={highlight} variant="secondary" className="text-[10px] font-normal tracking-wide">
               {highlight}
@@ -52,13 +52,14 @@ export function ProductCard({ product }: ProductCardProps) {
           ))}
         </div>
       </CardContent>
-      <CardFooter className="flex items-center justify-between border-t border-border p-5">
+      <CardFooter className="flex flex-col gap-3 border-t border-border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
         <PriceDisplay product={product} size="sm" />
-        <div className="flex gap-2">
+        <div className="flex w-full gap-2 sm:w-auto">
           <Button
             variant="outline"
             size="sm"
             asChild
+            className="hidden sm:flex"
           >
             <Link href={`/products/${product.slug}`}>
               <ArrowRight className="h-4 w-4" />
@@ -77,7 +78,7 @@ export function ProductCard({ product }: ProductCardProps) {
               })
             }}
             size="sm"
-            className="gap-1.5 text-[11px] uppercase tracking-[0.15em]"
+            className="w-full gap-1.5 text-[11px] uppercase tracking-[0.15em] sm:w-auto"
           >
             <Plus className="h-3.5 w-3.5" />
             Добави

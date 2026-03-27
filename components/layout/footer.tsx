@@ -41,8 +41,7 @@ export function Footer() {
         <div className="grid gap-8 md:grid-cols-4">
           <div className="md:col-span-2">
             <Link href="/" className="flex items-center">
-              <span className="text-base font-bold tracking-[0.3em] uppercase text-foreground">Egg</span>
-              <span className="text-base font-light tracking-[0.3em] uppercase text-foreground"> Origin</span>
+              <span className="text-base font-medium tracking-[0.3em] uppercase text-foreground">Egg Origin</span>
             </Link>
             <p className="mt-4 max-w-md text-sm text-muted-foreground">
               Протеинови барове с яйчен белтък. Високо съдържание на протеин,
