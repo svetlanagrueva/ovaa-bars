@@ -23,7 +23,6 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const STATUS_LABELS: Record<string, string> = {
   all: "Всички",
-  pending: "Чакащи",
   confirmed: "Потвърдени",
   shipped: "Изпратени",
   delivered: "Доставени",

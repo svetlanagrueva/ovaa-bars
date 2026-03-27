@@ -115,6 +115,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const { data: recentOrders } = await supabase
     .from("orders")
     .select("id, created_at, first_name, last_name, total_amount, status, payment_method")
+    .neq("status", "pending")
     .order("created_at", { ascending: false })
     .limit(10)
 
@@ -208,6 +209,9 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   const status = params?.status
   if (status && status !== "all") {
     query = query.eq("status", status)
+  } else {
+    // Exclude pending — these are abandoned card checkouts (order created before Stripe redirect, never confirmed by webhook)
+    query = query.neq("status", "pending")
   }
 
   const dateFrom = params?.dateFrom
