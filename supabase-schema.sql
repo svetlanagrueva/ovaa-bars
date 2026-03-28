@@ -241,7 +241,7 @@ create table if not exists inventory_log (
   quantity    integer not null check (quantity > 0),
   batch_id    text,
   expiry_date date,
-  order_id         uuid references orders(id),
+  order_id         uuid references orders(id) on delete set null,
   notes            text,
   before_quantity  integer,  -- stock level before this movement (set by trigger)
   after_quantity   integer,  -- stock level after this movement (set by trigger)

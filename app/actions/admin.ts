@@ -518,6 +518,25 @@ export async function updateOrderStatus(
     throw new Error("Order status was changed by another request. Please refresh and try again.")
   }
 
+  // Restore inventory on cancellation
+  if (newStatus === "cancelled") {
+    const items = order.items as Array<{ productId: string; quantity: number }>
+    for (const item of items) {
+      const product = PRODUCTS.find((p) => p.id === item.productId)
+      if (!product) {
+        console.error(`Cannot restore inventory: unknown productId ${item.productId}`)
+        continue
+      }
+      await supabase.rpc("restore_inventory", {
+        p_sku: product.sku,
+        p_quantity: item.quantity,
+        p_order_id: orderId,
+      }).catch((err) => {
+        console.error(`Failed to restore inventory for ${product.sku} on order ${orderId}:`, err)
+      })
+    }
+  }
+
   // Send shipping notification email
   if (newStatus === "shipped") {
     sendShippingEmail(order, trackingNumber!.trim())

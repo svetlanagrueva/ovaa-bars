@@ -196,6 +196,36 @@ async function validateCartItems(cartItems: CartItem[]) {
   })
 }
 
+// Reserve inventory for all items in an order. Rolls back already-reserved
+// items if any single reservation fails (e.g. insufficient stock mid-loop).
+async function reserveInventoryForOrder(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  items: Array<{ sku: string; quantity: number }>,
+  orderId: string,
+): Promise<void> {
+  const reserved: Array<{ sku: string; quantity: number }> = []
+  try {
+    for (const item of items) {
+      const { error } = await supabase.rpc("reserve_inventory", {
+        p_sku: item.sku,
+        p_quantity: item.quantity,
+        p_order_id: orderId,
+      })
+      if (error) throw new Error(error.message)
+      reserved.push(item)
+    }
+  } catch (err) {
+    for (const r of reserved) {
+      await supabase.rpc("restore_inventory", {
+        p_sku: r.sku,
+        p_quantity: r.quantity,
+        p_order_id: orderId,
+      }).catch(() => {})
+    }
+    throw err
+  }
+}
+
 function calculateDiscount(
   discountType: string,
   discountValue: number,
@@ -489,6 +519,18 @@ export async function createCheckoutSession(data: CheckoutData) {
     throw new Error("Failed to create order")
   }
 
+  // Reserve inventory — if insufficient stock, clean up the order and surface the error
+  try {
+    await reserveInventoryForOrder(
+      supabase,
+      validatedItems.map((i) => ({ sku: i.product.sku, quantity: i.quantity })),
+      order.id,
+    )
+  } catch (inventoryErr) {
+    await supabase.from("orders").delete().eq("id", order.id)
+    throw inventoryErr
+  }
+
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
 
@@ -521,7 +563,14 @@ export async function createCheckoutSession(data: CheckoutData) {
       },
     })
   } catch (err) {
-    // Stripe session creation failed — clean up orphaned resources
+    // Stripe session creation failed — restore inventory then clean up orphaned resources
+    for (const item of validatedItems) {
+      await supabase.rpc("restore_inventory", {
+        p_sku: item.product.sku,
+        p_quantity: item.quantity,
+        p_order_id: order.id,
+      }).catch(() => {})
+    }
     await supabase.from("orders").delete().eq("id", order.id).eq("status", "pending")
     if (stripeCouponId) {
       await stripe.coupons.del(stripeCouponId).catch(() => {})
@@ -690,6 +739,18 @@ export async function createCODOrder(data: CODOrderData) {
   if (orderError) {
     console.error("Failed to create COD order:", orderError)
     throw new Error("Failed to create order")
+  }
+
+  // Reserve inventory — if insufficient stock, clean up the order and surface the error
+  try {
+    await reserveInventoryForOrder(
+      supabase,
+      validatedItems.map((i) => ({ sku: i.product.sku, quantity: i.quantity })),
+      order.id,
+    )
+  } catch (inventoryErr) {
+    await supabase.from("orders").delete().eq("id", order.id)
+    throw inventoryErr
   }
 
   // Send confirmation email and notify admin

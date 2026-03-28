@@ -24,6 +24,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
+  if (event.type === "checkout.session.expired") {
+    const session = event.data.object as Stripe.Checkout.Session
+    const orderId = session.metadata?.orderId
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (orderId && uuidRegex.test(orderId)) {
+      const supabase = await createClient()
+      const { data: order } = await supabase
+        .from("orders")
+        .select("status, items")
+        .eq("id", orderId)
+        .single()
+
+      // Only restore if still pending — confirmed orders keep their reservation
+      if (order?.status === "pending") {
+        const { PRODUCTS } = await import("@/lib/products")
+        const items = order.items as Array<{ productId: string; quantity: number }>
+        for (const item of items) {
+          const product = PRODUCTS.find((p) => p.id === item.productId)
+          if (!product) continue
+          await supabase.rpc("restore_inventory", {
+            p_sku: product.sku,
+            p_quantity: item.quantity,
+            p_order_id: orderId,
+          }).catch((err) => {
+            console.error(`Failed to restore inventory for ${product.sku} on expired session ${orderId}:`, err)
+          })
+        }
+      }
+    }
+  }
+
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session
 
