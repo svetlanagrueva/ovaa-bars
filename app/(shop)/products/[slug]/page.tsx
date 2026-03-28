@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import { PRODUCTS, getProductBySlug } from "@/lib/products"
 import { getProductsWithSales } from "@/lib/sales"
+import { getInventoryMap } from "@/lib/inventory"
 import { ProductDetail } from "@/components/products/product-detail"
 
 export const revalidate = 60
@@ -37,7 +38,10 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 
 export default async function ProductPage({ params }: ProductPageProps) {
   const { slug } = await params
-  const products = await getProductsWithSales()
+  const [products, inventoryMap] = await Promise.all([
+    getProductsWithSales(),
+    getInventoryMap(),
+  ])
   const product = products.find((p) => p.slug === slug)
 
   if (!product) {
@@ -45,6 +49,16 @@ export default async function ProductPage({ params }: ProductPageProps) {
   }
 
   const otherProducts = products.filter((p) => p.id !== product.id)
+  const otherProductsSoldOut = Object.fromEntries(
+    otherProducts.map((p) => [p.id, (inventoryMap.get(p.id) ?? 0) === 0])
+  )
 
-  return <ProductDetail product={product} otherProducts={otherProducts} />
+  return (
+    <ProductDetail
+      product={product}
+      otherProducts={otherProducts}
+      soldOut={(inventoryMap.get(product.id) ?? 0) === 0}
+      otherProductsSoldOut={otherProductsSoldOut}
+    />
+  )
 }

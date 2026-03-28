@@ -13,9 +13,10 @@ import { PriceDisplay } from "@/components/products/price-display"
 
 interface ProductCardProps {
   product: Product
+  soldOut?: boolean
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, soldOut = false }: ProductCardProps) {
   const addItem = useCartStore((state) => state.addItem)
 
   return (
@@ -28,7 +29,11 @@ export function ProductCard({ product }: ProductCardProps) {
             fill
             className="object-cover transition-transform duration-300 group-hover:scale-105"
           />
-          {product.badge && (
+          {soldOut ? (
+            <Badge className="absolute left-3 top-3 bg-muted text-muted-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
+              Изчерпан
+            </Badge>
+          ) : product.badge && (
             <Badge className="absolute left-3 top-3 bg-primary text-primary-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
               {product.badge}
             </Badge>
@@ -78,10 +83,17 @@ export function ProductCard({ product }: ProductCardProps) {
               })
             }}
             size="sm"
+            disabled={soldOut}
             className="w-full gap-1.5 text-[11px] uppercase tracking-[0.15em] sm:w-auto"
           >
-            <Plus className="h-3.5 w-3.5" />
-            Добави
+            {soldOut ? (
+              "Изчерпан"
+            ) : (
+              <>
+                <Plus className="h-3.5 w-3.5" />
+                Добави
+              </>
+            )}
           </Button>
         </div>
       </CardFooter>
