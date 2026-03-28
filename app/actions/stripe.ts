@@ -243,6 +243,37 @@ const promoRateLimit = new Map<string, number[]>()
 const PROMO_RATE_LIMIT_WINDOW_MS = 60 * 1000
 const PROMO_RATE_LIMIT_MAX = 10
 
+// Soft stock check for checkout page load — no lock, no decrement.
+// Returns items with insufficient stock so the UI can warn before any payment attempt.
+export async function checkCartInventory(
+  cartItems: Array<{ productId: string; quantity: number }>
+): Promise<Array<{ productName: string; available: number; requested: number }>> {
+  if (!Array.isArray(cartItems) || cartItems.length === 0) return []
+
+  const itemsWithSku = cartItems.flatMap((item) => {
+    const product = PRODUCTS.find((p) => p.id === item.productId)
+    return product ? [{ sku: product.sku, name: product.name, quantity: item.quantity }] : []
+  })
+
+  if (itemsWithSku.length === 0) return []
+
+  const supabase = await createClient()
+  const { data: stockLevels } = await supabase
+    .from("inventory_current")
+    .select("sku, quantity")
+    .in("sku", itemsWithSku.map((i) => i.sku))
+
+  const stockMap = new Map((stockLevels || []).map((s) => [s.sku, s.quantity as number]))
+
+  return itemsWithSku
+    .filter((item) => (stockMap.get(item.sku) ?? 0) < item.quantity)
+    .map((item) => ({
+      productName: item.name,
+      available: stockMap.get(item.sku) ?? 0,
+      requested: item.quantity,
+    }))
+}
+
 export async function validatePromoCode(code: string, subtotalInCents: number) {
   if (!code || !code.trim()) {
     return { valid: false as const, error: "Въведете промо код" }
