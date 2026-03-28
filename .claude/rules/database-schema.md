@@ -36,3 +36,11 @@ ALTER TABLE orders ADD COLUMN admin_notes text;
 ALTER TABLE orders ADD COLUMN invoice_egn text;
 ```
 Plus the `issue_invoice_number` and `dashboard_stats` functions, and the indexes.
+
+## Status constraint — add `expired` for abandoned checkout sessions
+```sql
+ALTER TABLE orders DROP CONSTRAINT orders_status_check;
+ALTER TABLE orders ADD CONSTRAINT orders_status_check
+  CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired'));
+```
+And the full inventory tables + functions + trigger from `supabase-schema.sql`.

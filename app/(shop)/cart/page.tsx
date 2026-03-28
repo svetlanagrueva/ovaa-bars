@@ -21,8 +21,15 @@ export default function CartPage() {
   }, [])
 
   useEffect(() => {
-    if (!mounted || items.length === 0) return
-    checkCartInventory(items.map((i) => ({ productId: i.product.id, quantity: i.quantity }))).then(setStockWarnings)
+    if (!mounted || items.length === 0) {
+      setStockWarnings([])
+      return
+    }
+    let cancelled = false
+    checkCartInventory(items.map((i) => ({ productId: i.product.id, quantity: i.quantity }))).then(
+      (warnings) => { if (!cancelled) setStockWarnings(warnings) }
+    )
+    return () => { cancelled = true }
   }, [mounted, items])
 
   const totalPrice = getTotalPrice()
@@ -186,24 +193,19 @@ export default function CartPage() {
                 ))}
               </div>
             )}
-            <Button
-              asChild={stockWarnings.length === 0}
-              disabled={stockWarnings.length > 0}
-              className="mt-6 w-full"
-              size="lg"
-            >
-              {stockWarnings.length === 0 ? (
+            {stockWarnings.length === 0 ? (
+              <Button asChild className="mt-6 w-full" size="lg">
                 <Link href="/checkout">
                   Към плащане
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
-              ) : (
-                <span>
-                  Към плащане
-                  <ArrowRight className="ml-2 h-4 w-4 inline" />
-                </span>
-              )}
-            </Button>
+              </Button>
+            ) : (
+              <Button disabled className="mt-6 w-full" size="lg">
+                Към плащане
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -30,16 +30,19 @@ export async function POST(request: Request) {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     if (orderId && uuidRegex.test(orderId)) {
       const supabase = await createClient()
-      const { data: order } = await supabase
-        .from("orders")
-        .select("status, items")
-        .eq("id", orderId)
-        .single()
 
-      // Only restore if still pending — confirmed orders keep their reservation
-      if (order?.status === "pending") {
+      // Atomically claim the order by flipping pending → expired.
+      // If another webhook delivery already processed this event, this update affects 0 rows and we skip.
+      const { data: claimed } = await supabase
+        .from("orders")
+        .update({ status: "expired" })
+        .eq("id", orderId)
+        .eq("status", "pending")
+        .select("items")
+
+      if (claimed && claimed.length > 0) {
         const { PRODUCTS } = await import("@/lib/products")
-        const items = order.items as Array<{ productId: string; quantity: number }>
+        const items = claimed[0].items as Array<{ productId: string; quantity: number }>
         for (const item of items) {
           const product = PRODUCTS.find((p) => p.id === item.productId)
           if (!product) continue

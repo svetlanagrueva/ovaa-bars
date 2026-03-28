@@ -33,7 +33,7 @@ export default async function ProductsPage() {
 
         <div className="mt-16 grid grid-cols-2 gap-3 sm:gap-8 lg:grid-cols-3">
           {PRODUCTS.map((product) => (
-            <ProductCard key={product.id} product={product} soldOut={(inventoryMap.get(product.id) ?? 0) === 0} />
+            <ProductCard key={product.id} product={product} soldOut={inventoryMap.has(product.id) && inventoryMap.get(product.id) === 0} />
           ))}
         </div>
 

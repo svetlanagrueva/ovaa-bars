@@ -19,7 +19,7 @@ create table if not exists orders (
   total_amount integer not null check (total_amount > 0),
   shipping_fee integer not null default 0,
   cod_fee integer not null default 0,
-  status text not null default 'pending' check (status in ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled')),
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired')),
   tracking_number text,
   payment_method text not null check (payment_method in ('card', 'cod')),
   logistics_partner text,

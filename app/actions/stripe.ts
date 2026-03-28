@@ -220,7 +220,9 @@ async function reserveInventoryForOrder(
         p_sku: r.sku,
         p_quantity: r.quantity,
         p_order_id: orderId,
-      }).catch(() => {})
+      }).catch((restoreErr) => {
+        console.error(`CRITICAL: Failed to restore inventory for ${r.sku} during rollback of order ${orderId}:`, restoreErr)
+      })
     }
     throw err
   }
@@ -245,12 +247,15 @@ const PROMO_RATE_LIMIT_MAX = 10
 
 // Soft stock check for checkout page load — no lock, no decrement.
 // Returns items with insufficient stock so the UI can warn before any payment attempt.
+// Advisory only: the hard check happens inside reserve_inventory at checkout time.
 export async function checkCartInventory(
   cartItems: Array<{ productId: string; quantity: number }>
 ): Promise<Array<{ productName: string; available: number; requested: number }>> {
   if (!Array.isArray(cartItems) || cartItems.length === 0) return []
 
   const itemsWithSku = cartItems.flatMap((item) => {
+    // Validate quantity before trusting it
+    if (!Number.isInteger(item.quantity) || item.quantity < 1) return []
     const product = PRODUCTS.find((p) => p.id === item.productId)
     return product ? [{ sku: product.sku, name: product.name, quantity: item.quantity }] : []
   })
@@ -258,15 +263,21 @@ export async function checkCartInventory(
   if (itemsWithSku.length === 0) return []
 
   const supabase = await createClient()
-  const { data: stockLevels } = await supabase
+  const { data: stockLevels, error } = await supabase
     .from("inventory_current")
     .select("sku, quantity")
     .in("sku", itemsWithSku.map((i) => i.sku))
 
+  if (error) {
+    // Fail open: a transient DB error should not block checkout.
+    console.error("Failed to check cart inventory:", error)
+    return []
+  }
+
   const stockMap = new Map((stockLevels || []).map((s) => [s.sku, s.quantity as number]))
 
   return itemsWithSku
-    .filter((item) => (stockMap.get(item.sku) ?? 0) < item.quantity)
+    .filter((item) => stockMap.has(item.sku) && (stockMap.get(item.sku) ?? 0) < item.quantity)
     .map((item) => ({
       productName: item.name,
       available: stockMap.get(item.sku) ?? 0,
