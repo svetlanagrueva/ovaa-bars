@@ -11,6 +11,7 @@ const links: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: "/admin/invoices", label: "Фактури" },
   { href: "/admin/sales", label: "Промоции" },
   { href: "/admin/promo-codes", label: "Промо кодове" },
+  { href: "/admin/inventory", label: "Склад" },
 ]
 
 export function AdminNav() {

@@ -216,13 +216,14 @@ async function reserveInventoryForOrder(
     }
   } catch (err) {
     for (const r of reserved) {
-      await supabase.rpc("restore_inventory", {
+      const { error: restoreErr } = await supabase.rpc("restore_inventory", {
         p_sku: r.sku,
         p_quantity: r.quantity,
         p_order_id: orderId,
-      }).catch((restoreErr) => {
-        console.error(`CRITICAL: Failed to restore inventory for ${r.sku} during rollback of order ${orderId}:`, restoreErr)
       })
+      if (restoreErr) {
+        console.error(`CRITICAL: Failed to restore inventory for ${r.sku} during rollback of order ${orderId}:`, restoreErr)
+      }
     }
     throw err
   }
@@ -611,7 +612,7 @@ export async function createCheckoutSession(data: CheckoutData) {
         p_sku: item.product.sku,
         p_quantity: item.quantity,
         p_order_id: order.id,
-      }).catch(() => {})
+      })
     }
     await supabase.from("orders").delete().eq("id", order.id).eq("status", "pending")
     if (stripeCouponId) {

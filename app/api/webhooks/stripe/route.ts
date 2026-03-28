@@ -46,13 +46,14 @@ export async function POST(request: Request) {
         for (const item of items) {
           const product = PRODUCTS.find((p) => p.id === item.productId)
           if (!product) continue
-          await supabase.rpc("restore_inventory", {
+          const { error: restoreErr } = await supabase.rpc("restore_inventory", {
             p_sku: product.sku,
             p_quantity: item.quantity,
             p_order_id: orderId,
-          }).catch((err) => {
-            console.error(`Failed to restore inventory for ${product.sku} on expired session ${orderId}:`, err)
           })
+          if (restoreErr) {
+            console.error(`Failed to restore inventory for ${product.sku} on expired session ${orderId}:`, restoreErr)
+          }
         }
       }
     }
