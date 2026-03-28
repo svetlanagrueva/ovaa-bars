@@ -20,9 +20,12 @@ function setupFetchMock(offices = mockOffices) {
   )
 }
 
-async function renderAndWaitForLoad(props: { selectedOfficeId: number | null; onSelect: ReturnType<typeof vi.fn> }) {
+// Opens the picker and waits for offices to finish loading.
+// Returns with the dropdown open.
+async function renderAndOpen(props: { selectedOfficeId: number | null; onSelect: ReturnType<typeof vi.fn> }) {
   cleanup()
   const result = render(<EcontOfficePicker {...props} />)
+  fireEvent.click(screen.getByRole("button", { name: /Изберете офис/i }))
   await waitFor(() => {
     expect(screen.queryByText("Зареждане на офиси...")).not.toBeInTheDocument()
   })
@@ -30,7 +33,6 @@ async function renderAndWaitForLoad(props: { selectedOfficeId: number | null; on
 }
 
 function getToggleButton() {
-  // The toggle button is the one with role="button" that has the ChevronsUpDown icon
   return screen.getByRole("button", { name: /Изберете офис|София|Пловдив/i })
 }
 
@@ -41,45 +43,37 @@ describe("EcontOfficePicker", () => {
     setupFetchMock()
   })
 
-  it("shows loading state initially", () => {
+  it("shows loading state when dropdown is first opened", () => {
     render(<EcontOfficePicker selectedOfficeId={null} onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole("button", { name: /Изберете офис/i }))
     expect(screen.getByText("Зареждане на офиси...")).toBeInTheDocument()
   })
 
   it("renders offices after loading", async () => {
-    await renderAndWaitForLoad({ selectedOfficeId: null, onSelect: vi.fn() })
-
-    // Open dropdown
-    fireEvent.click(getToggleButton())
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
 
     expect(screen.getByText("Офис Дружба")).toBeInTheDocument()
     expect(screen.getByText("Офис Тракия")).toBeInTheDocument()
   })
 
   it("groups offices by city", async () => {
-    await renderAndWaitForLoad({ selectedOfficeId: null, onSelect: vi.fn() })
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
 
-    fireEvent.click(getToggleButton())
-
-    // City group headers (uppercase)
     expect(screen.getByText("София")).toBeInTheDocument()
     expect(screen.getByText("Пловдив")).toBeInTheDocument()
   })
 
   it("calls onSelect when office is clicked", async () => {
     const onSelect = vi.fn()
-    await renderAndWaitForLoad({ selectedOfficeId: null, onSelect })
+    await renderAndOpen({ selectedOfficeId: null, onSelect })
 
-    fireEvent.click(getToggleButton())
     fireEvent.click(screen.getByText("Офис Дружба"))
 
     expect(onSelect).toHaveBeenCalledWith(mockOffices[0])
   })
 
   it("filters offices by search term", async () => {
-    await renderAndWaitForLoad({ selectedOfficeId: null, onSelect: vi.fn() })
-
-    fireEvent.click(getToggleButton())
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
 
     const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
     fireEvent.change(searchInput, { target: { value: "Пловдив" } })
@@ -90,9 +84,7 @@ describe("EcontOfficePicker", () => {
   })
 
   it("shows empty state when no offices match filter", async () => {
-    await renderAndWaitForLoad({ selectedOfficeId: null, onSelect: vi.fn() })
-
-    fireEvent.click(getToggleButton())
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
 
     const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
     fireEvent.change(searchInput, { target: { value: "Несъществуващ град" } })
@@ -101,9 +93,12 @@ describe("EcontOfficePicker", () => {
   })
 
   it("displays selected office name in button", async () => {
-    await renderAndWaitForLoad({ selectedOfficeId: 1, onSelect: vi.fn() })
+    await renderAndOpen({ selectedOfficeId: 1, onSelect: vi.fn() })
 
-    expect(screen.getByText(/София - Офис Дружба/)).toBeInTheDocument()
+    // Close dropdown so we can inspect the button text
+    fireEvent.click(getToggleButton())
+
+    expect(screen.getByText(/София — Офис Дружба/)).toBeInTheDocument()
   })
 
   it("shows manual input fallback when fetch fails", async () => {
@@ -114,6 +109,7 @@ describe("EcontOfficePicker", () => {
 
     cleanup()
     render(<EcontOfficePicker selectedOfficeId={null} onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole("button", { name: /Изберете офис/i }))
 
     await waitFor(() => {
       expect(
@@ -123,16 +119,12 @@ describe("EcontOfficePicker", () => {
   })
 
   it("closes dropdown after selecting an office", async () => {
-    await renderAndWaitForLoad({ selectedOfficeId: null, onSelect: vi.fn() })
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
 
-    // Open dropdown
-    fireEvent.click(getToggleButton())
     expect(screen.getByText("Офис Дружба")).toBeInTheDocument()
 
-    // Select office — dropdown should close
     fireEvent.click(screen.getByText("Офис Дружба"))
 
-    // Search input should no longer be visible
     expect(
       screen.queryByPlaceholderText("Търсене по град или адрес...")
     ).not.toBeInTheDocument()
