@@ -4,11 +4,15 @@ import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProductCard } from "@/components/products/product-card"
 import { getProductsWithSales } from "@/lib/sales"
+import { getInventoryMap } from "@/lib/inventory"
 
 export const revalidate = 60
 
 export default async function HomePage() {
-  const PRODUCTS = await getProductsWithSales()
+  const [PRODUCTS, inventoryMap] = await Promise.all([
+    getProductsWithSales(),
+    getInventoryMap(),
+  ])
   return (
     <div>
       {/* Hero Section */}
@@ -134,7 +138,7 @@ export default async function HomePage() {
           </div>
           <div className="mt-12 grid grid-cols-2 gap-3 sm:gap-8 lg:grid-cols-3">
             {PRODUCTS.map((product) => (
-              <ProductCard key={product.id} product={product} />
+              <ProductCard key={product.id} product={product} soldOut={inventoryMap.has(product.id) && inventoryMap.get(product.id) === 0} />
             ))}
           </div>
           <div className="mt-8 text-center sm:hidden">

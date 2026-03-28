@@ -658,6 +658,9 @@ export default function AdminOrderDetailPage({
                 >
                   Откажи поръчката
                 </Button>
+                {order.payment_method === "card" && (
+                  <p className="text-xs text-muted-foreground">Плащане с карта — не забравяйте да издадете възстановяване в <a href="https://dashboard.stripe.com/payments" target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>.</p>
+                )}
               </div>
             </div>
           )}
@@ -693,6 +696,9 @@ export default function AdminOrderDetailPage({
                 >
                   Откажи
                 </Button>
+                {order.payment_method === "card" && (
+                  <p className="text-xs text-muted-foreground">Плащане с карта — не забравяйте да издадете възстановяване в <a href="https://dashboard.stripe.com/payments" target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>.</p>
+                )}
               </div>
             </div>
           )}

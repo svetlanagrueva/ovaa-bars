@@ -16,9 +16,11 @@ import { MAX_QUANTITY } from "@/lib/constants"
 interface ProductDetailProps {
   product: Product
   otherProducts: Product[]
+  soldOut?: boolean
+  otherProductsSoldOut?: Record<string, boolean>
 }
 
-export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
+export function ProductDetail({ product, otherProducts, soldOut = false, otherProductsSoldOut = {} }: ProductDetailProps) {
   const [quantity, setQuantity] = useState(1)
   const [selectedImage, setSelectedImage] = useState(0)
   const addItemWithQuantity = useCartStore((state) => state.addItemWithQuantity)
@@ -61,7 +63,11 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
                 className="object-contain"
                 priority
               />
-              {product.badge && (
+              {soldOut ? (
+                <Badge className="absolute left-4 top-4 bg-muted text-muted-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
+                  Изчерпан
+                </Badge>
+              ) : product.badge && (
                 <Badge className="absolute left-4 top-4 bg-primary text-primary-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
                   {product.badge}
                 </Badge>
@@ -134,19 +140,29 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
             </div>
 
             {/* Add to Cart */}
-            <Button
-              onClick={handleAddToCart}
-              size="lg"
-              className="mt-8 w-full gap-2 py-6 text-base"
-            >
-              <ShoppingBag className="h-5 w-5" />
-              Добави в количката - {formatPrice(product.priceInCents * quantity)}
-              {isOnSale(product) && (
-                <span className="text-xs opacity-75 ml-1">
-                  (спестявате {formatPrice((product.originalPriceInCents! - product.priceInCents) * quantity)})
-                </span>
-              )}
-            </Button>
+            {soldOut ? (
+              <Button
+                size="lg"
+                disabled
+                className="mt-8 w-full gap-2 py-6 text-base"
+              >
+                Изчерпан
+              </Button>
+            ) : (
+              <Button
+                onClick={handleAddToCart}
+                size="lg"
+                className="mt-8 w-full gap-2 py-6 text-base"
+              >
+                <ShoppingBag className="h-5 w-5" />
+                Добави в количката - {formatPrice(product.priceInCents * quantity)}
+                {isOnSale(product) && (
+                  <span className="text-xs opacity-75 ml-1">
+                    (спестявате {formatPrice((product.originalPriceInCents! - product.priceInCents) * quantity)})
+                  </span>
+                )}
+              </Button>
+            )}
 
             {/* Description */}
             <div className="mt-12 space-y-6">
@@ -228,7 +244,7 @@ export function ProductDetail({ product, otherProducts }: ProductDetailProps) {
             <h2 className="text-2xl font-light tracking-wide text-foreground">Може да ви хареса още</h2>
             <div className="mt-8 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
               {otherProducts.map((p) => (
-                <ProductCard key={p.id} product={p} />
+                <ProductCard key={p.id} product={p} soldOut={otherProductsSoldOut[p.id]} />
               ))}
             </div>
           </div>

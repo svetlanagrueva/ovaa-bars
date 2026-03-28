@@ -66,36 +66,20 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold mb-6">Табло</h1>
 
       {/* Action items */}
-      {(stats.pendingOrders > 0 || stats.invoicesAwaiting > 0) && (
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row">
-          {stats.pendingOrders > 0 && (
-            <Link href="/admin/orders?status=pending" className="flex-1">
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">
-                <div className="flex items-center gap-3">
-                  <Clock className="h-5 w-5 text-amber-700" />
-                  <div>
-                    <p className="text-sm font-medium text-amber-900">
-                      {stats.pendingOrders} {stats.pendingOrders === 1 ? "поръчка чака" : "поръчки чакат"} потвърждение
-                    </p>
-                  </div>
+      {stats.invoicesAwaiting > 0 && (
+        <div className="mb-6">
+          <Link href="/admin/orders?invoiceFilter=pending" className="block">
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">
+              <div className="flex items-center gap-3">
+                <FileText className="h-5 w-5 text-amber-700" />
+                <div>
+                  <p className="text-sm font-medium text-amber-900">
+                    {stats.invoicesAwaiting} {stats.invoicesAwaiting === 1 ? "фактура чака" : "фактури чакат"} издаване
+                  </p>
                 </div>
               </div>
-            </Link>
-          )}
-          {stats.invoicesAwaiting > 0 && (
-            <Link href="/admin/orders?invoiceFilter=pending" className="flex-1">
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">
-                <div className="flex items-center gap-3">
-                  <FileText className="h-5 w-5 text-amber-700" />
-                  <div>
-                    <p className="text-sm font-medium text-amber-900">
-                      {stats.invoicesAwaiting} {stats.invoicesAwaiting === 1 ? "фактура чака" : "фактури чакат"} издаване
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </Link>
-          )}
+            </div>
+          </Link>
         </div>
       )}
 

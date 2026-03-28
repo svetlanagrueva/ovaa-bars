@@ -1,5 +1,6 @@
 export interface Product {
   id: string
+  sku: string  // operational identifier — used for inventory tracking, supplier orders, fulfillment
   slug: string
   name: string
   shortDescription: string
@@ -27,6 +28,7 @@ export interface Product {
 export const PRODUCTS: Product[] = [
   {
     id: 'egg-origin-dark-chocolate-box',
+    sku: 'EGO-DC-12',
     slug: 'dark-chocolate-box',
     name: 'Тъмен Шоколад Кутия',
     shortDescription: 'Кутия от 12 протеинови бара с тъмен шоколад. Наситен какаов вкус с пълноценен яйчен протеин.',
@@ -68,6 +70,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'egg-origin-white-chocolate-raspberry-box',
+    sku: 'EGO-WCR-12',
     slug: 'white-chocolate-raspberry-box',
     name: 'Бял Шоколад с Малини Кутия',
     shortDescription: 'Кутия от 12 протеинови бара с бял шоколад и малини. Нежна сладост с истински парченца малини.',
@@ -109,6 +112,7 @@ export const PRODUCTS: Product[] = [
   },
   {
     id: 'egg-origin-mix-box',
+    sku: 'EGO-MIX-12',
     slug: 'mix-box',
     name: 'Микс Кутия',
     shortDescription: 'Кутия от 12 смесени бара - 6 Тъмен Шоколад + 6 Бял Шоколад с Малини. Най-доброто от двата вкуса.',

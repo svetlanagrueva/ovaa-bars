@@ -35,6 +35,7 @@ export function createSupabaseMock() {
 export function mockThenableResult(data: unknown, error: unknown = null, count: number | null = null) {
   const obj: Record<string, unknown> = {
     eq: vi.fn(() => obj),
+    neq: vi.fn(() => obj),
     is: vi.fn(() => obj),
     not: vi.fn(() => obj),
     ilike: vi.fn(() => obj),

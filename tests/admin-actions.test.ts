@@ -280,7 +280,7 @@ describe("admin actions", () => {
 
     it("allows valid transition: pending → cancelled", async () => {
       mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, status: "pending" },
+        data: { id: validOrderId, status: "pending", items: [] },
         error: null,
       })
 
@@ -1052,7 +1052,7 @@ describe("admin actions", () => {
 
     it("sets cancelled_at and reason when cancelling", async () => {
       mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, status: "confirmed" },
+        data: { id: validOrderId, status: "confirmed", items: [] },
         error: null,
       })
 

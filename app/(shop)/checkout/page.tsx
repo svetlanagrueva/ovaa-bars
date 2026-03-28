@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useCartStore } from "@/lib/store/cart"
 import { formatPrice } from "@/lib/products"
-import { createCheckoutSession, createCODOrder, validatePromoCode } from "@/app/actions/stripe"
+import { createCheckoutSession, createCODOrder, validatePromoCode, checkCartInventory } from "@/app/actions/stripe"
 import { COD_FEE, calculateShippingPrice } from "@/lib/constants"
 import { isOnSale } from "@/lib/products"
 import { DeliveryInfo } from "@/components/delivery-info"
@@ -53,6 +53,8 @@ export default function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(false)
   const submittingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  const [stockWarnings, setStockWarnings] = useState<Array<{ productName: string; available: number; requested: number }>>([])
+
   const [paymentMethod, setPaymentMethod] = useState("card")
   const [deliveryMethod, setDeliveryMethod] = useState(speedyEnabled ? "speedy-office" : econtEnabled ? "econt-office" : "speedy-office")
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
@@ -103,6 +105,13 @@ export default function CheckoutPage() {
       router.push("/cart")
     }
   }, [mounted, items.length, router])
+
+  // Soft stock check — warn early before any payment attempt
+  useEffect(() => {
+    if (!mounted || items.length === 0) return
+    const cartItems = items.map((item) => ({ productId: item.product.id, quantity: item.quantity }))
+    checkCartInventory(cartItems).then(setStockWarnings).catch(() => {})
+  }, [mounted, items])
 
   const totalPrice = getTotalPrice()
   const shippingPrice = calculateShippingPrice(totalPrice, deliveryMethod)
@@ -796,11 +805,24 @@ export default function CheckoutPage() {
                     </div>
                   </div>
 
+                  {stockWarnings.length > 0 && (
+                    <div className="rounded border border-destructive/40 bg-destructive/5 p-3 space-y-1">
+                      {stockWarnings.map((w) => (
+                        <p key={w.productName} className="text-sm text-destructive">
+                          {w.available === 0
+                            ? `${w.productName} е изчерпан`
+                            : `${w.productName} — налични само ${w.available} бр. (искани ${w.requested})`}
+                        </p>
+                      ))}
+                      <p className="text-xs text-muted-foreground">Моля, актуализирайте количката.</p>
+                    </div>
+                  )}
+
                   {error && (
                     <p className="text-sm text-destructive">{error}</p>
                   )}
 
-                  <Button type="submit" className="mt-6 w-full" size="lg" disabled={isLoading}>
+                  <Button type="submit" className="mt-6 w-full" size="lg" disabled={isLoading || stockWarnings.length > 0}>
                     {isLoading ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -115,6 +115,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const { data: recentOrders } = await supabase
     .from("orders")
     .select("id, created_at, first_name, last_name, total_amount, status, payment_method")
+    .neq("status", "pending")
     .order("created_at", { ascending: false })
     .limit(10)
 
@@ -208,6 +209,9 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   const status = params?.status
   if (status && status !== "all") {
     query = query.eq("status", status)
+  } else {
+    // Exclude pending — these are abandoned card checkouts (order created before Stripe redirect, never confirmed by webhook)
+    query = query.neq("status", "pending")
   }
 
   const dateFrom = params?.dateFrom
@@ -512,6 +516,26 @@ export async function updateOrderStatus(
 
   if (!updated || updated.length === 0) {
     throw new Error("Order status was changed by another request. Please refresh and try again.")
+  }
+
+  // Restore inventory on cancellation
+  if (newStatus === "cancelled") {
+    const items = order.items as Array<{ productId: string; quantity: number }>
+    for (const item of items) {
+      const product = PRODUCTS.find((p) => p.id === item.productId)
+      if (!product) {
+        console.error(`Cannot restore inventory: unknown productId ${item.productId}`)
+        continue
+      }
+      const { error: restoreErr } = await supabase.rpc("restore_inventory", {
+        p_sku: product.sku,
+        p_quantity: item.quantity,
+        p_order_id: orderId,
+      })
+      if (restoreErr) {
+        console.error(`Failed to restore inventory for ${product.sku} on order ${orderId}:`, restoreErr)
+      }
+    }
   }
 
   // Send shipping notification email
@@ -1175,6 +1199,97 @@ export async function deactivatePromoCode(promoId: string) {
 
   if (!updated || updated.length === 0) {
     throw new Error("Промо кодът вече е деактивиран")
+  }
+
+  return { success: true }
+}
+
+// ─── Inventory ────────────────────────────────────────────────────────────────
+
+export interface InventoryStatus {
+  sku: string
+  productName: string
+  quantity: number
+  updatedAt: string
+}
+
+export interface InventoryLogEntry {
+  id: number
+  sku: string
+  type: string
+  quantity: number
+  batch_id: string | null
+  expiry_date: string | null
+  order_id: string | null
+  notes: string | null
+  before_quantity: number | null
+  after_quantity: number | null
+  created_at: string
+}
+
+export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]; log: InventoryLogEntry[] }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const [currentResult, logResult] = await Promise.all([
+    supabase.from("inventory_current").select("sku, quantity, updated_at").order("sku"),
+    supabase.from("inventory_log").select("*").order("created_at", { ascending: false }).limit(50),
+  ])
+
+  if (currentResult.error) {
+    console.error("Failed to fetch inventory_current:", currentResult.error)
+    throw new Error("Грешка при зареждане на склада")
+  }
+
+  const skuToName = Object.fromEntries(PRODUCTS.map((p) => [p.sku, p.name]))
+
+  const current: InventoryStatus[] = (currentResult.data || []).map((row) => ({
+    sku: row.sku,
+    productName: skuToName[row.sku] ?? row.sku,
+    quantity: row.quantity,
+    updatedAt: row.updated_at,
+  }))
+
+  return {
+    current,
+    log: (logResult.data || []) as InventoryLogEntry[],
+  }
+}
+
+export async function addInventoryBatch(data: {
+  sku: string
+  quantity: number
+  batchId: string
+  expiryDate: string
+  notes: string
+}): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const validSkus = PRODUCTS.map((p) => p.sku)
+  if (!validSkus.includes(data.sku)) throw new Error("Невалиден SKU")
+  if (!Number.isInteger(data.quantity) || data.quantity < 1 || data.quantity > 100000) {
+    throw new Error("Количеството трябва да е между 1 и 100 000")
+  }
+  if (!data.batchId?.trim()) throw new Error("Номерът на партидата е задължителен")
+  if (data.batchId.length > 100) throw new Error("Номерът на партидата е твърде дълъг")
+  if (data.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.expiryDate)) {
+    throw new Error("Невалидна дата на годност")
+  }
+  if (data.notes && data.notes.length > 500) throw new Error("Бележката е твърде дълга")
+
+  const supabase = await createClient()
+  const { error } = await supabase.from("inventory_log").insert({
+    sku: data.sku,
+    type: "batch_in",
+    quantity: data.quantity,
+    batch_id: data.batchId.trim(),
+    expiry_date: data.expiryDate || null,
+    notes: data.notes?.trim() || null,
+  })
+
+  if (error) {
+    console.error("Failed to insert inventory batch:", error)
+    throw new Error("Грешка при добавяне на наличност")
   }
 
   return { success: true }

@@ -5,6 +5,7 @@
 - `/admin/orders` — paginated order list with filters (status, search, date, invoice)
 - `/admin/orders/[id]` — order detail with history timeline, invoice management, admin notes, actions
 - `/admin/invoices` — paginated invoice list with search, date filter, PDF download
+- `/admin/inventory` — stock level cards per SKU, add-batch dialog, movement log
 - `/admin/sales` — product promotions management (EU Omnibus compliant)
 - `/admin/promo-codes` — promo code management
 - `/admin/login` — single password auth
@@ -43,6 +44,13 @@
 - Race condition protected: `.is("invoice_number", null)` guard
 - PDF generated after number is secured
 - Customer emailed automatically
+
+## Inventory Panel (`/admin/inventory`)
+- Stock cards per SKU: red badge = 0, amber ≤ 20, green > 20
+- "Добави партида" dialog: product dropdown, quantity, batch ID, expiry date, notes — inserts `batch_in` row into `inventory_log`
+- Movement log table: date, SKU, type badge, ±quantity, before/after columns, batch ID or order link, expiry date
+- Server actions: `getInventoryStatus()`, `addInventoryBatch()` (validates SKU against PRODUCTS list)
+- Cancellation from order detail automatically calls `restore_inventory` RPC — stock updates immediately
 
 ## Email Notifications
 - Admin gets email on new orders (card and COD) if `ADMIN_EMAIL` env var is set

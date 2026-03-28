@@ -63,7 +63,7 @@ vi.mock("@/lib/invoice", () => ({
   getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
 }))
 
-import { createCheckoutSession, confirmOrder, createCODOrder } from "@/app/actions/stripe"
+import { createCheckoutSession, confirmOrder, createCODOrder, checkCartInventory } from "@/app/actions/stripe"
 import { stripe } from "@/lib/stripe"
 import { PRODUCTS } from "@/lib/products"
 
@@ -786,5 +786,158 @@ describe("createCODOrder — additional", () => {
     expect(insertCall.shipping_fee).toBe(0)
     // total = 5140 (products) + 0 (shipping) + 200 (cod) = 5340
     expect(insertCall.total_amount).toBe(5340)
+  })
+})
+
+describe("inventory reservation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+    mockIp = `test-${Math.random()}`
+  })
+
+  it("createCheckoutSession calls reserve_inventory for each cart item", async () => {
+    const fakeOrder = { id: "order-inv-1" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+    vi.mocked(stripe.checkout.sessions.create).mockResolvedValueOnce({ id: "cs_inv", url: "https://test.com" } as never)
+
+    await createCheckoutSession({
+      cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }],
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+    })
+
+    expect(mockSupabase.rpc).toHaveBeenCalledWith("reserve_inventory", {
+      p_sku: "EGO-DC-12",
+      p_quantity: 2,
+      p_order_id: "order-inv-1",
+    })
+  })
+
+  it("createCheckoutSession deletes order and throws when inventory reservation fails", async () => {
+    const fakeOrder = { id: "order-inv-fail" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+    mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: { message: "Insufficient stock for SKU EGO-DC-12. Available: 0, requested: 1" } }))
+
+    await expect(
+      createCheckoutSession({
+        cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    ).rejects.toThrow("Insufficient stock")
+
+    // Order must be cleaned up
+    expect(mockSupabase.delete).toHaveBeenCalled()
+    // Stripe session must NOT have been created
+    expect(stripe.checkout.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it("createCheckoutSession rolls back already-reserved items if a later item fails", async () => {
+    const fakeOrder = { id: "order-rollback" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    let rpcCallCount = 0
+    mockSupabase.rpc = vi.fn((fn: string) => {
+      if (fn === "reserve_inventory") {
+        rpcCallCount++
+        if (rpcCallCount === 2) {
+          return Promise.resolve({ data: null, error: { message: "Insufficient stock for SKU EGO-WCR-12" } })
+        }
+      }
+      return Promise.resolve({ data: null, error: null })
+    })
+
+    await expect(
+      createCheckoutSession({
+        cartItems: [
+          { productId: "egg-origin-dark-chocolate-box", quantity: 1 },
+          { productId: "egg-origin-white-chocolate-raspberry-box", quantity: 1 },
+        ],
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    ).rejects.toThrow()
+
+    // Should have called restore for the first item that was reserved
+    expect(mockSupabase.rpc).toHaveBeenCalledWith("restore_inventory", expect.objectContaining({
+      p_sku: "EGO-DC-12",
+      p_order_id: "order-rollback",
+    }))
+  })
+
+  it("createCODOrder calls reserve_inventory", async () => {
+    const fakeOrder = { id: "cod-inv-order", email: "t@t.com", first_name: "T" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+
+    await createCODOrder({
+      cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      customerInfo: validCustomerInfo,
+      deliveryMethod: "speedy-office",
+      speedyOffice: validSpeedyOffice,
+    })
+
+    expect(mockSupabase.rpc).toHaveBeenCalledWith("reserve_inventory", {
+      p_sku: "EGO-DC-12",
+      p_quantity: 1,
+      p_order_id: "cod-inv-order",
+    })
+  })
+})
+
+describe("checkCartInventory", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetSupabaseMock(mockSupabase)
+  })
+
+  it("returns empty array for empty cart", async () => {
+    const result = await checkCartInventory([])
+    expect(result).toEqual([])
+  })
+
+  it("returns empty array when all items have sufficient stock", async () => {
+    mockSupabase.single.mockResolvedValueOnce(undefined)
+    // Mock the .in() chain to resolve with stock data
+    const inMock = { then: (resolve: (v: unknown) => void) => resolve({ data: [{ sku: "EGO-DC-12", quantity: 10 }], error: null }) }
+    mockSupabase.in = vi.fn(() => inMock)
+
+    const result = await checkCartInventory([{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }])
+    expect(result).toEqual([])
+  })
+
+  it("returns warnings for items with insufficient stock", async () => {
+    const inMock = { then: (resolve: (v: unknown) => void) => resolve({ data: [{ sku: "EGO-DC-12", quantity: 1 }], error: null }) }
+    mockSupabase.in = vi.fn(() => inMock)
+
+    const result = await checkCartInventory([{ productId: "egg-origin-dark-chocolate-box", quantity: 3 }])
+    expect(result).toHaveLength(1)
+    expect(result[0].available).toBe(1)
+    expect(result[0].requested).toBe(3)
+  })
+
+  it("returns empty array when DB errors — fail open", async () => {
+    const inMock = { then: (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "DB error" } }) }
+    mockSupabase.in = vi.fn(() => inMock)
+
+    const result = await checkCartInventory([{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }])
+    expect(result).toEqual([])
+  })
+
+  it("ignores items with invalid quantity", async () => {
+    const inMock = { then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }) }
+    mockSupabase.in = vi.fn(() => inMock)
+
+    const result = await checkCartInventory([{ productId: "egg-origin-dark-chocolate-box", quantity: -1 }])
+    expect(result).toEqual([])
+    // .in() called with empty array or not called at all since no valid items
+  })
+
+  it("returns empty for unknown product IDs", async () => {
+    const result = await checkCartInventory([{ productId: "nonexistent-product", quantity: 1 }])
+    expect(result).toEqual([])
   })
 })

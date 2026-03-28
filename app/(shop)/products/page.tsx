@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { ProductCard } from "@/components/products/product-card"
 import { getProductsWithSales } from "@/lib/sales"
+import { getInventoryMap } from "@/lib/inventory"
 
 export const metadata: Metadata = {
   title: "Продукти - Egg Origin",
@@ -10,7 +11,10 @@ export const metadata: Metadata = {
 export const revalidate = 60
 
 export default async function ProductsPage() {
-  const PRODUCTS = await getProductsWithSales()
+  const [PRODUCTS, inventoryMap] = await Promise.all([
+    getProductsWithSales(),
+    getInventoryMap(),
+  ])
   return (
     <div className="bg-background py-16 sm:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -29,7 +33,7 @@ export default async function ProductsPage() {
 
         <div className="mt-16 grid grid-cols-2 gap-3 sm:gap-8 lg:grid-cols-3">
           {PRODUCTS.map((product) => (
-            <ProductCard key={product.id} product={product} />
+            <ProductCard key={product.id} product={product} soldOut={inventoryMap.has(product.id) && inventoryMap.get(product.id) === 0} />
           ))}
         </div>
 
