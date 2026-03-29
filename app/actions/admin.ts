@@ -204,7 +204,6 @@ function escapeIlike(value: string): string {
   return value.replace(/%/g, "\\%").replace(/_/g, "\\_")
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyOrderFilters(query: any, params?: OrderQueryParams) {
   const status = params?.status
   if (status && status !== "all") {
@@ -327,7 +326,6 @@ interface InvoiceQueryParams {
   dateTo?: string
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
   const dateFrom = params?.dateFrom
   if (dateFrom) {

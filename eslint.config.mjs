@@ -6,7 +6,6 @@ const eslintConfig = [
   ...nextConfig,
   {
     rules: {
-      "no-unused-vars": "warn",
       "prefer-const": "warn",
       "react-hooks/set-state-in-effect": "warn",
     },
