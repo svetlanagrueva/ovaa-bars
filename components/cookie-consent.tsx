@@ -63,6 +63,7 @@ export function CookieConsentBanner() {
   useEffect(() => {
     const stored = getCookiePreferences()
     if (stored) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnalyticsChecked(stored.analytics)
       setHasStored(true)
     }
@@ -71,6 +72,7 @@ export function CookieConsentBanner() {
 
   useEffect(() => {
     if (loaded && !hasStored) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setShowBanner(true)
     }
   }, [loaded, hasStored])

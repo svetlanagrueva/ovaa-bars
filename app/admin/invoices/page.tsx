@@ -48,7 +48,7 @@ export default function AdminInvoicesPage() {
   useEffect(() => {
     const timeout = setTimeout(fetchInvoices, search ? 300 : 0)
     return () => clearTimeout(timeout)
-  }, [fetchInvoices])
+  }, [fetchInvoices, search])
 
   function clearFilters() {
     setSearch("")

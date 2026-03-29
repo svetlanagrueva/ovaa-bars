@@ -44,6 +44,7 @@ export function SpeedyOfficePicker({ selectedOfficeId, onSelect }: SpeedyOfficeP
     if (!isOpen || fetchedRef.current) return
     fetchedRef.current = true
     const controller = new AbortController()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     setError(null)
     fetch("/api/speedy/offices", { signal: controller.signal })

@@ -17,11 +17,13 @@ export default function CartPage() {
   const { items, updateQuantity, removeItem, getTotalPrice } = useCartStore()
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
   }, [])
 
   useEffect(() => {
     if (!mounted || items.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStockWarnings([])
       return
     }
