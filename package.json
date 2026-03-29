@@ -5,6 +5,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "format": "prettier --write .",
     "lint": "eslint .",
     "start": "next start",
     "test": "vitest run"
@@ -73,6 +74,7 @@
     "zustand": "5.0.10"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "@tailwindcss/postcss": "^4.1.9",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
@@ -83,8 +85,12 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.1.4",
     "@vitest/coverage-v8": "^4.1.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.1",
+    "eslint-config-prettier": "^10.1.8",
     "jsdom": "^28.1.0",
     "postcss": "^8.5",
+    "prettier": "^3.8.1",
     "tailwindcss": "^4.1.9",
     "tw-animate-css": "1.3.3",
     "typescript": "^5",
