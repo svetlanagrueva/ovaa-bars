@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Package, FileText, Clock } from "lucide-react"
+import { Package, FileText } from "lucide-react"
 import { getDashboardStats, type DashboardStats } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"

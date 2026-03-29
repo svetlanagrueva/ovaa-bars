@@ -9,6 +9,7 @@ export function ConditionalAnalytics() {
   const [analyticsConsent, setAnalyticsConsent] = useState(false)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAnalyticsConsent(hasCategoryConsent("analytics"))
 
     const check = () => {

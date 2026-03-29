@@ -83,7 +83,7 @@ function AdminOrdersPage() {
   useEffect(() => {
     const timeout = setTimeout(fetchOrders, search ? 300 : 0)
     return () => clearTimeout(timeout)
-  }, [fetchOrders])
+  }, [fetchOrders, search])
 
   function handleStatusChange(value: string) {
     setStatus(value)

@@ -59,7 +59,7 @@ export default function CheckoutPage() {
   const [deliveryMethod, setDeliveryMethod] = useState(speedyEnabled ? "speedy-office" : econtEnabled ? "econt-office" : "speedy-office")
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
   const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
-  const { items, getTotalPrice, clearCart } = useCartStore()
+  const { items, getTotalPrice } = useCartStore()
 
   const [promoCode, setPromoCode] = useState("")
   const [promoLoading, setPromoLoading] = useState(false)
