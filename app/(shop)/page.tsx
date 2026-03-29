@@ -150,9 +150,17 @@ export default async function HomePage() {
       </section>
 
       {/* CTA Section */}
-      <section className="bg-foreground py-24 sm:py-32">
+      <section className="overflow-hidden bg-foreground py-24 sm:py-32">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-xl">
+          <div className="relative mx-auto max-w-xl">
+            <Image
+              src="/images/enso-arc.png"
+              alt=""
+              width={600}
+              height={600}
+              className="pointer-events-none absolute bottom-[-10rem] right-[-1.9rem] opacity-[0.11] mix-blend-screen [filter:invert(1)_sepia(0.6)_hue-rotate(315deg)_saturate(1.2)] sm:bottom-[-21rem] sm:right-[-7rem]"
+              aria-hidden="true"
+            />
             <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-background/50">
               Безплатна доставка до офис над 30 €
             </p>
