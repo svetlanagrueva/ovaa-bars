@@ -25,7 +25,7 @@ export default async function HomePage() {
               </p>
               <h1 className="mt-8 text-balance text-4xl font-light tracking-wide text-foreground sm:text-5xl lg:text-6xl">
                 Чиста храна за{" "}
-                <span className="italic">хора с цели</span>
+                <span className="italic">хора с цел</span>
               </h1>
               <p className="mt-8 text-pretty text-sm leading-loose tracking-wide text-muted-foreground">
                 20g пълноценен яйчен протеин. Без суроватка, без добавена захар,
@@ -72,50 +72,122 @@ export default async function HomePage() {
               <p className="text-3xl font-extralight tracking-tight text-foreground">100%</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Чиста Етикета</p>
             </div>
-            <div className="flex w-full flex-col items-center gap-1 py-6 sm:py-0 sm:px-10">
-              <p className="text-3xl font-extralight tracking-tight text-foreground">Без</p>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Лактоза</p>
-            </div>
           </div>
         </div>
       </section>
 
-      {/* Why Egg White Section */}
-      <section className="bg-secondary/40 py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-2xl">
-            <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
-              Защо Яйчен Белтък
-            </p>
-            <h2 className="mt-6 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
-              По-умният избор на протеин
-            </h2>
+            {/* Why Egg White Section */}
+<section className="bg-background py-24 sm:py-32">
+  <div className="mx-auto max-w-7xl px-6 lg:px-8">
+    <div className="grid gap-12 lg:grid-cols-12 lg:gap-10">
+      {/* Left column — heading + material image */}
+      <div className="lg:col-span-4">
+        <div className="max-w-md">
+          <p className="text-[11px] font-medium uppercase tracking-[0.38em] text-muted-foreground">
+            Защо Яйчен Белтък
+          </p>
+
+          <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+            По-умният избор
+            <span className="block text-muted-foreground">
+              на протеин
+            </span>
+          </h2>
+
+          <p className="mt-8 text-sm leading-7 text-muted-foreground">
+            Прецизно създаден за хора, които търсят чистота, лекота и
+            функционалност в ежедневния си ритъм.
+          </p>
+        </div>
+
+        {/* Material image — desktop only */}
+        <div className="mt-12 hidden lg:block">
+          <div className="overflow-hidden rounded-[28px] bg-muted">
+            <img
+              src="/images/egg-origin-material.png"
+              alt="Минималистичен материален детайл в меки шампански тонове"
+              className="h-[360px] w-full object-cover"
+            />
           </div>
-          <div className="mx-auto mt-16 grid max-w-5xl gap-0 lg:grid-cols-3">
-            <div className="border-t border-border py-10 lg:border-l lg:border-t-0 lg:px-10 lg:first:border-l-0">
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground">01</p>
-              <h3 className="mt-4 text-sm font-medium tracking-wide text-foreground">Пълноценен Протеин</h3>
-              <p className="mt-4 text-sm leading-loose text-muted-foreground">
-                Всички есенциални аминокиселини в едно. Оптимален за мускулно възстановяване и ежедневна употреба.
+        </div>
+      </div>
+
+      {/* Right column — anchor image + 3 benefits */}
+      <div className="lg:col-span-8">
+        <div className="grid gap-8 sm:gap-10">
+          {/* Anchor image */}
+          <div>
+            <div className="overflow-hidden rounded-[24px] bg-muted sm:rounded-[28px] lg:rounded-[32px]">
+              <img
+                src="/images/egg-origin-anchor.png"
+                alt="Минимална performance среда с премиум и тихо излъчване"
+                className="h-[240px] w-full object-cover object-[40%_50%] sm:h-[320px] lg:h-[420px]"
+              />
+            </div>
+          </div>
+
+          {/* 3 benefits */}
+          <div className="grid gap-8 sm:gap-10 md:grid-cols-3 md:gap-6">
+            {/* Benefit 1 */}
+            <div>
+              <div className="flex items-center gap-6">
+                <span className="text-xs tracking-[0.3em] text-muted-foreground">
+                  01
+                </span>
+                <div className="h-px flex-1 bg-border/60" />
+              </div>
+
+              <h3 className="mt-7 text-base font-medium text-foreground">
+                Пълноценен Протеин
+              </h3>
+
+              <p className="mt-4 max-w-sm text-sm leading-7 text-muted-foreground">
+                Всички есенциални аминокиселини в прецизно балансирана форма.
               </p>
             </div>
-            <div className="border-t border-border py-10 lg:border-l lg:border-t-0 lg:px-10">
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground">02</p>
-              <h3 className="mt-4 text-sm font-medium tracking-wide text-foreground">Лесно Смилане</h3>
-              <p className="mt-4 text-sm leading-loose text-muted-foreground">
-                Естествено без лактоза. Без подуване, без дискомфорт — само чист резултат.
+
+            {/* Benefit 2 */}
+            <div>
+              <div className="flex items-center gap-6">
+                <span className="text-xs tracking-[0.3em] text-muted-foreground">
+                  02
+                </span>
+                <div className="h-px flex-1 bg-border/60" />
+              </div>
+
+              <h3 className="mt-7 text-base font-medium text-foreground">
+                Стабилна енергия
+              </h3>
+
+              <p className="mt-4 max-w-sm text-sm leading-7 text-muted-foreground">
+                Създаден да поддържа баланс и яснота — в синхрон с ежедневния ти ритъм.
               </p>
             </div>
-            <div className="border-t border-border py-10 lg:border-l lg:border-t-0 lg:px-10">
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground">03</p>
-              <h3 className="mt-4 text-sm font-medium tracking-wide text-foreground">Чиста Етикета</h3>
-              <p className="mt-4 text-sm leading-loose text-muted-foreground">
-                Без млечни продукти, без суроватка, без добавена захар. Функционален протеин — нищо повече.
+
+            {/* Benefit 3 */}
+            <div>
+              <div className="flex items-center gap-6">
+                <span className="text-xs tracking-[0.3em] text-muted-foreground">
+                  03
+                </span>
+                <div className="h-px flex-1 bg-border/60" />
+              </div>
+
+              <h3 className="mt-7 text-base font-medium text-foreground">
+                Чиста Формула
+              </h3>
+
+              <p className="mt-4 max-w-sm text-sm leading-7 text-muted-foreground">
+                Без излишни съставки — само функционален протеин с ясна
+                роля в твоята система.
               </p>
             </div>
           </div>
         </div>
-      </section>
+      </div>
+    </div>
+  </div>
+</section>
 
       {/* Products Section */}
       <section className="bg-background py-24 sm:py-32">
