@@ -288,7 +288,7 @@ export default async function HomePage() {
                 Почивка и Възстановяване
               </p>
 
-              <h2 className="font-serif mt-6 text-4xl leading-[0.98] tracking-[-0.03em] text-foreground sm:text-5xl lg:text-6xl">
+              <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl lg:text-6xl">
                 Бял шоколад
                 <span className="block text-muted-foreground">
                   & малина
@@ -342,7 +342,7 @@ export default async function HomePage() {
                 Стабилно прeдставяне
               </p>
 
-              <h2 className="font-serif mt-6 text-4xl leading-[0.98] tracking-[-0.03em] text-foreground sm:text-5xl lg:text-6xl">
+              <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl lg:text-6xl">
                 Тъмен
                 <span className="block text-muted-foreground">
                   Шоколад
