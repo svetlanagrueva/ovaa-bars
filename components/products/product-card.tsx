@@ -22,7 +22,7 @@ export function ProductCard({ product, soldOut = false }: ProductCardProps) {
     <article className="group flex h-full flex-col">
       <Link href={`/products/${product.slug}`} className="block">
         <div className="relative overflow-hidden rounded-[20px] border border-border/60 bg-secondary transition-colors duration-300 group-hover:border-foreground/20">
-          <div className="relative aspect-[0.96/1] sm:aspect-[4/4.8]">
+          <div className="relative aspect-[1/1] sm:aspect-[4/4.2]">
             <Image
               src={product.image || "/placeholder.svg"}
               alt={product.name}
