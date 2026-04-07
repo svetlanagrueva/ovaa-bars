@@ -25,6 +25,8 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
   const [error, setError] = useState<string | null>(null)
   const [cityFilter, setCityFilter] = useState("")
   const [isOpen, setIsOpen] = useState(false)
+  const [manualEntry, setManualEntry] = useState(false)
+  const [manualValue, setManualValue] = useState("")
   const dropdownRef = useRef<HTMLDivElement>(null)
   const fetchedRef = useRef(false)
 
@@ -103,10 +105,12 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
     <div className="space-y-3" ref={dropdownRef}>
       <Label>Изберете офис на Еконт *</Label>
 
-      {error ? (
+      {error || manualEntry ? (
         <>
           <Input
             placeholder="Въведи адрес или офис на Еконт за доставка"
+            value={manualValue}
+            onChange={(e) => setManualValue(e.target.value)}
             onBlur={(e) => {
               const value = e.target.value.trim()
               if (value) {
@@ -114,9 +118,23 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
               }
             }}
           />
-          <p className="text-xs text-muted-foreground">
-            Автоматичното зареждане на офиси е недостъпно. Моля, въведете името на офиса ръчно.
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              {error ? "Автоматичното зареждане е недостъпно." : "Въведете пълния адрес на офиса."}{" "}
+            </p>
+            {manualEntry && !error && (
+              <button
+                type="button"
+                className="text-xs font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                onClick={() => {
+                  setManualEntry(false)
+                  setManualValue("")
+                }}
+              >
+                Търси от списъка
+              </button>
+            )}
+          </div>
         </>
       ) : (
         <>
@@ -161,9 +179,22 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
               </div>
               <div className="max-h-64 overflow-y-auto p-1">
                 {filteredOffices.length === 0 ? (
-                  <p className="p-4 text-center text-sm text-muted-foreground">
-                    Няма намерени офиси
-                  </p>
+                  <div className="p-4 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Няма намерени офиси
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-2 text-sm font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                      onClick={() => {
+                        setManualEntry(true)
+                        setManualValue(cityFilter)
+                        setIsOpen(false)
+                      }}
+                    >
+                      Въведи ръчно
+                    </button>
+                  </div>
                 ) : (
                   Array.from(groupedOffices.entries()).map(([city, cityOffices]) => (
                 <div key={city}>
