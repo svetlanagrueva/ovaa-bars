@@ -129,4 +129,73 @@ describe("SpeedyOfficePicker", () => {
       screen.queryByPlaceholderText("Търсене по град или адрес...")
     ).not.toBeInTheDocument()
   })
+
+  it("shows manual entry option when search returns no results", async () => {
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
+
+    const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
+    fireEvent.change(searchInput, { target: { value: "Несъществуващ град" } })
+
+    expect(screen.getByText("Въведи ръчно")).toBeInTheDocument()
+  })
+
+  it("switches to manual input when 'Въведи ръчно' is clicked", async () => {
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
+
+    const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
+    fireEvent.change(searchInput, { target: { value: "Несъществуващ" } })
+    fireEvent.click(screen.getByText("Въведи ръчно"))
+
+    const manualInput = screen.getByPlaceholderText("Въведи адрес, офис или автомат за доставка със Speedy")
+    expect(manualInput).toBeInTheDocument()
+    expect(manualInput).toHaveValue("Несъществуващ")
+  })
+
+  it("calls onSelect with manual value on blur", async () => {
+    const onSelect = vi.fn()
+    await renderAndOpen({ selectedOfficeId: null, onSelect })
+
+    const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
+    fireEvent.change(searchInput, { target: { value: "Несъществуващ" } })
+    fireEvent.click(screen.getByText("Въведи ръчно"))
+
+    const manualInput = screen.getByPlaceholderText("Въведи адрес, офис или автомат за доставка със Speedy")
+    fireEvent.change(manualInput, { target: { value: "Speedy офис Бургас Славейков" } })
+    fireEvent.blur(manualInput)
+
+    expect(onSelect).toHaveBeenCalledWith({
+      id: 0,
+      name: "Speedy офис Бургас Славейков",
+      city: "",
+      fullAddress: "Speedy офис Бургас Славейков",
+    })
+  })
+
+  it("switches back to dropdown when 'Търси от списъка' is clicked", async () => {
+    await renderAndOpen({ selectedOfficeId: null, onSelect: vi.fn() })
+
+    const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
+    fireEvent.change(searchInput, { target: { value: "Несъществуващ" } })
+    fireEvent.click(screen.getByText("Въведи ръчно"))
+
+    expect(screen.getByText("Търси от списъка")).toBeInTheDocument()
+    fireEvent.click(screen.getByText("Търси от списъка"))
+
+    expect(screen.getByRole("button", { name: /Изберете офис/i })).toBeInTheDocument()
+  })
+
+  it("does not call onSelect when manual input is empty on blur", async () => {
+    const onSelect = vi.fn()
+    await renderAndOpen({ selectedOfficeId: null, onSelect })
+
+    const searchInput = screen.getByPlaceholderText("Търсене по град или адрес...")
+    fireEvent.change(searchInput, { target: { value: "Несъществуващ" } })
+    fireEvent.click(screen.getByText("Въведи ръчно"))
+
+    const manualInput = screen.getByPlaceholderText("Въведи адрес, офис или автомат за доставка със Speedy")
+    fireEvent.change(manualInput, { target: { value: "" } })
+    fireEvent.blur(manualInput)
+
+    expect(onSelect).not.toHaveBeenCalled()
+  })
 })
