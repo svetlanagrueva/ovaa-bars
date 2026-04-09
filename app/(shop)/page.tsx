@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { ProductCard } from "@/components/products/product-card"
 import { getProductsWithSales } from "@/lib/sales"
 import { getInventoryMap } from "@/lib/inventory"
+import { SocialProof } from "@/components/social-proof"
 
 export const revalidate = 60
 
@@ -524,76 +525,8 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Social Proof Section */}
-<section className="bg-muted/20 py-14 sm:py-16 lg:py-20">
-  <div className="mx-auto max-w-7xl px-6 lg:px-8">
-    <div className="grid items-center gap-10 lg:grid-cols-12 lg:gap-10">
-
-      {/* Left */}
-      <div className="lg:col-span-4">
-        <p className="text-[11px] font-medium uppercase tracking-[0.38em] text-muted-foreground">
-          Общност
-        </p>
-
-        <h3 className="mt-4 text-2xl font-light text-foreground">
-          Изгради своя ритъм
-        </h3>
-
-        <p className="mt-4 max-w-sm text-sm leading-7 text-muted-foreground">
-          Виж как Egg Origin се вписва в ежедневието на хора с фокус,
-          движение и баланс.
-        </p>
-
-        <Link
-          href="https://instagram.com"
-          className="mt-6 inline-block text-[11px] uppercase tracking-[0.28em] text-muted-foreground hover:text-foreground"
-        >
-          Instagram →
-        </Link>
-      </div>
-
-      {/* Right - images */}
-      <div className="grid grid-cols-3 gap-3 lg:col-span-8 lg:grid-cols-4">
-        {[
-          "/images/social-1.jpg",
-          "/images/social-2.jpg",
-          "/images/social-3.jpg",
-          "/images/social-4.jpg",
-        ].map((src, i) => (
-          <div
-            key={i}
-            className="aspect-square overflow-hidden rounded-full bg-muted"
-          >
-            <img
-              src={src}
-              alt=""
-              className="h-full w-full object-cover"
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-
-    {/* Trustpilot */}
-    <div className="mt-12 flex justify-center">
-      <Link
-        href="#"
-        className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 transition-colors hover:bg-muted/30"
-      >
-        <Image
-          src="/images/trustpilot-logo.png"
-          alt="Trustpilot"
-          width={120}
-          height={30}
-          className="h-8 w-auto"
-        />
-        <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-          Оцени ни
-        </span>
-      </Link>
-    </div>
-  </div>
-</section>
+      {/* Social Proof Section (new — with animations) */}
+      <SocialProof />
 
       {/* CTA Section */}
       <section className="relative overflow-hidden bg-muted/40 px-6 py-16 sm:px-10 sm:py-24 lg:px-0 lg:py-28">
