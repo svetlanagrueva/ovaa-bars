@@ -2,11 +2,44 @@ import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ProductCard } from "@/components/products/product-card"
 import { getProductsWithSales } from "@/lib/sales"
 import { getInventoryMap } from "@/lib/inventory"
+import { SocialProof } from "@/components/landing/social-proof"
+import { BenefitsStrip } from "@/components/landing/benefits-strip"
+import { UsageMoments } from "@/components/landing/usage-moments"
+import { ProductsSection } from "@/components/landing/products-section"
+import { CtaSection } from "@/components/landing/cta-section"
 
 export const revalidate = 60
+
+const HERO = {
+  eyebrow: "Egg Origin — Яйчен Протеин",
+  heading: "Чиста храна",
+  headingSub: "за хора с цел",
+  body: "20g пълноценен яйчен протеин в прецизно създадена формула — без суроватка, без добавена захар и без излишни съставки.",
+  cta: "Виж продуктите",
+}
+
+const FLAVORS = {
+  white: {
+    eyebrow: "Почивка и Възстановяване",
+    title: "Бял шоколад",
+    titleSub: "& малина",
+    body: "По-лека, по-мека енергия — създадена за баланс, възстановяване и ежедневен ритъм без излишна тежест.",
+    tagline: "Лекота / Баланс / Нежност",
+    image: "/images/egg-origin-white-hero.png",
+    href: "/products/white-chocolate-raspberry-box",
+  },
+  dark: {
+    eyebrow: "Стабилно представяне",
+    title: "Тъмен",
+    titleSub: "Шоколад",
+    body: "По-плътно, по-структурирано присъствие — за фокус, постоянство и тиха увереност в ежедневното представяне.",
+    tagline: "Фокус / Дисциплина / Увереност",
+    image: "/images/egg-origin-dark-hero.png",
+    href: "/products/dark-chocolate-box",
+  },
+}
 
 export default async function HomePage() {
   const [PRODUCTS, inventoryMap] = await Promise.all([
@@ -15,173 +48,365 @@ export default async function HomePage() {
   ])
   return (
     <div>
-      {/* Hero Section */}
-      <section className="relative bg-background">
-        <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8">
-          <div className="grid items-center gap-16 lg:grid-cols-2">
+      {/* Hero Section — mobile: stacked text + cropped image; desktop: full-bleed with overlay */}
+      <section className="relative overflow-hidden bg-background">
+        {/* Desktop hero */}
+        <div className="relative hidden h-[70vh] min-h-[560px] w-full sm:block">
+          <Image
+            src="/images/egg-origin-hero.png"
+            alt="Egg Origin протеинови барове"
+            fill
+            priority
+            className="object-cover"
+          />
+
+          <div className="absolute inset-0 bg-gradient-to-r from-background/80 via-background/5 to-transparent" />
+
+          <div className="relative z-10 mx-auto flex h-full max-w-7xl items-center px-6 lg:px-8">
             <div className="max-w-xl">
-              <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
-                Egg Origin — Яйчен Протеин
+              <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+                {HERO.eyebrow}
               </p>
-              <h1 className="mt-8 text-balance text-4xl font-light tracking-wide text-foreground sm:text-5xl lg:text-6xl">
-                Чиста храна за{" "}
-                <span className="italic">хора с цели</span>
-              </h1>
-              <p className="mt-8 text-pretty text-sm leading-loose tracking-wide text-muted-foreground">
-                20g пълноценен яйчен протеин. Без суроватка, без добавена захар,
-                без излишни съставки. Създаден за ежедневна употреба.
+
+              {/* Decorative duplicate — real h1 is in mobile block (mobile-first indexing) */}
+              <p className="mt-6 text-4xl font-light leading-[1.02] tracking-[-0.04em] text-foreground sm:text-5xl lg:text-6xl" role="presentation">
+                {HERO.heading}
+                <span className="block text-muted-foreground">
+                  {HERO.headingSub}
+                </span>
               </p>
-              <div className="mt-12 flex flex-col gap-4 sm:flex-row">
-                <Button asChild size="lg" className="gap-2 px-8 tracking-widest text-xs uppercase">
+
+              <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
+                {HERO.body}
+              </p>
+
+              <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+                <Button
+                  asChild
+                  size="lg"
+                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                >
                   <Link href="/products">
-                    Поръчай
+                    {HERO.cta}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                 </Button>
-                <Button asChild variant="outline" size="lg" className="px-8 tracking-widest text-xs uppercase">
-                  <Link href="/about">За нас</Link>
-                </Button>
               </div>
             </div>
-            <div className="relative aspect-[4/5] lg:aspect-square">
-              <Image
-                src="/images/hero-bg.jpg"
-                alt="Egg Origin протеинови барове"
-                fill
-                className="object-cover"
-                priority
-              />
+          </div>
+        </div>
+
+        {/* Mobile hero — plain text top, image peeking at bottom */}
+        <div className="sm:hidden">
+          <div className="bg-background px-6 pb-6 pt-14">
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              {HERO.eyebrow}
+            </p>
+
+            <h1 className="mt-6 text-4xl font-light leading-[1.02] tracking-[-0.04em] text-foreground">
+              {HERO.heading}
+              <span className="block text-muted-foreground">
+                {HERO.headingSub}
+              </span>
+            </h1>
+
+            <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
+              {HERO.body}
+            </p>
+          </div>
+
+          <div className="relative h-[320px] w-full overflow-hidden">
+            <div className="absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-background/80 via-background/5 to-transparent" />
+            <Image
+              src="/images/egg-origin-hero.png"
+              alt="Egg Origin протеинови барове"
+              fill
+              className="object-cover object-right-bottom scale-[1.3]"
+            />
+
+            <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-8">
+              <div className="inline-block rounded-full bg-background/40 p-1 backdrop-blur-sm">
+                <Button
+                  asChild
+                  size="lg"
+                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                >
+                  <Link href="/products">
+                    {HERO.cta}
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       {/* Benefits Strip */}
-      <section className="border-y border-border bg-background py-12">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col items-center divide-y divide-border sm:flex-row sm:divide-x sm:divide-y-0">
-            <div className="flex w-full flex-col items-center gap-1 py-6 sm:py-0 sm:px-10">
-              <p className="text-3xl font-extralight tracking-tight text-foreground">20g</p>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Яйчен Протеин</p>
-            </div>
-            <div className="flex w-full flex-col items-center gap-1 py-6 sm:py-0 sm:px-10">
-              <p className="text-3xl font-extralight tracking-tight text-foreground">0g</p>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Добавена Захар</p>
-            </div>
-            <div className="flex w-full flex-col items-center gap-1 py-6 sm:py-0 sm:px-10">
-              <p className="text-3xl font-extralight tracking-tight text-foreground">100%</p>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Чиста Етикета</p>
-            </div>
-            <div className="flex w-full flex-col items-center gap-1 py-6 sm:py-0 sm:px-10">
-              <p className="text-3xl font-extralight tracking-tight text-foreground">Без</p>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Лактоза</p>
-            </div>
-          </div>
-        </div>
-      </section>
+      <BenefitsStrip />
 
       {/* Why Egg White Section */}
-      <section className="bg-secondary/40 py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-2xl">
-            <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
+      <section className="relative overflow-hidden py-16 sm:py-20 lg:py-24">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <img
+            src="/images/egg-white-texture.png"
+            alt=""
+            aria-hidden="true"
+            className="absolute left-1/2 top-1/2 h-[140%] w-[140%] max-w-none -translate-x-1/2 -translate-y-1/2 object-cover opacity-[0.8]"
+          />
+          <div className="absolute inset-0 bg-background/72" />
+        </div>
+
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="max-w-2xl">
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               Защо Яйчен Белтък
             </p>
-            <h2 className="mt-6 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
-              По-умният избор на протеин
+
+            <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+              По-умният избор
+              <span className="block text-muted-foreground">
+                на протеин
+              </span>
             </h2>
+
+            <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
+              Минимална формула, максимална функция. Създаден за модерен начин на
+              живот с усещане за лекота, чистота и премиум грижа.
+            </p>
           </div>
-          <div className="mx-auto mt-16 grid max-w-5xl gap-0 lg:grid-cols-3">
-            <div className="border-t border-border py-10 lg:border-l lg:border-t-0 lg:px-10 lg:first:border-l-0">
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground">01</p>
-              <h3 className="mt-4 text-sm font-medium tracking-wide text-foreground">Пълноценен Протеин</h3>
-              <p className="mt-4 text-sm leading-loose text-muted-foreground">
-                Всички есенциални аминокиселини в едно. Оптимален за мускулно възстановяване и ежедневна употреба.
+
+          <div className="mt-12 grid gap-4 sm:gap-5 lg:mt-14 lg:grid-cols-3 lg:gap-6">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
+                01
+                <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
+              </span>
+
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
+                Пълноценен Протеин
+              </h3>
+
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                Всички есенциални аминокиселини в прецизно балансирана форма — за
+                възстановяване, баланс и устойчив тонус.
               </p>
             </div>
-            <div className="border-t border-border py-10 lg:border-l lg:border-t-0 lg:px-10">
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground">02</p>
-              <h3 className="mt-4 text-sm font-medium tracking-wide text-foreground">Лесно Смилане</h3>
-              <p className="mt-4 text-sm leading-loose text-muted-foreground">
-                Естествено без лактоза. Без подуване, без дискомфорт — само чист резултат.
+
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
+                02
+                <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
+              </span>
+
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
+                Стабилна Енергия
+              </h3>
+
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                Създаден да поддържа баланс и яснота — в синхрон с ежедневния ти
+                ритъм.
               </p>
             </div>
-            <div className="border-t border-border py-10 lg:border-l lg:border-t-0 lg:px-10">
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground">03</p>
-              <h3 className="mt-4 text-sm font-medium tracking-wide text-foreground">Чиста Етикета</h3>
-              <p className="mt-4 text-sm leading-loose text-muted-foreground">
-                Без млечни продукти, без суроватка, без добавена захар. Функционален протеин — нищо повече.
+
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
+                03
+                <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
+              </span>
+
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
+                Чиста Формула
+              </h3>
+
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                Без млечни продукти, без суроватка и без излишни съставки — само
+                това, което има реална функция.
               </p>
             </div>
           </div>
         </div>
       </section>
+
+      {/* Usage Section */}
+      <UsageMoments />
+
+      {/* Flavor Sections */}
+      <div className="bg-background">
+        {/* WHITE CHOCOLATE & RASPBERRY */}
+        <section className="relative overflow-hidden py-8 sm:py-10 lg:py-12">
+          <div className="mx-auto max-w-7xl px-6 lg:px-8">
+            <div className="flex flex-col gap-6 lg:grid lg:grid-cols-12 lg:items-center lg:gap-10">
+              <div className="order-1 lg:col-span-5 lg:row-span-4">
+                <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+                  {FLAVORS.white.eyebrow}
+                </p>
+
+                <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+                  {FLAVORS.white.title}
+                  <span className="block text-muted-foreground">{FLAVORS.white.titleSub}</span>
+                </h2>
+
+                <p className="mt-8 hidden max-w-md text-sm leading-7 text-muted-foreground lg:block">
+                  {FLAVORS.white.body}
+                </p>
+
+                <div className="mt-10 hidden items-center gap-4 lg:flex">
+                  <div className="h-px w-10 bg-accent/50" />
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
+                    {FLAVORS.white.tagline}
+                  </span>
+                </div>
+
+                <div className="mt-10 hidden lg:block">
+                  <Button
+                    asChild
+                    size="lg"
+                    className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                  >
+                    <Link href={FLAVORS.white.href}>
+                      Виж продукта
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="order-2 flex items-center gap-4 lg:hidden">
+                <div className="h-px w-10 bg-accent/50" />
+                <span className="text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
+                  {FLAVORS.white.tagline}
+                </span>
+              </div>
+
+              <div className="order-3 lg:col-span-7">
+                <div className="relative h-[320px] overflow-hidden rounded-[26px] bg-muted sm:h-[380px] lg:h-[420px]">
+                  <Image
+                    src={FLAVORS.white.image}
+                    alt={`Egg Origin ${FLAVORS.white.title} ${FLAVORS.white.titleSub}`}
+                    fill
+                    className="object-cover"
+                  />
+                </div>
+              </div>
+
+              <div className="order-4 lg:hidden">
+                <p className="max-w-md text-sm leading-7 text-muted-foreground">
+                  {FLAVORS.white.body}
+                </p>
+              </div>
+
+              <div className="order-5 lg:hidden">
+                <Button
+                  asChild
+                  size="lg"
+                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                >
+                  <Link href={FLAVORS.white.href}>
+                    Виж продукта
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="h-px bg-border/60" />
+        </div>
+
+        {/* DARK CHOCOLATE */}
+        <section className="relative overflow-hidden py-8 sm:py-10 lg:py-12">
+          <div className="mx-auto max-w-7xl px-6 lg:px-8">
+            <div className="flex flex-col gap-6 lg:grid lg:grid-cols-12 lg:items-center lg:gap-10">
+              <div className="order-1 lg:order-2 lg:col-span-4 lg:col-start-9 lg:row-span-4">
+                <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+                  {FLAVORS.dark.eyebrow}
+                </p>
+
+                <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+                  {FLAVORS.dark.title}
+                  <span className="block text-muted-foreground">{FLAVORS.dark.titleSub}</span>
+                </h2>
+
+                <p className="mt-8 hidden max-w-md text-sm leading-7 text-muted-foreground lg:block">
+                  {FLAVORS.dark.body}
+                </p>
+
+                <div className="mt-10 hidden items-center gap-4 lg:flex">
+                  <div className="h-px w-10 bg-accent/50" />
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
+                    {FLAVORS.dark.tagline}
+                  </span>
+                </div>
+
+                <div className="mt-10 hidden lg:block">
+                  <Button
+                    asChild
+                    size="lg"
+                    className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                  >
+                    <Link href={FLAVORS.dark.href}>
+                      Виж продукта
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="order-2 flex items-center gap-4 lg:hidden">
+                <div className="h-px w-10 bg-accent/50" />
+                <span className="text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
+                  {FLAVORS.dark.tagline}
+                </span>
+              </div>
+
+              <div className="order-3 lg:order-1 lg:col-span-7">
+                <div className="relative h-[320px] overflow-hidden rounded-[26px] bg-muted sm:h-[380px] lg:h-[420px]">
+                  <Image
+                    src={FLAVORS.dark.image}
+                    alt={`Egg Origin ${FLAVORS.dark.title} ${FLAVORS.dark.titleSub}`}
+                    fill
+                    className="object-cover"
+                  />
+                </div>
+              </div>
+
+              <div className="order-4 lg:hidden">
+                <p className="max-w-md text-sm leading-7 text-muted-foreground">
+                  {FLAVORS.dark.body}
+                </p>
+              </div>
+
+              <div className="order-5 lg:hidden">
+                <Button
+                  asChild
+                  size="lg"
+                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                >
+                  <Link href={FLAVORS.dark.href}>
+                    Виж продукта
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
 
       {/* Products Section */}
-      <section className="bg-background py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex items-end justify-between">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
-                Продукти
-              </p>
-              <h2 className="mt-4 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
-                Избери своята кутия
-              </h2>
-            </div>
-            <Link
-              href="/products"
-              className="hidden text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground underline-offset-4 hover:text-foreground sm:block"
-            >
-              Виж всички
-            </Link>
-          </div>
-          <div className="mt-12 grid grid-cols-2 gap-3 sm:gap-8 lg:grid-cols-3">
-            {PRODUCTS.map((product) => (
-              <ProductCard key={product.id} product={product} soldOut={inventoryMap.has(product.id) && inventoryMap.get(product.id) === 0} />
-            ))}
-          </div>
-          <div className="mt-8 text-center sm:hidden">
-            <Link href="/products" className="text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground hover:text-foreground">
-              Виж всички
-            </Link>
-          </div>
-        </div>
-      </section>
+      <ProductsSection products={PRODUCTS} inventoryMap={Object.fromEntries(inventoryMap)} />
+
+      {/* Social Proof Section */}
+      <SocialProof />
 
       {/* CTA Section */}
-      <section className="overflow-hidden bg-foreground py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="relative mx-auto max-w-xl">
-            <Image
-              src="/images/enso-arc.png"
-              alt=""
-              width={600}
-              height={600}
-              className="pointer-events-none absolute bottom-[-10rem] right-[-1.9rem] opacity-[0.11] mix-blend-screen [filter:invert(1)_sepia(0.6)_hue-rotate(315deg)_saturate(1.2)] sm:bottom-[-21rem] sm:right-[-7rem]"
-              aria-hidden="true"
-            />
-            <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-background/50">
-              Безплатна доставка до офис над 30 €
-            </p>
-            <h2 className="mt-8 text-3xl font-light tracking-wide text-background sm:text-4xl">
-              Чист протеин.<br />
-              <span className="italic">Всеки ден.</span>
-            </h2>
-            <p className="mt-6 text-sm leading-loose text-background/60">
-              Без компромиси. Доставка до 2 работни дни в цяла България.
-            </p>
-            <div className="mt-10">
-              <Button asChild size="lg" variant="secondary" className="gap-2 px-8 tracking-widest text-xs uppercase">
-                <Link href="/products">
-                  Поръчай
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <CtaSection />
     </div>
   )
 }

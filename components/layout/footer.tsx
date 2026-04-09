@@ -52,7 +52,7 @@ export function Footer() {
                 href={INSTAGRAM_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-foreground transition-colors hover:text-primary"
+                className="text-foreground transition-colors hover:text-accent"
                 aria-label="Instagram"
               >
                 <Instagram className="h-6 w-6" />
@@ -61,7 +61,7 @@ export function Footer() {
                 href={TIKTOK_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-foreground transition-colors hover:text-primary"
+                className="text-foreground transition-colors hover:text-accent"
                 aria-label="TikTok"
               >
                 <TikTokIcon className="h-6 w-6" />
@@ -73,17 +73,17 @@ export function Footer() {
             <h3 className="text-sm font-semibold text-foreground">Навигация</h3>
             <ul className="mt-4 space-y-3">
               <li>
-                <Link href="/products" className="text-sm text-muted-foreground hover:text-primary">
+                <Link href="/products" className="text-sm text-muted-foreground hover:text-accent">
                   Продукти
                 </Link>
               </li>
               <li>
-                <Link href="/about" className="text-sm text-muted-foreground hover:text-primary">
+                <Link href="/about" className="text-sm text-muted-foreground hover:text-accent">
                   За нас
                 </Link>
               </li>
               <li>
-                <Link href="/contact" className="text-sm text-muted-foreground hover:text-primary">
+                <Link href="/contact" className="text-sm text-muted-foreground hover:text-accent">
                   Контакти
                 </Link>
               </li>
@@ -94,12 +94,12 @@ export function Footer() {
             <h3 className="text-sm font-semibold text-foreground">Правна информация</h3>
             <ul className="mt-4 space-y-3">
               <li>
-                <Link href="/terms" className="text-sm text-muted-foreground hover:text-primary">
+                <Link href="/terms" className="text-sm text-muted-foreground hover:text-accent">
                   Общи условия
                 </Link>
               </li>
               <li>
-                <Link href="/privacy" className="text-sm text-muted-foreground hover:text-primary">
+                <Link href="/privacy" className="text-sm text-muted-foreground hover:text-accent">
                   Политика за поверителност
                 </Link>
               </li>

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react"
-import { EcontOfficePicker } from "@/components/econt-office-picker"
+import { EcontOfficePicker } from "@/components/delivery/econt-office-picker"
 
 const mockOffices = [
   { id: 1, name: "Офис Дружба", city: "София", fullAddress: "бул. Цариградско 115" },
@@ -22,7 +22,7 @@ function setupFetchMock(offices = mockOffices) {
 
 // Opens the picker and waits for offices to finish loading.
 // Returns with the dropdown open.
-async function renderAndOpen(props: { selectedOfficeId: number | null; onSelect: ReturnType<typeof vi.fn> }) {
+async function renderAndOpen(props: { selectedOfficeId: number | null; onSelect: (office: import("@/components/delivery/econt-office-picker").EcontOfficeOption) => void }) {
   cleanup()
   const result = render(<EcontOfficePicker {...props} />)
   fireEvent.click(screen.getByRole("button", { name: /Изберете офис/i }))

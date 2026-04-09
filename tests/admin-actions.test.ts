@@ -8,9 +8,9 @@ const mockValidateAdminSession = vi.fn(() => Promise.resolve(true))
 const mockDestroyAdminSession = vi.fn()
 
 vi.mock("@/lib/admin-auth", () => ({
-  createAdminSession: (...args: unknown[]) => mockCreateAdminSession(...args),
-  validateAdminSession: (...args: unknown[]) => mockValidateAdminSession(...args),
-  destroyAdminSession: (...args: unknown[]) => mockDestroyAdminSession(...args),
+  createAdminSession: () => mockCreateAdminSession(),
+  validateAdminSession: () => mockValidateAdminSession(),
+  destroyAdminSession: () => mockDestroyAdminSession(),
 }))
 
 // Mock invoice modules (imported by admin actions)
@@ -32,13 +32,13 @@ vi.mock("@/lib/seller", () => ({
 }))
 
 // Mock courier clients (imported by admin actions via generateShipment)
-const mockSpeedyCreateShipment = vi.fn(() => Promise.resolve({ trackingNumber: "SPEEDY123", shipmentId: "1" }))
-const mockEcontCreateShipment = vi.fn(() => Promise.resolve({ trackingNumber: "ECONT123", pdfUrl: null }))
+const mockSpeedyCreateShipment = vi.fn((_params?: any) => Promise.resolve({ trackingNumber: "SPEEDY123", shipmentId: "1" }))
+const mockEcontCreateShipment = vi.fn((_params?: any) => Promise.resolve({ trackingNumber: "ECONT123", pdfUrl: null }))
 vi.mock("@/lib/speedy", () => ({
-  createShipment: (...args: unknown[]) => mockSpeedyCreateShipment(...args),
+  createShipment: (params: any) => mockSpeedyCreateShipment(params),
 }))
 vi.mock("@/lib/econt", () => ({
-  createShipment: (...args: unknown[]) => mockEcontCreateShipment(...args),
+  createShipment: (params: any) => mockEcontCreateShipment(params),
 }))
 
 // Mock Supabase
@@ -58,7 +58,7 @@ vi.mock("resend", () => ({
 // Mock next/navigation — redirect throws like it does in Next.js
 const mockRedirect = vi.fn()
 vi.mock("next/navigation", () => ({
-  redirect: (...args: unknown[]) => {
+  redirect: (...args: any[]) => {
     mockRedirect(...args)
     throw new Error("NEXT_REDIRECT")
   },

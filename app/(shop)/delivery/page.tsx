@@ -1,4 +1,4 @@
-import { DeliveryInfo } from "@/components/delivery-info"
+import { DeliveryInfo } from "@/components/delivery/delivery-info"
 
 export const metadata = {
   title: "Доставка | Egg Origin",

@@ -91,6 +91,7 @@ const validCustomerInfo = {
 
 const validEcontOffice = {
   id: 42,
+  code: "SOF-DRB",
   name: "София - Дружба",
   city: "София",
   fullAddress: "бул. Цариградско шосе 115",
@@ -126,7 +127,7 @@ describe("Econt office validation – createCheckoutSession", () => {
         cartItems: validCartItems,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
-        econtOffice: { id: 1, name: "", city: "София", fullAddress: "ул. Тест" },
+        econtOffice: { id: 1, code: "TST", name: "", city: "София", fullAddress: "ул. Тест" },
       })
     ).rejects.toThrow("Econt office is required")
   })
@@ -139,6 +140,7 @@ describe("Econt office validation – createCheckoutSession", () => {
         deliveryMethod: "econt-office",
         econtOffice: {
           id: 1,
+          code: "TST",
           name: "x".repeat(201),
           city: "София",
           fullAddress: "ул. Тест",
@@ -155,6 +157,7 @@ describe("Econt office validation – createCheckoutSession", () => {
         deliveryMethod: "econt-office",
         econtOffice: {
           id: 1,
+          code: "TST",
           name: "Офис",
           city: "София",
           fullAddress: "x".repeat(501),
@@ -256,7 +259,7 @@ describe("Econt office validation – createCheckoutSession", () => {
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
-      econtOffice: { id: 0, name: "Test", city: "София", fullAddress: "addr" },
+      econtOffice: { id: 0, code: "", name: "Test", city: "София", fullAddress: "addr" },
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
@@ -278,6 +281,7 @@ describe("Econt office validation – createCheckoutSession", () => {
       deliveryMethod: "econt-office",
       econtOffice: {
         id: 1,
+        code: "TST",
         name: "Офис Тест",
         city: "София",
         fullAddress: undefined as unknown as string,

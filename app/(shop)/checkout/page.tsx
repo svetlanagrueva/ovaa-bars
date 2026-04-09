@@ -17,9 +17,9 @@ import { formatPrice } from "@/lib/products"
 import { createCheckoutSession, createCODOrder, validatePromoCode, checkCartInventory } from "@/app/actions/stripe"
 import { COD_FEE, calculateShippingPrice } from "@/lib/constants"
 import { isOnSale } from "@/lib/products"
-import { DeliveryInfo } from "@/components/delivery-info"
-import { EcontOfficePicker, type EcontOfficeOption } from "@/components/econt-office-picker"
-import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/speedy-office-picker"
+import { DeliveryInfo } from "@/components/delivery/delivery-info"
+import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
+import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 
 const econtEnabled = process.env.NEXT_PUBLIC_ECONT_ENABLED !== "false" // on by default
 const speedyEnabled = process.env.NEXT_PUBLIC_SPEEDY_ENABLED !== "false" // on by default
