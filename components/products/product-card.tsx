@@ -57,31 +57,31 @@ export function ProductCard({ product, soldOut = false }: ProductCardProps) {
         <div className="mt-auto flex items-center justify-between gap-2 pt-2.5">
           <PriceDisplay product={product} size="sm" />
 
-         <Button
-  onClick={() => {
-    addItem(product)
-    toast(product.name, {
-      description: "Добавено в количката",
-      icon: <ShoppingCart className="h-4 w-4" />,
-      action: {
-        label: "Количка",
-        onClick: () => (window.location.href = "/cart"),
-      },
-    })
-  }}
-  size="sm"
-  disabled={soldOut}
-  className="h-9 rounded-full bg-foreground px-3 text-[10px] uppercase tracking-[0.14em] text-background transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
->
-  {soldOut ? (
-    "Изчерпан"
-  ) : (
-    <>
-      <Plus className="mr-1 h-3.5 w-3.5" />
-      Добави
-    </>
-  )}
-</Button>
+          <Button
+            onClick={() => {
+              addItem(product)
+              toast(product.name, {
+                description: "Добавено в количката",
+                icon: <ShoppingCart className="h-4 w-4" />,
+                action: {
+                  label: "Количка",
+                  onClick: () => (window.location.href = "/cart"),
+                },
+              })
+            }}
+            size="sm"
+            disabled={soldOut}
+            className="h-9 rounded-full bg-foreground px-3 text-[10px] uppercase tracking-[0.16em] text-background transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
+          >
+            {soldOut ? (
+              "Изчерпан"
+            ) : (
+              <>
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                Добави
+              </>
+            )}
+          </Button>
         </div>
       </div>
     </article>

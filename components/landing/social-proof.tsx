@@ -17,19 +17,13 @@ export function SocialProof() {
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <div className="grid items-center gap-10 lg:grid-cols-12 lg:gap-10">
           {/* Left */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6 }}
-            className="lg:col-span-4"
-          >
+          <div className="lg:col-span-4">
             <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               Общност
             </p>
 
             <h3 className="mt-4 text-2xl font-light text-foreground">
-              Изгради своя ритъм
+              Балансирай ежедневието
             </h3>
 
             <p className="mt-4 max-w-sm text-sm leading-7 text-muted-foreground">
@@ -41,21 +35,17 @@ export function SocialProof() {
               href="https://instagram.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 inline-block text-[11px] uppercase tracking-[0.3em] text-muted-foreground transition-colors hover:text-foreground"
+              className="mt-6 inline-block text-[11px] uppercase tracking-[0.3em] text-foreground transition-colors hover:text-accent"
             >
               Instagram →
             </Link>
-          </motion.div>
+          </div>
 
           {/* Right - images */}
           <div className="grid grid-cols-3 gap-3 lg:col-span-8 lg:grid-cols-4">
             {SOCIAL_IMAGES.map((src, i) => (
-              <motion.div
+              <div
                 key={i}
-                initial={{ opacity: 0, scale: 0.9 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
                 className={`aspect-square overflow-hidden rounded-full bg-muted ${i === 3 ? "hidden lg:block" : ""}`}
               >
                 <img
@@ -63,7 +53,7 @@ export function SocialProof() {
                   alt=""
                   className="h-full w-full object-cover"
                 />
-              </motion.div>
+              </div>
             ))}
           </div>
         </div>
@@ -76,7 +66,12 @@ export function SocialProof() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mt-12 flex flex-wrap justify-center gap-4"
         >
-          <div className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3">
+          <a
+            href="https://www.trustpilot.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 transition-colors hover:bg-muted/30"
+          >
             <div className="flex items-center gap-1">
               {[...Array(5)].map((_, i) => (
                 <svg
@@ -91,7 +86,7 @@ export function SocialProof() {
             <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
               Отлично в Trustpilot
             </span>
-          </div>
+          </a>
         </motion.div>
       </div>
     </section>

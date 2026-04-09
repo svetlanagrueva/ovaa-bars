@@ -15,6 +15,7 @@ export const validCustomerInfo = {
 
 export const validEcontOffice = {
   id: 42,
+  code: "SOF-DRB",
   name: "София - Дружба",
   city: "София",
   fullAddress: "бул. Цариградско шосе 115",

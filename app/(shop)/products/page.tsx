@@ -23,11 +23,11 @@ export default async function ProductsPage() {
             Продукти
           </p>
           <h1 className="mt-6 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
-            Чист протеин, на ново ниво
+            Чист протеин. Всеки ден.
           </h1>
           <p className="mt-6 text-sm leading-loose tracking-wide text-muted-foreground">
-            20g пълноценен яйчен протеин с всички есенциални аминокиселини.
-            Без суроватка, без добавена захар, без излишни съставки.
+            Пълноценен яйчен протеин с всички есенциални аминокиселини.
+            Без добавена захар и излишни съставки. Създаден за твоето ежедневие.
           </p>
         </div>
 
@@ -46,25 +46,25 @@ export default async function ProductsPage() {
             <div>
               <p className="text-sm font-medium tracking-wide text-foreground">Пълноценен Протеин</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                Яйчният протеин съдържа всички есенциални аминокиселини за оптимално мускулно възстановяване.
+                Всички есенциални аминокиселини в прецизно балансирана форма.
               </p>
             </div>
             <div>
               <p className="text-sm font-medium text-foreground">Без Добавена Захар</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                Подсладен естествено, без добавени захари. Перфектен за чисто хранене.
+                Подсладен естествено, без добавени захари.
               </p>
             </div>
             <div>
-              <p className="text-sm font-medium text-foreground">Лесно Смилане</p>
+              <p className="text-sm font-medium text-foreground">Стабилна Енергия</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                Без подуване и дискомфорт. Яйчният белтък е естествено без лактоза.
+                Равномерна енергия през целия ден.
               </p>
             </div>
             <div>
-              <p className="text-sm font-medium text-foreground">Чиста Етикета</p>
+              <p className="text-sm font-medium text-foreground">Чист Етикет</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                Без млечни продукти, без суроватка, без излишни съставки. Само функционален протеин.
+                Функционален протеин. Без излишни съставки.
               </p>
             </div>
           </div>
