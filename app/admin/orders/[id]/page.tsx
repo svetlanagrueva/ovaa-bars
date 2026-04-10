@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, downloadInvoicePDF, issueInvoice, updateAdminNotes, generateShipment, getShipmentDefaults, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, updateAdminNotes, generateShipment, getShipmentDefaults, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -99,7 +99,7 @@ export default function AdminOrderDetailPage({
   const [cancellationReason, setCancellationReason] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
-  const [pdfLoading, setPdfLoading] = useState(false)
+  const [manualInvoiceNumber, setManualInvoiceNumber] = useState("")
   const [shipmentForm, setShipmentForm] = useState<ShipmentFormData | null>(null)
   const [shipmentDisplay, setShipmentDisplay] = useState<ShipmentDisplayInfo | null>(null)
   const [shipmentOpen, setShipmentOpen] = useState(false)
@@ -328,57 +328,40 @@ export default function AdminOrderDetailPage({
             {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
-            <div className="flex gap-2 pt-2">
-              {!order.invoice_number && (
+            {order.invoice_number ? (
+              <div className="pt-2">
+                <span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span>
+              </div>
+            ) : (
+              <div className="flex gap-2 pt-2">
+                <Input
+                  placeholder="Номер на фактура"
+                  value={manualInvoiceNumber}
+                  onChange={(e) => setManualInvoiceNumber(e.target.value)}
+                  className="h-8 w-48"
+                />
                 <Button
                   size="sm"
-                  disabled={actionLoading}
+                  disabled={actionLoading || !manualInvoiceNumber.trim()}
                   onClick={async () => {
-                    if (!confirm("Сигурни ли сте, че искате да издадете фактура? Това действие е необратимо.")) return
                     setActionError("")
                     setActionLoading(true)
                     try {
-                      await issueInvoice(id)
+                      await setInvoiceNumber(id, manualInvoiceNumber)
                       const updated = await getOrder(id)
                       setOrder(updated)
+                      setManualInvoiceNumber("")
                     } catch (err) {
-                      setActionError(err instanceof Error ? err.message : "Грешка при издаване на фактура")
+                      setActionError(err instanceof Error ? err.message : "Грешка при записване на фактура")
                     } finally {
                       setActionLoading(false)
                     }
                   }}
                 >
-                  Издай фактура
+                  Запази
                 </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pdfLoading}
-                onClick={async () => {
-                  setPdfLoading(true)
-                  try {
-                    const { pdfBase64, filename } = await downloadInvoicePDF(id)
-                    const blob = new Blob(
-                      [Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0))],
-                      { type: "application/pdf" }
-                    )
-                    const url = URL.createObjectURL(blob)
-                    const a = document.createElement("a")
-                    a.href = url
-                    a.download = filename
-                    a.click()
-                    URL.revokeObjectURL(url)
-                  } catch {
-                    setActionError("Грешка при генериране на PDF")
-                  } finally {
-                    setPdfLoading(false)
-                  }
-                }}
-              >
-                {pdfLoading ? "Генериране..." : order.invoice_number ? "Изтегли фактура" : "Изтегли проформа"}
-              </Button>
-            </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

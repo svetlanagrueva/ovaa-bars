@@ -6,14 +6,12 @@
 - `STRIPE_SECRET_KEY` — Stripe secret key (sk_test_ for dev)
 - `ADMIN_PASSWORD` — Admin panel login password
 
-## Required for Invoice Generation
-- `SELLER_COMPANY_NAME` — e.g. "Egg Origin EOOD"
-- `SELLER_EIK` — company registration number
-- `SELLER_VAT_NUMBER`, `SELLER_MOL`, `SELLER_ADDRESS`, `SELLER_CITY`, `SELLER_POSTAL_CODE`, `SELLER_PHONE`, `SELLER_EMAIL`, `SELLER_IBAN`, `SELLER_BANK`
+## Required for Shipping (Speedy/Econt)
+- `SELLER_COMPANY_NAME`, `SELLER_MOL`, `SELLER_ADDRESS`, `SELLER_CITY`, `SELLER_POSTAL_CODE`, `SELLER_PHONE`, `SELLER_EMAIL`
 
 ## Optional
 - `STRIPE_WEBHOOK_SECRET` — for local dev: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
-- `RESEND_API_KEY` — for sending emails (confirmation, shipping, invoice)
+- `RESEND_API_KEY` — for sending emails (confirmation, shipping)
 - `EMAIL_FROM` — sender address, e.g. "Egg Origin <noreply@eggorigin.com>"
 - `ADMIN_EMAIL` — admin notification email for new orders
 - `NEXT_PUBLIC_APP_URL` — defaults to http://localhost:3000

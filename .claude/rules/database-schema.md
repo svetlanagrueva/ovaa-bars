@@ -16,8 +16,6 @@
 - `inventory_current` — trigger-maintained running total, one row per SKU; never write directly
 
 ## Postgres Functions
-- `next_invoice_number()` — legacy, no longer used directly
-- `issue_invoice_number(p_order_id uuid)` — atomic: allocates next number + assigns to order in single transaction
 - `dashboard_stats(p_today_start, p_week_start, p_month_start)` — returns JSON with aggregated stats (SQL-level, not in-memory)
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements stock; raises exception if insufficient
 - `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session)

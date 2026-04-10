@@ -5,9 +5,6 @@ import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { revalidateTag } from "next/cache"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { generateInvoicePDF } from "@/lib/invoice-pdf"
-import { sendInvoiceEmail } from "@/lib/invoice-email"
-import { getSellerConfig } from "@/lib/seller"
 import { Resend } from "resend"
 import { redirect } from "next/navigation"
 import { createHmac, timingSafeEqual } from "crypto"
@@ -541,39 +538,6 @@ export async function updateOrderStatus(
     sendShippingEmail(order, trackingNumber!.trim())
   }
 
-  // Generate invoice for COD orders with company data, on delivery (tax event = payment)
-  if (newStatus === "delivered" && order.payment_method === "cod" && order.needs_invoice && order.invoice_eik && !order.invoice_number) {
-    try {
-      const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
-        p_order_id: orderId,
-      })
-
-      if (rpcError || !invoiceNumber) {
-        console.error("Failed to issue invoice number for COD:", rpcError)
-      } else {
-        const seller = getSellerConfig()
-        const pdfBuffer = await generateInvoicePDF({
-          type: "invoice",
-          invoiceNumber,
-          invoiceDate: new Date(),
-          order,
-          seller,
-        })
-
-        sendInvoiceEmail({
-          to: order.email as string,
-          firstName: order.first_name as string,
-          orderId: order.id as string,
-          invoiceNumber,
-          type: "invoice",
-          pdfBuffer,
-        })
-      }
-    } catch (invoiceError) {
-      console.error("Failed to generate invoice for COD delivery:", invoiceError)
-    }
-  }
-
   return { success: true }
 }
 
@@ -777,98 +741,27 @@ export async function updateAdminNotes(orderId: string, notes: string) {
   return { success: true }
 }
 
-export async function issueInvoice(orderId: string): Promise<{ invoiceNumber: string }> {
+export async function setInvoiceNumber(orderId: string, invoiceNumber: string): Promise<{ success: true }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
 
+  const trimmed = invoiceNumber.trim()
+  if (!trimmed || trimmed.length > 50) throw new Error("Невалиден номер на фактура")
+
   const supabase = await createClient()
-  const { data: order, error } = await supabase
+  const { error } = await supabase
     .from("orders")
-    .select("*")
+    .update({ invoice_number: trimmed, invoice_date: new Date().toISOString() })
     .eq("id", orderId)
-    .single()
 
-  if (error || !order) throw new Error("Order not found")
-  if (order.invoice_number) throw new Error("Фактура вече е издадена за тази поръчка")
-
-  // Atomically allocate invoice number and assign to order (single transaction, no gaps)
-  const { data: invoiceNumber, error: rpcError } = await supabase.rpc("issue_invoice_number", {
-    p_order_id: orderId,
-  })
-
-  if (rpcError || !invoiceNumber) {
-    console.error("Failed to issue invoice number:", rpcError)
-    throw new Error(rpcError?.message?.includes("already issued")
-      ? "Фактура вече е издадена за тази поръчка"
-      : "Failed to issue invoice")
+  if (error) {
+    console.error("Failed to set invoice number:", error)
+    throw new Error("Грешка при записване на номер на фактура")
   }
 
-  // Fetch updated order with invoice date
-  const { data: updatedOrder } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  const invoiceDate = updatedOrder?.invoice_date ? new Date(updatedOrder.invoice_date) : new Date()
-  const seller = getSellerConfig()
-
-  const pdfBuffer = await generateInvoicePDF({
-    type: "invoice",
-    invoiceNumber,
-    invoiceDate,
-    order: updatedOrder || order,
-    seller,
-  })
-
-  // Send invoice email to customer
-  sendInvoiceEmail({
-    to: order.email,
-    firstName: order.first_name,
-    orderId: order.id,
-    invoiceNumber,
-    type: "invoice",
-    pdfBuffer,
-  })
-
-  return { invoiceNumber }
-}
-
-export async function downloadInvoicePDF(orderId: string): Promise<{ pdfBase64: string; filename: string }> {
-  await requireAdmin()
-
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
-
-  const supabase = await createClient()
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  if (error || !order) throw new Error("Order not found")
-
-  const seller = getSellerConfig()
-  const hasInvoice = !!order.invoice_number
-  const invoiceNumber = order.invoice_number || `PRF-${order.id.slice(0, 8).toUpperCase()}`
-  const type = hasInvoice ? "invoice" as const : "proforma" as const
-
-  const pdfBuffer = await generateInvoicePDF({
-    type,
-    invoiceNumber,
-    invoiceDate: order.invoice_date ? new Date(order.invoice_date) : new Date(order.created_at),
-    order,
-    seller,
-  })
-
-  const filename = hasInvoice
-    ? `faktura-${invoiceNumber}.pdf`
-    : `proforma-${order.id.slice(0, 8)}.pdf`
-
-  return { pdfBase64: pdfBuffer.toString("base64"), filename }
+  return { success: true }
 }
 
 function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {

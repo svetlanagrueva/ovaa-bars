@@ -25,25 +25,6 @@ export function setupResendMock() {
   }))
 }
 
-export function setupInvoiceMocks() {
-  vi.mock("@/lib/invoice", () => ({
-    getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
-  }))
-  vi.mock("@/lib/invoice-pdf", () => ({
-    generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
-  }))
-  vi.mock("@/lib/invoice-email", () => ({
-    sendInvoiceEmail: vi.fn(),
-  }))
-  vi.mock("@/lib/seller", () => ({
-    getSellerConfig: vi.fn(() => ({
-      companyName: "Test Co", eik: "123456789", vatNumber: "", mol: "Test",
-      address: "Test St", city: "Sofia", postalCode: "1000", phone: "",
-      email: "", iban: "", bank: "",
-    })),
-  }))
-}
-
 export function setupSalesMock() {
   const mockGetProductsWithSales = vi.fn()
   vi.mock("@/lib/sales", () => ({
