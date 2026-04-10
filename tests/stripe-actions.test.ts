@@ -45,9 +45,6 @@ vi.mock("@/lib/sales", () => ({
   getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
 }))
 
-vi.mock("@/lib/invoice", () => ({
-  getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
-}))
 
 import { createCheckoutSession, confirmOrder, createCODOrder, checkCartInventory } from "@/app/actions/stripe"
 import { stripe } from "@/lib/stripe"

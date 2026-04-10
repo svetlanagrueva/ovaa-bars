@@ -44,9 +44,6 @@ vi.mock("@/lib/sales", () => ({
   getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
 }))
 
-vi.mock("@/lib/invoice", () => ({
-  getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
-}))
 
 // Use dynamic imports to ensure env is set before module loads
 let createCheckoutSession: typeof import("@/app/actions/stripe").createCheckoutSession
