@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest"
 import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
 
-// Set env var in vi.hoisted so it runs before module-level evaluation
-vi.hoisted(() => {
-  process.env.NEXT_PUBLIC_ECONT_ENABLED = "true"
-})
-
 // Mock Stripe
 vi.mock("@/lib/stripe", () => ({
   stripe: {
@@ -44,9 +39,6 @@ vi.mock("@/lib/sales", () => ({
   getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
 }))
 
-vi.mock("@/lib/invoice", () => ({
-  getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
-}))
 
 // Use dynamic imports to ensure env is set before module loads
 let createCheckoutSession: typeof import("@/app/actions/stripe").createCheckoutSession

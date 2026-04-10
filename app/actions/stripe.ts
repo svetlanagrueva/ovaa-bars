@@ -71,12 +71,7 @@ interface CODOrderData {
   promoCode?: string
 }
 
-const NEXT_PUBLIC_ECONT_ENABLED = process.env.NEXT_PUBLIC_ECONT_ENABLED !== "false" // on by default
-const NEXT_PUBLIC_SPEEDY_ENABLED = process.env.NEXT_PUBLIC_SPEEDY_ENABLED !== "false" // on by default
-const VALID_DELIVERY_METHODS = [
-  ...(NEXT_PUBLIC_SPEEDY_ENABLED ? ["speedy-office", "speedy-address"] : []),
-  ...(NEXT_PUBLIC_ECONT_ENABLED ? ["econt-office", "econt-address"] : []),
-]
+const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office", "econt-address"]
 const MAX_FIELD_LENGTH = 500
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/

@@ -751,14 +751,20 @@ export async function setInvoiceNumber(orderId: string, invoiceNumber: string): 
   if (!trimmed || trimmed.length > 50) throw new Error("Невалиден номер на фактура")
 
   const supabase = await createClient()
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("orders")
     .update({ invoice_number: trimmed, invoice_date: new Date().toISOString() })
     .eq("id", orderId)
+    .is("invoice_number", null)
+    .select("id")
 
   if (error) {
     console.error("Failed to set invoice number:", error)
     throw new Error("Грешка при записване на номер на фактура")
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error("Поръчката не е намерена или вече има фактура")
   }
 
   return { success: true }
