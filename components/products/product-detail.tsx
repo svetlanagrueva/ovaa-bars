@@ -40,18 +40,18 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
   return (
     <div className="bg-background">
       {/* Breadcrumb */}
-      <div className="container mx-auto px-4 py-6">
+      <div className="mx-auto max-w-7xl px-6 py-6 lg:px-8">
         <Link
           href="/products"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-accent transition-colors"
         >
-          <ArrowRight className="h-4 w-4 rotate-180" />
+          <ArrowRight className="h-3.5 w-3.5 rotate-180" />
           Обратно към продуктите
         </Link>
       </div>
 
       {/* Product Section */}
-      <section className="container mx-auto px-4 pb-20">
+      <section className="mx-auto max-w-7xl px-6 pb-16 sm:pb-20 lg:px-8 lg:pb-24">
         <div className="grid gap-12 lg:grid-cols-2">
           {/* Product Images */}
           <div className="space-y-4">
@@ -97,7 +97,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
 
           {/* Product Info */}
           <div className="flex flex-col">
-            <h1 className="text-3xl font-light tracking-wide text-foreground lg:text-4xl">
+            <h1 className="text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
               {product.name}
             </h1>
 
@@ -190,7 +190,8 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
         <div className="mt-20 grid gap-8 md:grid-cols-2">
           <div className="bg-secondary p-8">
             <h2 className="text-lg font-medium text-foreground">Хранителна информация</h2>
-            <p className="mt-1 text-sm text-muted-foreground">На бар</p>
+            <div className="mt-2 h-px w-12 bg-accent/50" />
+            <p className="mt-3 text-sm text-muted-foreground">На бар</p>
             <div className="mt-6 space-y-4">
               <div className="flex justify-between border-b border-border pb-2">
                 <span className="text-muted-foreground">Калории</span>
@@ -221,7 +222,8 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
 
           <div className="bg-secondary p-8">
             <h2 className="text-lg font-medium text-foreground">Съставки</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Формула с чиста етикета</p>
+            <div className="mt-2 h-px w-12 bg-accent/50" />
+            <p className="mt-3 text-sm text-muted-foreground">Формула с чиста етикета</p>
             <ul className="mt-6 space-y-3">
               {product.ingredients.map((ingredient) => (
                 <li key={ingredient} className="flex items-center gap-3 text-muted-foreground">

@@ -7,14 +7,17 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <div className="bg-background py-12 sm:py-16">
-      <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Политика за поверителност</h1>
-        <p className="mt-4 text-muted-foreground">Последна актуализация: Януари 2026</p>
+    <div className="bg-background py-16 sm:py-20 lg:py-24">
+      <div className="mx-auto max-w-3xl px-6 lg:px-8">
+        <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+          Правна информация
+        </p>
+        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">Политика за поверителност</h1>
+        <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Януари 2026</p>
 
         <div className="mt-8 space-y-8 text-muted-foreground">
           <section>
-            <h2 className="text-xl font-semibold text-foreground">1. Въведение</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">1. Въведение</h2>
             <p className="mt-4">
               Egg Origin се ангажира да защитава поверителността на вашите лични данни. 
               Тази политика описва как събираме, използваме и защитаваме вашата информация 
@@ -23,7 +26,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">2. Какви данни събираме</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">2. Какви данни събираме</h2>
             <div className="mt-4 space-y-4">
               <p>При правене на поръчка събираме следните данни:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -37,7 +40,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">3. Как използваме данните</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">3. Как използваме данните</h2>
             <div className="mt-4 space-y-4">
               <p>Използваме вашите данни за:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -51,7 +54,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">4. Споделяне на данни</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">4. Споделяне на данни</h2>
             <div className="mt-4 space-y-4">
               <p>Споделяме вашите данни само с:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -68,7 +71,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">5. Сигурност на данните</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">5. Сигурност на данните</h2>
             <p className="mt-4">
               Прилагаме подходящи технически и организационни мерки за защита на вашите 
               данни от неоторизиран достъп, загуба или унищожаване. Плащанията се обработват 
@@ -77,7 +80,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">6. Вашите права</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">6. Вашите права</h2>
             <div className="mt-4 space-y-4">
               <p>Съгласно GDPR, вие имате право на:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -95,7 +98,7 @@ export default function PrivacyPage() {
           </section>
 
           <section id="cookies">
-            <h2 className="text-xl font-semibold text-foreground">7. Бисквитки и локално съхранение</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">7. Бисквитки и локално съхранение</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Нашият сайт използва бисквитки и локално съхранение (localStorage) за различни
@@ -138,7 +141,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">8. Контакт</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">8. Контакт</h2>
             <p className="mt-4">
               При въпроси относно тази политика или обработката на вашите данни:
               <br />

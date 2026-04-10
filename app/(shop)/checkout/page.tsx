@@ -268,8 +268,8 @@ export default function CheckoutPage() {
 
   if (!mounted || items.length === 0) {
     return (
-      <div className="bg-background py-12 sm:py-16">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+      <div className="bg-background py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-4xl px-6 lg:px-8">
           <div className="animate-pulse">
             <div className="h-8 w-48 rounded bg-secondary" />
             <div className="mt-8 h-96 rounded-lg bg-secondary" />
@@ -280,17 +280,17 @@ export default function CheckoutPage() {
   }
 
   return (
-    <div className="bg-background py-12 sm:py-16">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+    <div className="bg-background py-16 sm:py-20 lg:py-24">
+      <div className="mx-auto max-w-4xl px-6 lg:px-8">
         <Link
           href="/cart"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-accent"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-3.5 w-3.5" />
           Обратно към количката
         </Link>
 
-        <h1 className="mt-6 text-3xl font-bold tracking-tight text-foreground">Плащане</h1>
+        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">Плащане</h1>
 
         <form onSubmit={handleSubmit} className="mt-8">
           <div className="grid gap-8 lg:grid-cols-2">
