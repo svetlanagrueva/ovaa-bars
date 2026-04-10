@@ -2,11 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
 import { validCustomerInfo, validCartItems, singleCartItem, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
 
-// Enable Econt delivery methods for tests
-vi.hoisted(() => {
-  process.env.NEXT_PUBLIC_ECONT_ENABLED = "true"
-})
-
 // Mock Stripe
 vi.mock("@/lib/stripe", () => ({
   stripe: {

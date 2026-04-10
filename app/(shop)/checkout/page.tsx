@@ -21,9 +21,6 @@ import { DeliveryInfo } from "@/components/delivery/delivery-info"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 
-const econtEnabled = process.env.NEXT_PUBLIC_ECONT_ENABLED !== "false" // on by default
-const speedyEnabled = process.env.NEXT_PUBLIC_SPEEDY_ENABLED !== "false" // on by default
-
 interface CustomerInfo {
   firstName: string
   lastName: string
@@ -56,7 +53,7 @@ export default function CheckoutPage() {
   const [stockWarnings, setStockWarnings] = useState<Array<{ productName: string; available: number; requested: number }>>([])
 
   const [paymentMethod, setPaymentMethod] = useState("card")
-  const [deliveryMethod, setDeliveryMethod] = useState(speedyEnabled ? "speedy-office" : econtEnabled ? "econt-office" : "speedy-office")
+  const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
   const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
   const { items, getTotalPrice } = useCartStore()
@@ -356,54 +353,46 @@ export default function CheckoutPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <RadioGroup value={deliveryMethod} onValueChange={setDeliveryMethod}>
-                    {speedyEnabled && (
-                      <>
-                        <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
-                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                          <RadioGroupItem value="speedy-office" id="speedy-office" />
-                          <Label htmlFor="speedy-office" className="flex-1 cursor-pointer">
-                            <span className="font-medium">Speedy офис</span>
-                            <p className="text-sm text-muted-foreground">До най-близкия офис на Speedy</p>
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                          <RadioGroupItem value="speedy-address" id="speedy-address" />
-                          <Label htmlFor="speedy-address" className="flex-1 cursor-pointer">
-                            <span className="font-medium">Speedy до адрес</span>
-                            <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
-                          </Label>
-                        </div>
-                      </>
-                    )}
-                    {econtEnabled && (
-                      <>
-                        <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
-                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                          <RadioGroupItem value="econt-office" id="econt-office" />
-                          <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
-                            <span className="font-medium">Еконт офис</span>
-                            <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                          <RadioGroupItem value="econt-address" id="econt-address" />
-                          <Label htmlFor="econt-address" className="flex-1 cursor-pointer">
-                            <span className="font-medium">Еконт до адрес</span>
-                            <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
-                          </Label>
-                        </div>
-                      </>
-                    )}
+                    <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
+                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                      <RadioGroupItem value="speedy-office" id="speedy-office" />
+                      <Label htmlFor="speedy-office" className="flex-1 cursor-pointer">
+                        <span className="font-medium">Speedy офис</span>
+                        <p className="text-sm text-muted-foreground">До най-близкия офис на Speedy</p>
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                      <RadioGroupItem value="speedy-address" id="speedy-address" />
+                      <Label htmlFor="speedy-address" className="flex-1 cursor-pointer">
+                        <span className="font-medium">Speedy до адрес</span>
+                        <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
+                      </Label>
+                    </div>
+                    <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
+                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                      <RadioGroupItem value="econt-office" id="econt-office" />
+                      <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
+                        <span className="font-medium">Еконт офис</span>
+                        <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                      <RadioGroupItem value="econt-address" id="econt-address" />
+                      <Label htmlFor="econt-address" className="flex-1 cursor-pointer">
+                        <span className="font-medium">Еконт до адрес</span>
+                        <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
+                      </Label>
+                    </div>
                   </RadioGroup>
 
-                  {deliveryMethod === "speedy-office" && speedyEnabled && (
+                  {deliveryMethod === "speedy-office" && (
                     <SpeedyOfficePicker
                       selectedOfficeId={selectedSpeedyOffice?.id ?? null}
                       onSelect={setSelectedSpeedyOffice}
                     />
                   )}
 
-                  {deliveryMethod === "econt-office" && econtEnabled && (
+                  {deliveryMethod === "econt-office" && (
                     <EcontOfficePicker
                       selectedOfficeId={selectedEcontOffice?.id ?? null}
                       onSelect={setSelectedEcontOffice}

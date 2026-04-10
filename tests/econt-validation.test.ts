@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest"
 import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
 
-// Set env var in vi.hoisted so it runs before module-level evaluation
-vi.hoisted(() => {
-  process.env.NEXT_PUBLIC_ECONT_ENABLED = "true"
-})
-
 // Mock Stripe
 vi.mock("@/lib/stripe", () => ({
   stripe: {

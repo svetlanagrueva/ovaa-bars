@@ -15,8 +15,6 @@
 - `EMAIL_FROM` — sender address, e.g. "Egg Origin <noreply@eggorigin.com>"
 - `ADMIN_EMAIL` — admin notification email for new orders
 - `NEXT_PUBLIC_APP_URL` — defaults to http://localhost:3000
-- `NEXT_PUBLIC_SPEEDY_ENABLED` — "false" to disable Speedy delivery
-- `NEXT_PUBLIC_ECONT_ENABLED` — "false" to disable Econt delivery
 - `NEXT_PUBLIC_GA_MEASUREMENT_ID` — Google Analytics measurement ID
 - `SPEEDY_USERNAME`, `SPEEDY_PASSWORD`, `SPEEDY_API_URL` — Speedy courier API
 - `ECONT_USERNAME`, `ECONT_PASSWORD`, `ECONT_API_URL` — Econt courier API
