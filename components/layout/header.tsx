@@ -47,7 +47,7 @@ export function Header() {
             <Button
               variant="ghost"
               size="sm"
-              className="relative gap-2 bg-transparent px-4 text-[11px] uppercase tracking-[0.15em] text-muted-foreground hover:bg-muted/50 hover:text-accent"
+              className="relative gap-2 bg-transparent px-4 text-[11px] uppercase tracking-[0.15em] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
             >
               <ShoppingCart className="h-4 w-4" />
               <span className="hidden sm:inline">Количка</span>

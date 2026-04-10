@@ -177,7 +177,7 @@ export default async function HomePage() {
           </div>
 
           <div className="mt-12 grid gap-4 sm:gap-5 lg:mt-14 lg:grid-cols-3 lg:gap-6">
-            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
                 01
@@ -193,7 +193,7 @@ export default async function HomePage() {
               </p>
             </div>
 
-            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
                 02
@@ -210,7 +210,7 @@ export default async function HomePage() {
               </p>
             </div>
 
-            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
                 03

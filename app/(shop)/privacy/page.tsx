@@ -12,7 +12,7 @@ export default function PrivacyPage() {
         <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
           Правна информация
         </p>
-        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">Политика за поверителност</h1>
+        <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">Политика за поверителност</h1>
         <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Януари 2026</p>
 
         <div className="mt-8 space-y-8 text-muted-foreground">

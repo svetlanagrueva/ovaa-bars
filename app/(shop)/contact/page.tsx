@@ -41,7 +41,7 @@ export default function ContactPage() {
               </div>
               
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
                   <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
                     <Mail className="h-4 w-4 text-foreground" />
@@ -52,7 +52,7 @@ export default function ContactPage() {
                   </a>
                 </div>
 
-                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
                   <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
                     <Phone className="h-4 w-4 text-foreground" />
@@ -63,7 +63,7 @@ export default function ContactPage() {
                   </a>
                 </div>
 
-                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
                   <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
                     <MapPin className="h-4 w-4 text-foreground" />
@@ -74,7 +74,7 @@ export default function ContactPage() {
                   </p>
                 </div>
 
-                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
                   <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
                     <Clock className="h-4 w-4 text-foreground" />
@@ -87,7 +87,7 @@ export default function ContactPage() {
               </div>
 
               {/* FAQ Section */}
-              <div className="mt-8 rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md">
+              <div className="mt-8 rounded-[26px] border border-border/40 bg-card/80 p-8">
                 <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
                   Често задавани въпроси
                 </p>
@@ -120,7 +120,7 @@ export default function ContactPage() {
 
             {/* Contact Form */}
             <div>
-              <div className="rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md md:p-10">
+              <div className="rounded-[26px] border border-border/40 bg-card/80 p-8 md:p-10">
                 <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
                   Изпратете съобщение
                 </p>
