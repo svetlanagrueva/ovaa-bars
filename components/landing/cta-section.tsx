@@ -28,7 +28,7 @@ export function CtaSection() {
           </h2>
 
           <p className="mx-auto mt-8 max-w-md text-sm leading-7 opacity-70">
-            Доставка до 2 работни дни в цяла България.
+            Доставка до 3 работни дни в цяла България.
           </p>
 
           <div className="mt-8 sm:mt-10">

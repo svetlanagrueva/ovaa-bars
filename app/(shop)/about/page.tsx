@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function AboutPage() {
   return (
-    <div className="bg-background">
+    <div>
       {/* Hero Section */}
       <section className="py-16 sm:py-20 lg:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -31,19 +31,21 @@ export default function AboutPage() {
                 </span>
               </div>
               <p className="mt-8 text-sm leading-7 text-muted-foreground">
-                Egg Origin се роди от едно просто убеждение: протеиновите барове трябва да бъдат
-                функционално хранене, а не бонбони в дегизировка. Създадохме бар с чиста етикета,
-                който доставя пълноценен протеин без компромиси.
+                Egg Origin започна с едно ясно убеждение: функционалното хранене трябва да бъде чисто,
+                прецизно и създадено за динамичното ежедневие на съвременния човек. Създадохме продукт за хора,
+                които съчетават тренировки, работа и активен начин на живот с дисциплина и намерение —
+                за които представянето има значение във всеки момент от деня, не само във фитнеса.
+                Нашата мисия е проста: да предложим висококачествен протеин в изчистен формат,
+                който естествено се вписва във всяка модерна рутина.
+
               </p>
               <p className="mt-4 text-sm leading-7 text-muted-foreground">
-                Използването на яйчен протеин вместо суроватка означава по-лесно смилане,
-                без подуване и всички есенциални аминокиселини, от които тялото ви се нуждае.
-                Без млечни продукти, без добавена захар, без излишни съставки.
+                Egg Origin не е просто протеинов бар. Това е инструмент за хора, които подхождат към тренировките, работата и живота с яснота и намерение.
               </p>
             </div>
             <div className="relative aspect-[4/5] overflow-hidden rounded-[26px]">
               <Image
-                src="/images/hero-bg.jpg"
+                src="/images/egg-origin-white-hero.png"
                 alt="Egg Origin"
                 fill
                 className="object-cover"
@@ -64,13 +66,12 @@ export default function AboutPage() {
               Нашата Философия
             </p>
             <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
-              По-малко
-              <span className="block text-muted-foreground">е повече</span>
+              По-малко е повече
             </h2>
             <p className="mt-8 max-w-xl mx-auto text-sm leading-7 text-muted-foreground">
               Вярваме в прозрачността. Всяка съставка в Egg Origin има своята цел.
-              Без пълнители, без изкуствени подсладители, без сложни химикали.
-              Само чисто, функционално хранене, създадено за ежедневна употреба.
+              Без изкуствени подсладители и излишни добавки.
+              Само чисто и функционално хранене, създадено за ежедневна употреба.
             </p>
           </div>
         </div>
@@ -94,7 +95,7 @@ export default function AboutPage() {
               </h3>
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
                 Използваме яйчен протеин от най-високо качество, съчетан с
-                внимателно подбрани съставки. Всяка партида е тествана за чистота и консистентност.
+                внимателно подбрани съставки.
               </p>
             </div>
 
@@ -120,11 +121,10 @@ export default function AboutPage() {
                 <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
               </span>
               <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
-                Функция Пред Показност
+                Създаден с цел
               </h3>
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Egg Origin не се опитва да бъде бонбон. Това е функционален протеин,
-                създаден за хора, които се грижат какво влиза в тялото им.
+                Egg Origin е продукт, създаден за хора, които подхождат съзнателно към храненето си.
               </p>
             </div>
           </div>

@@ -95,14 +95,16 @@ export default function ContactPage() {
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Колко време отнема доставката?</h3>
                     <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                      Доставката със Speedy е до 2 работни дни в цяла България.
+                      Доставката е до 3 работни дни в цяла България. Поръчките направени до 14:00 ч.
+                      се изпращат в същия ден, когато това е възможно. Поръчките, направени след 14:00 ч.,
+                      се изпращат на следващия ден.
                     </p>
                   </div>
                   <div className="h-px bg-border/60" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">Мога ли да върна продукт?</h3>
+                    <h3 className="text-sm font-medium text-foreground">Мога ли да платя с карта?</h3>
                     <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                      Да, в рамките на 14 дни от получаването, при непокътната опаковка.
+                      Да, приемаме плащания с дебитна и кредитна карта.
                     </p>
                   </div>
                   <div className="h-px bg-border/60" />

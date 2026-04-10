@@ -189,8 +189,7 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Всички есенциални аминокиселини в прецизно балансирана форма — за
-                възстановяване, баланс и устойчив тонус.
+                Всички есенциални аминокиселини в прецизно балансирана формула.
               </p>
             </div>
 
@@ -206,7 +205,7 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Създаден да поддържа баланс и яснота — в синхрон с ежедневния ти
+                 Равномерна енергия през целия ден. В синхрон с ежедневния ти
                 ритъм.
               </p>
             </div>
@@ -223,8 +222,7 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Без млечни продукти, без суроватка и без излишни съставки — само
-                това, което има реална функция.
+                Функционален протеин. Без излишни съставки.
               </p>
             </div>
           </div>
