@@ -45,20 +45,6 @@ vi.mock("@/lib/sales", () => ({
   getProductsWithSales: (...args: unknown[]) => mockGetProductsWithSales(...args),
 }))
 
-// Mock invoice modules
-vi.mock("@/lib/invoice-pdf", () => ({
-  generateInvoicePDF: vi.fn(() => Promise.resolve(Buffer.from("fake-pdf"))),
-}))
-vi.mock("@/lib/invoice-email", () => ({
-  sendInvoiceEmail: vi.fn(),
-}))
-vi.mock("@/lib/seller", () => ({
-  getSellerConfig: vi.fn(() => ({
-    companyName: "Test Co", eik: "123456789", vatNumber: "", mol: "Test",
-    address: "Test St", city: "Sofia", postalCode: "1000", phone: "",
-    email: "", iban: "", bank: "",
-  })),
-}))
 vi.mock("@/lib/invoice", () => ({
   getNextInvoiceNumber: vi.fn(() => Promise.resolve("0000000001")),
 }))

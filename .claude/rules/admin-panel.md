@@ -38,12 +38,12 @@
 - Admin notes: editable text field, saved to `admin_notes` column
 - Actions: status transitions with validation, cancellation requires reason field
 
-## Invoice Issuing
-- Atomic via Postgres function `issue_invoice_number` (single transaction: allocate number + assign to order)
-- Confirmation dialog before issuing (irreversible)
-- Race condition protected: `.is("invoice_number", null)` guard
-- PDF generated after number is secured
-- Customer emailed automatically
+## Invoice Management
+- Invoices are generated externally via Microinvest Invoice Pro
+- Admin enters invoice number manually in order detail page (text input + save button)
+- Server action `setInvoiceNumber(orderId, invoiceNumber)` saves the number and sets `invoice_date`
+- Admin invoices page shows list of orders with invoice numbers (search, filter, CSV export)
+- No PDF generation or invoice emailing in the codebase
 
 ## Inventory Panel (`/admin/inventory`)
 - Stock cards per SKU: red badge = 0, amber ≤ 20, green > 20

@@ -15,8 +15,14 @@
 ## Invoice Data Storage
 - `needs_invoice` boolean on order
 - `invoice_company_name`, `invoice_eik`, `invoice_vat_number`, `invoice_mol`, `invoice_address`, `invoice_egn` columns
-- `invoice_number` (sequential, gap-free via `issue_invoice_number` Postgres function)
-- `invoice_date` (set atomically with number)
+- `invoice_number` — manually entered by admin (generated externally via Microinvest Invoice Pro)
+- `invoice_date` — set when admin saves the invoice number
+
+## Invoice Generation
+- Invoices are generated externally using **Microinvest Invoice Pro** (not in-app)
+- Admin enters the invoice number manually in the order detail page
+- No PDF generation or invoice emailing in the codebase
+- Server action: `setInvoiceNumber(orderId, invoiceNumber)` saves the number
 
 ## COD Order Flow
 - Created as `confirmed` immediately (no pending step)

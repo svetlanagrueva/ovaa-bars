@@ -83,50 +83,9 @@ create policy "Deny public deletes" on orders
 -- IMPORTANT: Server actions use the SUPABASE_SERVICE_ROLE_KEY to bypass RLS.
 -- See .env.local and lib/supabase/server.ts.
 
--- Invoice numbering (sequential, gap-free — required by Bulgarian law)
-create table if not exists invoice_counter (
-  id integer primary key default 1 check (id = 1),
-  current_number bigint not null default 0
-);
-
-insert into invoice_counter (id, current_number)
-values (1, 0)
-on conflict (id) do nothing;
-
+-- Invoice number index (invoice numbers are now entered manually via external software)
 create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
-
--- Atomically allocate invoice number and assign to order (no gaps possible)
-create or replace function issue_invoice_number(p_order_id uuid)
-returns text
-language plpgsql
-as $$
-declare
-  next_num bigint;
-  inv_number text;
-begin
-  -- Check order exists and has no invoice yet
-  if not exists (select 1 from orders where id = p_order_id and invoice_number is null) then
-    raise exception 'Order not found or invoice already issued';
-  end if;
-
-  -- Allocate next number
-  update invoice_counter
-  set current_number = current_number + 1
-  where id = 1
-  returning current_number into next_num;
-
-  inv_number := lpad(next_num::text, 10, '0');
-
-  -- Assign to order atomically
-  update orders
-  set invoice_number = inv_number,
-      invoice_date = now()
-  where id = p_order_id and invoice_number is null;
-
-  return inv_number;
-end;
-$$;
 
 create index if not exists idx_orders_status on orders (status);
 create index if not exists idx_orders_created_at on orders (created_at desc);

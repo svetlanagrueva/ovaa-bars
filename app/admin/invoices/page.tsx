@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
 import { Search, Download } from "lucide-react"
-import { getInvoices, getAllInvoices, downloadInvoicePDF, type InvoiceSummary } from "@/app/actions/admin"
+import { getInvoices, getAllInvoices, type InvoiceSummary } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -25,7 +25,6 @@ export default function AdminInvoicesPage() {
   const [search, setSearch] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [csvLoading, setCsvLoading] = useState(false)
   const [error, setError] = useState("")
 
@@ -92,27 +91,6 @@ export default function AdminInvoicesPage() {
       setError("Грешка при експорт на CSV")
     } finally {
       setCsvLoading(false)
-    }
-  }
-
-  async function handleDownload(orderId: string) {
-    setDownloadingId(orderId)
-    try {
-      const { pdfBase64, filename } = await downloadInvoicePDF(orderId)
-      const blob = new Blob(
-        [Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0))],
-        { type: "application/pdf" }
-      )
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      setError("Грешка при изтегляне на PDF")
-    } finally {
-      setDownloadingId(null)
     }
   }
 
@@ -189,7 +167,6 @@ export default function AdminInvoicesPage() {
                 <TableHead>Фирма</TableHead>
                 <TableHead>Сума</TableHead>
                 <TableHead>Поръчка</TableHead>
-                <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -221,16 +198,6 @@ export default function AdminInvoicesPage() {
                     >
                       #{inv.id.slice(0, 8)}
                     </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={downloadingId === inv.id}
-                      onClick={() => handleDownload(inv.id)}
-                    >
-                      {downloadingId === inv.id ? "..." : "PDF"}
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
