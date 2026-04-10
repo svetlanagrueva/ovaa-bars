@@ -79,7 +79,7 @@ export default function CartPage() {
             <Button
               asChild
               size="lg"
-              className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+              className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
             >
               <Link href="/products">
                 Разгледай продуктите
@@ -225,7 +225,7 @@ export default function CartPage() {
               <Button
                 asChild
                 size="lg"
-                className="h-11 w-full gap-2 rounded-full bg-foreground text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                className="h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
               >
                 <Link href="/checkout">
                   Към плащане

@@ -71,7 +71,7 @@ export function ProductCard({ product, soldOut = false }: ProductCardProps) {
             }}
             size="sm"
             disabled={soldOut}
-            className="h-9 rounded-full bg-foreground px-3 text-[10px] uppercase tracking-[0.16em] text-background transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
+            className="h-9 rounded-full bg-primary px-3 text-[10px] uppercase tracking-[0.16em] text-primary-foreground transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
           >
             {soldOut ? (
               "Изчерпан"

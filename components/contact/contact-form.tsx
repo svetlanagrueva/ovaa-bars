@@ -102,7 +102,7 @@ export function ContactForm() {
       <Button
         type="submit"
         disabled={isLoading}
-        className="h-11 w-full gap-2 rounded-full bg-foreground text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+        className="h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
       >
         {isLoading ? (
           <>
