@@ -61,7 +61,7 @@ export default function CheckoutSuccessPage() {
           <p className="mt-4 text-muted-foreground">
             Не успяхме да потвърдим поръчката. Моля, свържете се с нас.
           </p>
-          <Button asChild className="mt-8 rounded-full" size="lg">
+          <Button asChild className="mt-8 h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg">
             <Link href="/contact">Свържете се с нас</Link>
           </Button>
         </div>
@@ -103,10 +103,10 @@ export default function CheckoutSuccessPage() {
           <p className="text-sm text-muted-foreground">
             Очаквайте доставка в рамките на 2 работни дни.
           </p>
-          <Button asChild size="lg" className="w-full rounded-full sm:w-auto">
+          <Button asChild size="lg" className="h-11 w-full gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:w-auto">
             <Link href="/products">
               Продължи пазаруването
-              <ArrowRight className="ml-2 h-4 w-4" />
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
         </div>

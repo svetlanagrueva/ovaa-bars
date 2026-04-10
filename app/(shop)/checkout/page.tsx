@@ -284,7 +284,7 @@ export default function CheckoutPage() {
       <div className="mx-auto max-w-4xl px-6 lg:px-8">
         <Link
           href="/cart"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-accent"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Обратно към количката
@@ -298,7 +298,7 @@ export default function CheckoutPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       1
                     </span>
@@ -360,7 +360,7 @@ export default function CheckoutPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       2
                     </span>
@@ -470,7 +470,7 @@ export default function CheckoutPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       3
                     </span>
@@ -480,7 +480,7 @@ export default function CheckoutPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod}>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                    <div className="flex items-center space-x-3 rounded-[26px] border border-border/40 p-4 transition-all duration-500">
                       <RadioGroupItem value="card" id="card" />
                       <Label htmlFor="card" className="flex-1 cursor-pointer">
                         <span className="flex items-center gap-2 font-medium">
@@ -490,7 +490,7 @@ export default function CheckoutPage() {
                         <p className="text-sm text-muted-foreground">Сигурно плащане с дебитна/кредитна карта</p>
                       </Label>
                     </div>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                    <div className="flex items-center space-x-3 rounded-[26px] border border-border/40 p-4 transition-all duration-500">
                       <RadioGroupItem value="cod" id="cod" />
                       <Label htmlFor="cod" className="flex-1 cursor-pointer">
                         <span className="flex items-center gap-2 font-medium">
@@ -506,7 +506,7 @@ export default function CheckoutPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       4
                     </span>
@@ -528,13 +528,13 @@ export default function CheckoutPage() {
 
                   {wantsInvoice && (
                     <div className="space-y-4 pt-4 border-t border-border">
-                      <div className="grid grid-cols-2 rounded-lg border border-border overflow-hidden">
+                      <div className="grid grid-cols-2 rounded-full border border-border/40 overflow-hidden">
                         <button
                           type="button"
-                          className={`px-4 py-2.5 text-sm font-medium transition-colors ${
+                          className={`px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.16em] transition-colors ${
                             billingType === "individual"
                               ? "bg-primary text-primary-foreground"
-                              : "bg-background text-muted-foreground hover:bg-secondary"
+                              : "bg-background text-muted-foreground hover:text-foreground"
                           }`}
                           onClick={() => setBillingType("individual")}
                         >
@@ -542,10 +542,10 @@ export default function CheckoutPage() {
                         </button>
                         <button
                           type="button"
-                          className={`px-4 py-2.5 text-sm font-medium transition-colors border-l border-border ${
+                          className={`px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.16em] transition-colors border-l border-border/40 ${
                             billingType === "company"
                               ? "bg-primary text-primary-foreground"
-                              : "bg-background text-muted-foreground hover:bg-secondary"
+                              : "bg-background text-muted-foreground hover:text-foreground"
                           }`}
                           onClick={() => setBillingType("company")}
                         >
@@ -706,7 +706,7 @@ export default function CheckoutPage() {
             <div>
               <Card className="sticky top-24">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <CreditCard className="h-4 w-4" />
                     Вашата поръчка
                   </CardTitle>
@@ -844,10 +844,10 @@ export default function CheckoutPage() {
                     <p className="text-sm text-destructive">{error}</p>
                   )}
 
-                  <Button type="submit" className="mt-6 w-full" size="lg" disabled={isLoading || stockWarnings.length > 0}>
+                  <Button type="submit" className="mt-6 h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg" disabled={isLoading || stockWarnings.length > 0}>
                     {isLoading ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                         Обработка...
                       </>
                     ) : paymentMethod === "card" ? (
