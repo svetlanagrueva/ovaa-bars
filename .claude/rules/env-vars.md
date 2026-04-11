@@ -19,5 +19,3 @@
 - `SPEEDY_USERNAME`, `SPEEDY_PASSWORD`, `SPEEDY_API_URL` — Speedy courier API
 - `ECONT_USERNAME`, `ECONT_PASSWORD`, `ECONT_API_URL` — Econt courier API
 
-## Note
-- `.env.local` still has `EMAIL_FROM` with old brand name "Ovva Sculpt" — should be updated to "Egg Origin"

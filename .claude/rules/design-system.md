@@ -38,23 +38,31 @@ Uniform weight throughout — `font-medium tracking-[0.35em] uppercase`. Do not 
 ```
 
 ### Eyebrow / label text
-- Size: `text-[10px]` or `text-[9px]`
+- Size: `text-[11px]` or `text-[10px]`
 - Always `uppercase tracking-[0.3em]` to `tracking-[0.4em]`
 - Color: `text-muted-foreground`
 - These mirror the label typography on the packaging ("20G PROTEIN · LOW SUGAR")
 
 ### Headings
-- `font-light tracking-wide` — never bold headings
-- Italic spans (`<span className="italic">`) for emphasis within headings
+- H1: `text-4xl font-light leading-[1.05] tracking-[-0.04em] sm:text-5xl` — never bold headings
+- Two-tone split pattern: primary line in `text-foreground`, secondary in `<span className="block text-muted-foreground">`
+- Legal pages (terms, privacy) use smaller scale: `text-3xl sm:text-4xl`
+- H2 section headings: `text-lg font-medium tracking-wide`
 - No serif fonts — the packaging uses geometric sans-serif; Geist is correct
 
 ### Body
-- `text-sm leading-loose tracking-wide` — generous line height, slight tracking
+- `text-sm leading-7 text-muted-foreground` — generous line height
+- Constrain width with `max-w-xl` or `max-w-md` for readability
 - Never `text-base` with tight leading — reads as supplement copy
 
 ### Buttons
-- `text-xs uppercase tracking-widest` — understated, not loud
-- Sharp edges: `--radius: 0rem` — never rounded buttons
+**Primary CTA:** `h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90` — pill-shaped, understated
+**Secondary link buttons:** `inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground hover:bg-muted/30 hover:text-accent` — used for "Виж всички", "Виж продуктите", Instagram, Trustpilot-style links
+
+### Button variants (components/ui/button.tsx)
+- `outline`: `hover:bg-secondary hover:text-foreground` (not accent)
+- `ghost`: `hover:bg-secondary hover:text-foreground` (not accent)
+- The accent color is used for hover on text links, not on button backgrounds
 
 ## Key UI Patterns
 
@@ -63,6 +71,12 @@ Hairline dividers (`divide-x divide-border`) between stats, `font-extralight` fo
 
 ### Section structure
 Numbered pillar blocks (01 / 02 / 03) with `border-l` column separators on desktop. Left-aligned headings. Editorial, not centred brochure.
+
+### Cards
+Custom card pattern (used on cart items, contact info, about values, homepage pillars):
+`rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]`
+- Hover gradient top line: `absolute h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 group-hover:opacity-100`
+- No `backdrop-blur-md` on solid backgrounds (dead CSS)
 
 ### Product cards
 - Aspect ratio: `aspect-[3/4]` — portrait, matches box shot proportions
@@ -94,10 +108,21 @@ Do not use `a-very-good-dark-chocolate-alternative.png` (cream-wrapped dark choc
 - CTA buttons: "Поръчай" not "Купи сега" — slightly more understated
 - Hero copy formula: short declarative + italic qualifier ("Чиста храна за *хора с цели*")
 
+### Accent color usage
+- Decorative lines: `h-px bg-accent/50` (section dividers, under headings)
+- Hover on text links: `hover:text-accent`
+- Product detail: check marks (`text-accent`), ingredient bullets (`bg-accent`), nutrition badges (`text-accent`)
+- Never use accent as a button background on the shop side
+
+### Spacing
+- Section padding: `py-16 sm:py-20 lg:py-24` (consistent across all pages)
+- Container: `mx-auto max-w-7xl px-6 lg:px-8`
+
 ## What NOT to Do
 - No pink/rose anywhere — even subtle hue 350 tints were removed
 - No `hover:shadow-lg` — shadows read as generic e-commerce
 - No centred hero text — left-aligned is more editorial
 - No explicit gender references in copy or UI
-- No rounded corners (`--radius: 0rem`) — sharp edges match the packaging's precise lines
+- No `hover:bg-accent` on buttons — use `hover:bg-secondary` or `hover:opacity-90`
 - Do not change card aspect ratio back to `aspect-square` — portrait is correct for these box shots
+- No `backdrop-blur-md` on cards with solid backgrounds
