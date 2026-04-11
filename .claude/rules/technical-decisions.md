@@ -31,3 +31,18 @@
 - Invoice billing data validated server-side (EIK format, required fields, lengths)
 - `trackingNumber` max 200 chars, `cancellationReason` max 1000 chars
 - CSV export batches through all results (prevents Supabase row limit truncation)
+- Email templates: all user data HTML-escaped via `escapeHtml()` in `lib/email-template.ts`
+
+## Contact Form
+- Fields: Име (name), Фамилия (lastName), Имейл (email), Съобщение (message) — no subject field
+- Email subject auto-generated as `${name} ${lastName} - запитване`
+- Server action: `sendContactMessage()` in `app/actions/contact.ts`
+
+## Checkout — City Field
+- City field is only shown for address delivery or when office picker fails to load
+- Server-side validation: city is only required for address deliveries (`speedy-address` / `econt-address`)
+- Office pickers expose `onError` callback to parent; checkout tracks `officePickerError` state
+
+## Checkout — Phone Validation
+- Phone input has HTML5 `pattern` attribute matching server-side `PHONE_REGEX`
+- Server validation errors mapped to Bulgarian user-friendly messages in the catch block

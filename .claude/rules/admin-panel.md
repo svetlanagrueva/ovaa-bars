@@ -55,3 +55,23 @@
 ## Email Notifications
 - Admin gets email on new orders (card and COD) if `ADMIN_EMAIL` env var is set
 - All email failures logged with order ID to Vercel function logs
+
+## Customer Email Templates (`lib/email-template.ts`)
+All templates share a common HTML shell with EGG ORIGIN header, seller address footer, and plain-text fallback.
+
+| Template | Function | Type | When |
+|---|---|---|---|
+| Order Confirmation | `buildOrderConfirmationEmail()` | Transactional | On order submit — **wired up** |
+| Shipping Notification | `buildShippingEmail()` | Transactional | When admin marks shipped — template ready, not wired |
+| Delivery Confirmation | `buildDeliveryEmail()` | Transactional | When admin marks delivered — template ready, not wired |
+| Review Request | `buildReviewRequestEmail()` | Marketing | 2-5 days after delivery — template ready, not wired |
+| Cross-sell | `buildCrossSellEmail()` | Marketing | 10 days after delivery — template ready, not wired |
+| Abandoned Cart | `buildAbandonedCartEmail()` | Marketing | 1 day after abandonment — template ready, not wired |
+
+### Security & Compliance
+- All user data HTML-escaped via `escapeHtml()` before interpolation (prevents XSS/injection)
+- Marketing emails include unsubscribe link in footer + plain text (`isMarketing` flag)
+- Seller physical address in all email footers (CAN-SPAM / GDPR)
+- Hidden preheader text for inbox preview on all templates
+- UTM parameters on all clickable links (`utm_source=email&utm_campaign=<name>&utm_content=<label>`)
+- `sendOrderConfirmationEmail()` in stripe.ts is the single unified sender for both card and COD orders

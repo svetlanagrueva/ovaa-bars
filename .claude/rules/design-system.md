@@ -22,7 +22,10 @@ All tokens live in `app/globals.css`. Current palette:
 | `--card` | `oklch(0.99 0.005 75)` | Slightly lighter warm white |
 | `--secondary` | `oklch(0.93 0.014 75)` | Warm linen — alternate section bg |
 | `--muted-foreground` | `oklch(0.50 0.02 100)` | Warm mid-olive grey |
-| `--accent` | `oklch(0.62 0.04 65)` | Warm sand/stone |
+| `--accent` | `oklch(0.68 0.10 25)` | Warm sand/stone |
+| `--accent-price` | `oklch(0.55 0.15 25)` | Denser accent for sale prices only |
+| `--stripe-brand` | `oklch(0.51 0.24 285)` | Stripe purple — footer badge |
+| `--trustpilot-green` | `oklch(0.65 0.17 160)` | Trustpilot stars |
 | `--border` | `oklch(0.87 0.012 95)` | Warm cream-olive border |
 
 **Do not** reintroduce pink/rose (hue 350). That palette was removed intentionally — it read as generic supplement-brand, not premium wellness.
@@ -112,7 +115,11 @@ Do not use `a-very-good-dark-chocolate-alternative.png` (cream-wrapped dark choc
 - Decorative lines: `h-px bg-accent/50` (section dividers, under headings)
 - Hover on text links: `hover:text-accent`
 - Product detail: check marks (`text-accent`), ingredient bullets (`bg-accent`), nutrition badges (`text-accent`)
+- **Sale prices**: `text-accent-price` (denser variant) — used in `PriceDisplay` component only
+- Original price shown inline in brackets with strikethrough: `19,90 € (<s>25,50 €</s>)`
+- Third-party brand colors: `text-stripe-brand` (footer), `text-trustpilot-green` (social proof)
 - Never use accent as a button background on the shop side
+- No hardcoded hex colors in components — all colors go through `globals.css` + `@theme` mapping
 
 ### Spacing
 - Section padding: `py-16 sm:py-20 lg:py-24` (consistent across all pages)
