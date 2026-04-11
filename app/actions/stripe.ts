@@ -59,6 +59,7 @@ interface CheckoutData {
   econtOffice?: EcontOfficeData
   speedyOffice?: SpeedyOfficeData
   promoCode?: string
+  marketingConsent?: boolean
 }
 
 interface CODOrderData {
@@ -70,6 +71,7 @@ interface CODOrderData {
   econtOffice?: EcontOfficeData
   speedyOffice?: SpeedyOfficeData
   promoCode?: string
+  marketingConsent?: boolean
 }
 
 const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office", "econt-address"]
@@ -553,6 +555,7 @@ export async function createCheckoutSession(data: CheckoutData) {
       speedy_office_address: speedyOffice?.fullAddress ?? null,
       promo_code: promo?.code ?? null,
       discount_amount: discountAmount,
+      marketing_consent: data.marketingConsent || false,
     })
     .select()
     .single()
@@ -775,6 +778,7 @@ export async function createCODOrder(data: CODOrderData) {
       speedy_office_address: speedyOffice?.fullAddress ?? null,
       promo_code: promo?.code ?? null,
       discount_amount: discountAmount,
+      marketing_consent: data.marketingConsent || false,
     })
     .select()
     .single()
@@ -844,40 +848,44 @@ ${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${ord
 function sendOrderConfirmationEmail(order: Record<string, unknown>) {
   if (!process.env.RESEND_API_KEY) return
 
-  const resend = new Resend(process.env.RESEND_API_KEY)
-  const orderItems = order.items as Array<{
-    productId: string
-    productName: string
-    quantity: number
-    priceInCents: number
-  }>
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const orderItems = order.items as Array<{
+      productId: string
+      productName: string
+      quantity: number
+      priceInCents: number
+    }>
 
-  const subtotal = orderItems.reduce(
-    (sum, item) => sum + item.priceInCents * item.quantity,
-    0
-  )
+    const subtotal = orderItems.reduce(
+      (sum, item) => sum + item.priceInCents * item.quantity,
+      0
+    )
 
-  const { html, text } = buildOrderConfirmationEmail({
-    orderId: order.id as string,
-    firstName: order.first_name as string,
-    items: orderItems,
-    subtotal,
-    shippingFee: (order.shipping_fee as number) || 0,
-    codFee: (order.cod_fee as number) || 0,
-    discountAmount: (order.discount_amount as number) || 0,
-    promoCode: (order.promo_code as string) || null,
-    totalAmount: order.total_amount as number,
-    paymentMethod: order.payment_method as "card" | "cod",
-    date: (order.created_at as string) || new Date().toISOString(),
-  })
+    const { html, text } = buildOrderConfirmationEmail({
+      orderId: order.id as string,
+      firstName: order.first_name as string,
+      items: orderItems,
+      subtotal,
+      shippingFee: (order.shipping_fee as number) || 0,
+      codFee: (order.cod_fee as number) || 0,
+      discountAmount: (order.discount_amount as number) || 0,
+      promoCode: (order.promo_code as string) || null,
+      totalAmount: order.total_amount as number,
+      paymentMethod: order.payment_method as "card" | "cod",
+      date: (order.created_at as string) || new Date().toISOString(),
+    })
 
-  resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
-    to: order.email as string,
-    subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
-    html,
-    text,
-  }).catch((err) => {
-    console.error(`Failed to send confirmation email for order ${order.id}:`, err)
-  })
+    resend.emails.send({
+      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+      to: order.email as string,
+      subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
+      html,
+      text,
+    }).catch((err) => {
+      console.error(`Failed to send confirmation email for order ${order.id}:`, err)
+    })
+  } catch (err) {
+    console.error(`Failed to build confirmation email for order ${order.id}:`, err)
+  }
 }

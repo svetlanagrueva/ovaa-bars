@@ -9,9 +9,13 @@
 ## Required for Shipping (Speedy/Econt)
 - `SELLER_COMPANY_NAME`, `SELLER_MOL`, `SELLER_ADDRESS`, `SELLER_CITY`, `SELLER_POSTAL_CODE`, `SELLER_PHONE`, `SELLER_EMAIL`
 
+## Required for Marketing Email Cron
+- `UNSUBSCRIBE_SECRET` — HMAC key for signed unsubscribe tokens. **Required**, fails fast on first use if missing
+- `CRON_SECRET` — Vercel Cron auth. Set in Vercel dashboard, auto-sent as `Authorization: Bearer` header
+
 ## Optional
 - `STRIPE_WEBHOOK_SECRET` — for local dev: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
-- `RESEND_API_KEY` — for sending emails (confirmation, shipping)
+- `RESEND_API_KEY` — for sending emails (confirmation, shipping, marketing cron)
 - `EMAIL_FROM` — sender address, e.g. "Egg Origin <noreply@eggorigin.com>"
 - `ADMIN_EMAIL` — admin notification email for new orders
 - `NEXT_PUBLIC_APP_URL` — defaults to http://localhost:3000

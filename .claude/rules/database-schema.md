@@ -19,12 +19,21 @@
 - `dashboard_stats(p_today_start, p_week_start, p_month_start)` — returns JSON with aggregated stats (SQL-level, not in-memory)
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements stock; raises exception if insufficient
 - `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session)
+- `claim_marketing_emails(p_now, p_limit)` — find candidates + insert pending + reclaim stale + claim work, all in one call. Uses `FOR UPDATE SKIP LOCKED` for concurrency. Filters unsubscribes via `NOT EXISTS` with `lower()`.
+
+## Marketing Email Tables
+- `email_unsubscribes` — `email text PRIMARY KEY`, RLS deny-all. Keyed by lowercase email.
+- `marketing_email_log` — `UNIQUE(order_id, email_type)`, status: `pending/sending/sent/failed/skipped`
+  - `claimed_at` for stale detection (not `created_at`), `last_attempt_at`, `provider_message_id`, `attempt_count`
+  - Partial index on `status IN ('pending', 'failed')`
 
 ## Indexes
 - `idx_orders_invoice_number` — partial index on invoice_number WHERE NOT NULL
 - `idx_orders_status` — on status column
 - `idx_orders_created_at` — on created_at DESC
 - `idx_orders_needs_invoice` — partial index WHERE needs_invoice = true AND invoice_number IS NULL
+- `idx_orders_delivered_at` — partial index on delivered_at WHERE NOT NULL (marketing cron)
+- `idx_marketing_email_log_claimable` — partial index on status WHERE IN ('pending', 'failed')
 
 ## ALTER TABLE statements for existing databases
 When updating an existing database, run these in Supabase SQL Editor:
@@ -38,8 +47,9 @@ ALTER TABLE orders ADD COLUMN cancelled_at timestamptz;
 ALTER TABLE orders ADD COLUMN cancellation_reason text;
 ALTER TABLE orders ADD COLUMN admin_notes text;
 ALTER TABLE orders ADD COLUMN invoice_egn text;
+ALTER TABLE orders ADD COLUMN marketing_consent boolean NOT NULL DEFAULT false;
 ```
-Plus the `issue_invoice_number` and `dashboard_stats` functions, and the indexes.
+Plus the `issue_invoice_number`, `dashboard_stats`, and `claim_marketing_emails` functions, and the indexes.
 
 ## Status constraint — includes `expired` for abandoned checkout sessions
 Valid values: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`

@@ -32,6 +32,12 @@
 - `trackingNumber` max 200 chars, `cancellationReason` max 1000 chars
 - CSV export batches through all results (prevents Supabase row limit truncation)
 - Email templates: all user data HTML-escaped via `escapeHtml()` in `lib/email-template.ts`
+- Unsubscribe tokens: HMAC-SHA256 signed payloads (`email|timestamp`), verified with `timingSafeEqual`, 90-day expiry
+- Cron auth: `CRON_SECRET` verified with `timingSafeEqual` (constant-time), not string `===`
+- Unsubscribe API: rate-limited (10 req/15min per IP), token length capped at 500
+- Email case sensitivity: all unsubscribe checks use `lower()` in SQL, API stores lowercase
+- Marketing email concurrency: `FOR UPDATE SKIP LOCKED` in Postgres, `claimed_at` for stale detection (not `created_at`)
+- `getBaseUrl()` shared via `lib/constants.ts` — single source of truth for absolute URLs
 
 ## Contact Form
 - Fields: Име (name), Фамилия (lastName), Имейл (email), Съобщение (message) — no subject field

@@ -79,6 +79,7 @@ export default function CheckoutPage() {
   })
 
   const [wantsInvoice, setWantsInvoice] = useState(false)
+  const [marketingConsent, setMarketingConsent] = useState(false)
   const [billingType, setBillingType] = useState<"individual" | "company">("individual")
 
   const [billingInfo, setBillingInfo] = useState<BillingInfo>({
@@ -222,6 +223,7 @@ export default function CheckoutPage() {
           econtOffice,
           speedyOffice,
           promoCode: appliedPromo?.code,
+          marketingConsent,
         })
 
         if (result.success) {
@@ -239,6 +241,7 @@ export default function CheckoutPage() {
           econtOffice,
           speedyOffice,
           promoCode: appliedPromo?.code,
+          marketingConsent,
         })
 
         if (result.url) {
@@ -252,6 +255,10 @@ export default function CheckoutPage() {
       const friendlyMessages: Record<string, string> = {
         "Invalid phone format": "Моля, въведете валиден телефонен номер.",
         "Invalid email format": "Моля, въведете валиден имейл адрес.",
+        "First name is required": "Моля, въведете име.",
+        "Last name is required": "Моля, въведете фамилия.",
+        "City is required": "Моля, въведете град.",
+        "Address is required for address delivery": "Моля, въведете адрес за доставка.",
       }
       setError(friendlyMessages[message] || "Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
@@ -338,7 +345,9 @@ export default function CheckoutPage() {
                       id="phone"
                       name="phone"
                       type="tel"
-                      pattern="\+?[0-9\s\-()]{6,20}"
+                      pattern="\+?[0-9\s\-()]*[0-9][0-9\s\-()]*"
+                      minLength={6}
+                      maxLength={20}
                       title="Въведете валиден телефонен номер (напр. +359888123456)"
                       placeholder="+359"
                       value={customerInfo.phone}
@@ -679,6 +688,18 @@ export default function CheckoutPage() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* Marketing consent — unchecked by default (ЗЕС чл. 261 soft opt-in) */}
+              <div className="flex items-start space-x-3 rounded-lg border border-border p-4">
+                <Checkbox
+                  id="marketingConsent"
+                  checked={marketingConsent}
+                  onCheckedChange={(checked) => setMarketingConsent(checked === true)}
+                />
+                <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
+                  Искам да получавам имейли с промоции и новини от Egg Origin
+                </Label>
+              </div>
             </div>
 
             {/* Order Summary */}

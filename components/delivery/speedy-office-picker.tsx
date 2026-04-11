@@ -57,6 +57,7 @@ export function SpeedyOfficePicker({ selectedOfficeId, onSelect, onError }: Spee
       })
       .then((data) => {
         setOffices(data.offices || [])
+        onError?.(false)
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return

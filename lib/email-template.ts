@@ -1,4 +1,5 @@
 import { PRODUCTS, formatPrice } from "@/lib/products"
+import { getBaseUrl } from "@/lib/constants"
 
 // ── Shared types ──
 
@@ -41,17 +42,20 @@ interface ReviewEmailData {
   orderId: string
   firstName: string
   items: OrderItem[]
+  unsubscribeUrl?: string
 }
 
 interface CrossSellEmailData {
   firstName: string
   purchasedProductIds: string[]
+  unsubscribeUrl?: string
 }
 
 interface AbandonedCartEmailData {
   firstName?: string
   items: OrderItem[]
   totalAmount: number
+  unsubscribeUrl?: string
 }
 
 // ── Security: HTML escaping ──
@@ -74,13 +78,6 @@ const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif"
 
 const BRAND_COLOR = "#3a3a2a"
-
-function getBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
-  )
-}
 
 function getProductImageUrl(productId: string, baseUrl: string): string {
   const product = PRODUCTS.find((p) => p.id === productId)
@@ -131,7 +128,7 @@ interface EmailShellOptions {
 function emailShell(opts: EmailShellOptions): string {
   const unsubscribeHtml = opts.isMarketing
     ? `<p style="color: #bbb; font-size: 12px; margin: 12px 0 0;">
-        <a href="${opts.unsubscribeUrl || `${getBaseUrl()}/unsubscribe`}" style="color: #999; text-decoration: underline;">Отписване от имейли</a>
+        <a href="${escapeHtml(opts.unsubscribeUrl || `${getBaseUrl()}/unsubscribe`)}" style="color: #999; text-decoration: underline;">Отписване от имейли</a>
       </p>`
     : ""
 
@@ -273,7 +270,6 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
   const baseUrl = getBaseUrl()
   const paidToday = data.paymentMethod === "card" ? data.totalAmount : 0
   const toBePaid = data.paymentMethod === "cod" ? data.totalAmount : 0
-  const safeFirstName = escapeHtml(data.firstName)
   const shortId = escapeHtml(data.orderId.slice(0, 8))
 
   const discountRowHtml =
@@ -499,6 +495,7 @@ export function buildReviewRequestEmail(data: ReviewEmailData): { html: string; 
     orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
     preheaderText: `Как Ви се стори поръчката от Egg Origin?`,
     isMarketing: true,
+    unsubscribeUrl: data.unsubscribeUrl,
   })
 
   const rawProductNames = data.items.map((i) => i.productName).join(", ")
@@ -511,7 +508,7 @@ export function buildReviewRequestEmail(data: ReviewEmailData): { html: string; 
 
 Оставете отзив: ${utmUrl(`${baseUrl}/contact`, "review_request", "cta")}
 
-Отписване: ${baseUrl}/unsubscribe
+Отписване: ${data.unsubscribeUrl || `${baseUrl}/unsubscribe`}
 
 Поздрави,
 Екипът на Egg Origin
@@ -582,6 +579,7 @@ export function buildCrossSellEmail(data: CrossSellEmailData): { html: string; t
     content,
     preheaderText: "Време е за презареждане! Вижте нови продукти от Egg Origin.",
     isMarketing: true,
+    unsubscribeUrl: data.unsubscribeUrl,
   })
 
   const productListText = productsToShow
@@ -599,7 +597,7 @@ ${productListText}
 
 Разгледайте продуктите: ${utmUrl(`${baseUrl}/products`, "cross_sell", "cta")}
 
-Отписване: ${baseUrl}/unsubscribe
+Отписване: ${data.unsubscribeUrl || `${baseUrl}/unsubscribe`}
 
 Поздрави,
 Екипът на Egg Origin
@@ -646,6 +644,7 @@ export function buildAbandonedCartEmail(data: AbandonedCartEmailData): { html: s
     content,
     preheaderText: "Артикулите Ви все още Ви чакат в количката!",
     isMarketing: true,
+    unsubscribeUrl: data.unsubscribeUrl,
   })
 
   const plainGreeting = data.firstName
@@ -664,7 +663,7 @@ ${itemsPlainText(data.items)}
 
 Завършете поръчката: ${utmUrl(`${baseUrl}/cart`, "abandoned_cart", "cta")}
 
-Отписване: ${baseUrl}/unsubscribe
+Отписване: ${data.unsubscribeUrl || `${baseUrl}/unsubscribe`}
 
 Поздрави,
 Екипът на Egg Origin

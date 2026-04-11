@@ -64,14 +64,46 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 | Order Confirmation | `buildOrderConfirmationEmail()` | Transactional | On order submit — **wired up** |
 | Shipping Notification | `buildShippingEmail()` | Transactional | When admin marks shipped — template ready, not wired |
 | Delivery Confirmation | `buildDeliveryEmail()` | Transactional | When admin marks delivered — template ready, not wired |
-| Review Request | `buildReviewRequestEmail()` | Marketing | 2-5 days after delivery — template ready, not wired |
-| Cross-sell | `buildCrossSellEmail()` | Marketing | 10 days after delivery — template ready, not wired |
-| Abandoned Cart | `buildAbandonedCartEmail()` | Marketing | 1 day after abandonment — template ready, not wired |
+| Review Request | `buildReviewRequestEmail()` | Marketing | 3 days after delivery — **wired via cron** |
+| Cross-sell | `buildCrossSellEmail()` | Marketing | 10 days after delivery — **wired via cron** |
+| Abandoned Cart | `buildAbandonedCartEmail()` | Marketing | Template ready, not wired to cron |
 
 ### Security & Compliance
 - All user data HTML-escaped via `escapeHtml()` before interpolation (prevents XSS/injection)
-- Marketing emails include unsubscribe link in footer + plain text (`isMarketing` flag)
+- Marketing emails include per-recipient HMAC-signed unsubscribe link (footer + plain text)
+- Unsubscribe URL is HTML-escaped in `emailShell` href
 - Seller physical address in all email footers (CAN-SPAM / GDPR)
 - Hidden preheader text for inbox preview on all templates
 - UTM parameters on all clickable links (`utm_source=email&utm_campaign=<name>&utm_content=<label>`)
 - `sendOrderConfirmationEmail()` in stripe.ts is the single unified sender for both card and COD orders
+- Transactional emails have NO unsubscribe link — they are mandatory
+
+## Marketing Email Cron (`app/api/cron/marketing-emails/route.ts`)
+- Daily cron at 07:00 UTC (~10:00 EET) via `vercel.json`
+- Auth: `CRON_SECRET` verified with `timingSafeEqual` (constant-time)
+- Single Postgres RPC `claim_marketing_emails(p_now, p_limit)` does everything in one DB call:
+  - Finds candidates (1-day date windows on `delivered_at`)
+  - Filters unsubscribed via `NOT EXISTS` with `lower()` for case-insensitive match
+  - Inserts new log rows as `pending` (`ON CONFLICT DO NOTHING`)
+  - Reclaims stale `sending` rows (crashed workers, `claimed_at > 10min`)
+  - Atomically claims rows `pending/failed → sending` via `FOR UPDATE SKIP LOCKED`
+- App loops over claimed rows, sends via Resend, updates log: `sent`/`failed`/`skipped`
+- Clears `claimed_at` on finalization (sent, failed, skipped)
+- Max 50 emails per run, sequential sending (respects Resend rate limits)
+- `provider_message_id` stored for Resend dashboard cross-reference
+- Failed rows retry up to 3 attempts (`attempt_count`)
+
+## Unsubscribe System
+- **Token:** Signed payload (`email|timestamp`) with HMAC-SHA256 via `UNSUBSCRIBE_SECRET` (required, no fallback)
+- **Token verification:** `timingSafeEqual`, 90-day expiry, email extracted from token (not URL param)
+- **Page:** `app/(shop)/unsubscribe/page.tsx` — confirmation page, POSTs only after user clicks "Да, отпиши ме"
+- **API:** `POST /api/unsubscribe` — sole mutation point, rate-limited (10 req/15min per IP), token length capped at 500
+- **DB:** `email_unsubscribes` table keyed by lowercase email, RLS denies all public access
+- **Layout:** `noindex, nofollow` metadata
+
+## Marketing Email Database Tables
+- `email_unsubscribes` — `email text PRIMARY KEY`, `unsubscribed_at timestamptz`
+- `marketing_email_log` — `(order_id, email_type) UNIQUE`, status lifecycle: `pending → sending → sent/failed/skipped`
+  - Columns: `provider_message_id`, `attempt_count`, `claimed_at`, `last_attempt_at`, `sent_at`, `error_message`
+  - Partial index on `status IN ('pending', 'failed')` for claim queries
+- RPC: `claim_marketing_emails(p_now, p_limit)` — find + insert + reclaim + claim in one call

@@ -58,6 +58,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect, onError }: Econt
       })
       .then((data) => {
         setOffices(data.offices || [])
+        onError?.(false)
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return
