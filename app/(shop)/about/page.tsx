@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 
 export const metadata: Metadata = {
   title: "За нас - Egg Origin",
-  description: "Научете повече за Egg Origin и нашата мисия да създаваме протеинови барове с яйчен белтък и чиста етикета.",
+  description: "Научете повече за Egg Origin и нашата мисия да създаваме протеинови барове с яйчен белтък.",
 }
 
 export default function AboutPage() {
@@ -110,7 +110,7 @@ export default function AboutPage() {
               </h3>
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
                 Вярваме, че заслужавате да знаете точно какво ядете.
-                Нашата чиста етикета означава без скрити съставки, без дребен шрифт, без изненади.
+                Без консерванти, изкуствени оцветители и овкусители.
               </p>
             </div>
 

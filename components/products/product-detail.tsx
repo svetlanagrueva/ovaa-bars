@@ -223,7 +223,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
           <div className="bg-secondary p-8">
             <h2 className="text-lg font-medium text-foreground">Съставки</h2>
             <div className="mt-2 h-px w-12 bg-accent/50" />
-            <p className="mt-3 text-sm text-muted-foreground">Формула с чиста етикета</p>
+            <p className="mt-3 text-sm text-muted-foreground">Формула с натурални съставки</p>
             <ul className="mt-6 space-y-3">
               {product.ingredients.map((ingredient) => (
                 <li key={ingredient} className="flex items-center gap-3 text-muted-foreground">

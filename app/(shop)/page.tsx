@@ -189,7 +189,7 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Всички есенциални аминокиселини в прецизно балансирана формула.
+                Пълен аминокиселинен профил в добре балансирана формула.
               </p>
             </div>
 

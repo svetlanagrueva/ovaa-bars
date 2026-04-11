@@ -6,7 +6,7 @@ import { useRef } from "react"
 const benefits = [
   { value: 20, suffix: "g", label: "Яйчен Протеин" },
   { value: 0, suffix: "g", label: "Добавена Захар" },
-  { value: 100, suffix: "%", label: "Чиста Етикета" },
+  { value: 100, suffix: "%", label: "Натурални Съставки" },
 ]
 
 function ArcSeparator() {

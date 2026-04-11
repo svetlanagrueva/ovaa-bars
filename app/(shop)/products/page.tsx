@@ -27,7 +27,7 @@ export default async function ProductsPage() {
               <span className="block text-muted-foreground">Всеки ден</span>
           </h1>
           <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
-            Пълноценен яйчен протеин с всички есенциални аминокиселини.
+            Пълноценен яйчен протеин с пълен аминокиселинен профил.
             Без добавена захар и излишни съставки. Създаден за твоето ежедневие.
           </p>
         </div>

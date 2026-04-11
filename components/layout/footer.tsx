@@ -44,8 +44,8 @@ export function Footer() {
               <span className="text-base font-medium tracking-[0.3em] uppercase text-foreground">Egg Origin</span>
             </Link>
             <p className="mt-4 max-w-md text-sm text-muted-foreground">
-              Протеинови барове с яйчен белтък. Високо съдържание на протеин,
-              без суроватка, без добавена захар - създадени за ежедневна употреба.
+              Протеинови барове с яйчен белтък. Пълноценен протеин без излишни съставки
+              — за стабилна енергия през целия ден.
             </p>
             <div className="mt-4 flex items-center gap-4">
               <a
