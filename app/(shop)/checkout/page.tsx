@@ -690,16 +690,18 @@ export default function CheckoutPage() {
               </Card>
 
               {/* Marketing consent — unchecked by default (ЗЕС чл. 261 soft opt-in) */}
-              <div className="flex items-start space-x-3 rounded-lg border border-border p-4">
-                <Checkbox
-                  id="marketingConsent"
-                  checked={marketingConsent}
-                  onCheckedChange={(checked) => setMarketingConsent(checked === true)}
-                />
-                <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
-                  Искам да получавам имейли с промоции и новини от Egg Origin
-                </Label>
-              </div>
+              <Card>
+                <CardContent className="flex items-start space-x-3 pt-6">
+                  <Checkbox
+                    id="marketingConsent"
+                    checked={marketingConsent}
+                    onCheckedChange={(checked) => setMarketingConsent(checked === true)}
+                  />
+                  <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
+                    Искам да получавам имейли с промоции и новини от Egg Origin
+                  </Label>
+                </CardContent>
+              </Card>
             </div>
 
             {/* Order Summary */}
@@ -833,7 +835,7 @@ export default function CheckoutPage() {
                         <p key={w.productName} className="text-sm text-destructive">
                           {w.available === 0
                             ? `${w.productName} е изчерпан`
-                            : `${w.productName} — налични само ${w.available} бр. (искани ${w.requested})`}
+                            : `Недостатъчна наличност на ${w.productName}. Налични ${w.available}бр.`}
                         </p>
                       ))}
                       <p className="text-xs text-muted-foreground">Моля, актуализирайте количката.</p>
