@@ -8,6 +8,7 @@ import { getProductsWithSales } from "@/lib/sales"
 import { Resend } from "resend"
 import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
+import { buildOrderConfirmationEmail } from "@/lib/email-template"
 
 interface CartItem {
   productId: string
@@ -696,7 +697,7 @@ export async function confirmOrder(orderId: string) {
   }
 
   // Send confirmation email only after successful status update
-  sendConfirmationEmail(updatedOrder)
+  sendOrderConfirmationEmail(updatedOrder)
 
   return { status: "confirmed" as const }
 }
@@ -796,7 +797,7 @@ export async function createCODOrder(data: CODOrderData) {
   }
 
   // Send confirmation email and notify admin
-  sendCODConfirmationEmail(order, shippingPrice, codFee, deliveryMethod)
+  sendOrderConfirmationEmail(order)
   notifyAdminNewOrder(order, "cod")
 
   return { success: true, orderId: order.id }
@@ -840,102 +841,43 @@ ${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${ord
   })
 }
 
-function sendConfirmationEmail(order: Record<string, unknown>) {
+function sendOrderConfirmationEmail(order: Record<string, unknown>) {
   if (!process.env.RESEND_API_KEY) return
 
   const resend = new Resend(process.env.RESEND_API_KEY)
   const orderItems = order.items as Array<{
+    productId: string
     productName: string
     quantity: number
     priceInCents: number
   }>
 
-  const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-    .join("\n")
+  const subtotal = orderItems.reduce(
+    (sum, item) => sum + item.priceInCents * item.quantity,
+    0
+  )
 
-  const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
-  const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
-  const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
+  const { html, text } = buildOrderConfirmationEmail({
+    orderId: order.id as string,
+    firstName: order.first_name as string,
+    items: orderItems,
+    subtotal,
+    shippingFee: (order.shipping_fee as number) || 0,
+    codFee: (order.cod_fee as number) || 0,
+    discountAmount: (order.discount_amount as number) || 0,
+    promoCode: (order.promo_code as string) || null,
+    totalAmount: order.total_amount as number,
+    paymentMethod: order.payment_method as "card" | "cod",
+    date: (order.created_at as string) || new Date().toISOString(),
+  })
 
   resend.emails.send({
     from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to: order.email as string,
     subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
-    text: `
-Здравейте ${order.first_name},
-
-Благодарим Ви за поръчката!
-
-Детайли на поръчката:
-${itemsList}
-
-Обща сума: ${formatPrice(order.total_amount as number)}
-
-Доставка: ${deliveryLabel}${econtOfficeLine}${speedyOfficeLine}
-Град: ${order.city}
-${order.address ? `Адрес: ${order.address}` : ""}
-
-Ще получите известие, когато поръчката Ви бъде изпратена.
-
-Поздрави,
-Екипът на Egg Origin
-    `.trim(),
+    html,
+    text,
   }).catch((err) => {
     console.error(`Failed to send confirmation email for order ${order.id}:`, err)
-  })
-}
-
-function sendCODConfirmationEmail(
-  order: Record<string, unknown>,
-  shippingPrice: number,
-  codFee: number,
-  deliveryMethod: string,
-) {
-  if (!process.env.RESEND_API_KEY) return
-
-  const resend = new Resend(process.env.RESEND_API_KEY)
-  const orderItems = order.items as Array<{
-    productName: string
-    quantity: number
-    priceInCents: number
-  }>
-
-  const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-    .join("\n")
-
-  const deliveryLabel = getDeliveryLabel(deliveryMethod)
-  const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
-  const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
-
-  resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
-    to: order.email as string,
-    subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
-    text: `
-Здравейте ${order.first_name},
-
-Благодарим Ви за поръчката!
-
-Детайли на поръчката:
-${itemsList}
-
-Доставка: ${shippingPrice === 0 ? "Безплатна" : formatPrice(shippingPrice)}
-Наложен платеж: ${formatPrice(codFee)}
-
-Сума за плащане при доставка: ${formatPrice(order.total_amount as number)}
-
-Начин на доставка: ${deliveryLabel}${econtOfficeLine}${speedyOfficeLine}
-Град: ${order.city}
-${order.address ? `Адрес: ${order.address}` : ""}
-
-Ще получите известие, когато поръчката Ви бъде изпратена.
-
-Поздрави,
-Екипът на Egg Origin
-    `.trim(),
-  }).catch((err) => {
-    console.error(`Failed to send COD confirmation email for order ${order.id}:`, err)
   })
 }
