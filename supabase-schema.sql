@@ -57,7 +57,10 @@ create table if not exists orders (
   admin_notes text,
 
   -- Cancellation
-  cancellation_reason text
+  cancellation_reason text,
+
+  -- Marketing consent (unchecked by default at checkout, required for soft opt-in under ЗЕС чл. 261)
+  marketing_consent boolean not null default false
 );
 
 -- Enable Row Level Security
@@ -332,3 +335,125 @@ $$;
 --   ('EGO-DC-12',  'batch_in', 0, 'BATCH-001', '2026-12-31', 'Initial stock'),
 --   ('EGO-WCR-12', 'batch_in', 0, 'BATCH-001', '2026-12-31', 'Initial stock'),
 --   ('EGO-MIX-12', 'batch_in', 0, 'BATCH-001', '2026-12-31', 'Initial stock');
+
+
+-- ─── Marketing Email System ──────────────────────────────────────────────────
+
+-- Unsubscribe registry — keyed by email, not per-order.
+-- A single unsubscribe covers all marketing emails for that address.
+create table if not exists email_unsubscribes (
+  email text primary key,
+  unsubscribed_at timestamptz not null default now()
+);
+
+alter table email_unsubscribes enable row level security;
+create policy "Deny all on email_unsubscribes" on email_unsubscribes
+  for all using (false) with check (false);
+
+-- Sent email log — one row per (order, email_type).
+-- The unique constraint prevents duplicate sends.
+-- Status lifecycle: pending → sending → sent / failed / skipped
+create table if not exists marketing_email_log (
+  id bigint generated always as identity primary key,
+  order_id uuid not null references orders(id) on delete cascade,
+  email_type text not null check (email_type in ('review_request', 'cross_sell')),
+  email text not null,
+  status text not null default 'pending'
+    check (status in ('pending', 'sending', 'sent', 'failed', 'skipped')),
+  provider_message_id text,
+  attempt_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  claimed_at timestamptz,
+  last_attempt_at timestamptz,
+  sent_at timestamptz,
+  error_message text,
+  constraint uq_marketing_email_log unique (order_id, email_type)
+);
+
+create index if not exists idx_marketing_email_log_claimable
+  on marketing_email_log (status) where status in ('pending', 'failed');
+
+alter table marketing_email_log enable row level security;
+create policy "Deny all on marketing_email_log" on marketing_email_log
+  for all using (false) with check (false);
+
+-- Index on orders for cron candidate queries
+create index if not exists idx_orders_delivered_at
+  on orders (delivered_at) where delivered_at is not null;
+
+-- ─── claim_marketing_emails RPC ──────────────────────────────────────────────
+-- Single function: find candidates → insert as pending → reclaim stale → claim
+-- Returns only the rows this worker claimed (FOR UPDATE SKIP LOCKED).
+
+create or replace function claim_marketing_emails(p_now timestamptz, p_limit integer default 50)
+returns table (
+  log_id bigint,
+  order_id uuid,
+  email text,
+  first_name text,
+  items jsonb,
+  total_amount integer,
+  payment_method text,
+  email_type text,
+  attempt_count integer
+) language plpgsql as $$
+begin
+  -- Step 1: Reclaim stale sending rows (crashed workers)
+  -- Uses claimed_at, not created_at — a row created yesterday but claimed 5s ago is NOT stale
+  update marketing_email_log
+  set status = 'failed', error_message = 'stale sending row reclaimed', claimed_at = null
+  where status = 'sending'
+    and claimed_at < p_now - interval '10 minutes';
+
+  -- Step 2: Insert new candidates as pending (idempotent via ON CONFLICT)
+  insert into marketing_email_log (order_id, email_type, email)
+  select o.id, c.email_type, o.email
+  from (
+    -- Review request: delivered 3-4 days ago
+    select o2.id as order_id, 'review_request'::text as email_type
+    from orders o2
+    where o2.status = 'delivered'
+      and o2.marketing_consent = true
+      and o2.delivered_at >= p_now - interval '4 days'
+      and o2.delivered_at < p_now - interval '3 days'
+
+    union all
+
+    -- Cross-sell: delivered 10-11 days ago
+    select o2.id as order_id, 'cross_sell'::text as email_type
+    from orders o2
+    where o2.status = 'delivered'
+      and o2.marketing_consent = true
+      and o2.delivered_at >= p_now - interval '11 days'
+      and o2.delivered_at < p_now - interval '10 days'
+  ) c
+  join orders o on o.id = c.order_id
+  where not exists (select 1 from email_unsubscribes u where u.email = lower(o.email))
+  on conflict (order_id, email_type) do nothing;
+
+  -- Step 3: Atomically claim rows (pending or retryable failed) → sending
+  return query
+  with claimed as (
+    update marketing_email_log l
+    set status = 'sending',
+        attempt_count = l.attempt_count + 1,
+        claimed_at = p_now,
+        last_attempt_at = p_now
+    where l.id in (
+      select l2.id from marketing_email_log l2
+      where l2.status in ('pending', 'failed')
+        and (l2.status = 'pending' or l2.attempt_count < 3)
+        -- re-check unsubscribe at claim time
+        and not exists (select 1 from email_unsubscribes u where u.email = lower(l2.email))
+      order by l2.created_at
+      limit p_limit
+      for update skip locked
+    )
+    returning l.*
+  )
+  select c.id, c.order_id, o.email, o.first_name, o.items, o.total_amount, o.payment_method,
+         c.email_type, c.attempt_count
+  from claimed c
+  join orders o on o.id = c.order_id;
+end;
+$$;

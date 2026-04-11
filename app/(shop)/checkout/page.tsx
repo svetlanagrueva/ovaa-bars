@@ -56,6 +56,7 @@ export default function CheckoutPage() {
   const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
   const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
+  const [officePickerError, setOfficePickerError] = useState(false)
   const { items, getTotalPrice } = useCartStore()
 
   const [promoCode, setPromoCode] = useState("")
@@ -78,6 +79,7 @@ export default function CheckoutPage() {
   })
 
   const [wantsInvoice, setWantsInvoice] = useState(false)
+  const [marketingConsent, setMarketingConsent] = useState(false)
   const [billingType, setBillingType] = useState<"individual" | "company">("individual")
 
   const [billingInfo, setBillingInfo] = useState<BillingInfo>({
@@ -221,6 +223,7 @@ export default function CheckoutPage() {
           econtOffice,
           speedyOffice,
           promoCode: appliedPromo?.code,
+          marketingConsent,
         })
 
         if (result.success) {
@@ -238,6 +241,7 @@ export default function CheckoutPage() {
           econtOffice,
           speedyOffice,
           promoCode: appliedPromo?.code,
+          marketingConsent,
         })
 
         if (result.url) {
@@ -246,8 +250,17 @@ export default function CheckoutPage() {
           window.location.href = result.url
         }
       }
-    } catch {
-      setError("Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
+    } catch (err) {
+      const message = err instanceof Error ? err.message : ""
+      const friendlyMessages: Record<string, string> = {
+        "Invalid phone format": "Моля, въведете валиден телефонен номер.",
+        "Invalid email format": "Моля, въведете валиден имейл адрес.",
+        "First name is required": "Моля, въведете име.",
+        "Last name is required": "Моля, въведете фамилия.",
+        "City is required": "Моля, въведете град.",
+        "Address is required for address delivery": "Моля, въведете адрес за доставка.",
+      }
+      setError(friendlyMessages[message] || "Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
       submittingRef.current = false
     }
@@ -332,6 +345,10 @@ export default function CheckoutPage() {
                       id="phone"
                       name="phone"
                       type="tel"
+                      pattern="\+?[0-9\s\-()]*[0-9][0-9\s\-()]*"
+                      minLength={6}
+                      maxLength={20}
+                      title="Въведете валиден телефонен номер (напр. +359888123456)"
                       placeholder="+359"
                       value={customerInfo.phone}
                       onChange={handleInputChange}
@@ -352,7 +369,7 @@ export default function CheckoutPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <RadioGroup value={deliveryMethod} onValueChange={setDeliveryMethod}>
+                  <RadioGroup value={deliveryMethod} onValueChange={(v) => { setDeliveryMethod(v); setOfficePickerError(false) }}>
                     <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
                     <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
                       <RadioGroupItem value="speedy-office" id="speedy-office" />
@@ -389,6 +406,7 @@ export default function CheckoutPage() {
                     <SpeedyOfficePicker
                       selectedOfficeId={selectedSpeedyOffice?.id ?? null}
                       onSelect={setSelectedSpeedyOffice}
+                      onError={setOfficePickerError}
                     />
                   )}
 
@@ -396,20 +414,23 @@ export default function CheckoutPage() {
                     <EcontOfficePicker
                       selectedOfficeId={selectedEcontOffice?.id ?? null}
                       onSelect={setSelectedEcontOffice}
+                      onError={setOfficePickerError}
                     />
                   )}
 
                   <div className="space-y-4 pt-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="city">Град *</Label>
-                      <Input
-                        id="city"
-                        name="city"
-                        value={customerInfo.city}
-                        onChange={handleInputChange}
-                        required
-                      />
-                    </div>
+                    {(deliveryMethod === "speedy-address" || deliveryMethod === "econt-address" || officePickerError) && (
+                      <div className="space-y-2">
+                        <Label htmlFor="city">Град *</Label>
+                        <Input
+                          id="city"
+                          name="city"
+                          value={customerInfo.city}
+                          onChange={handleInputChange}
+                          required
+                        />
+                      </div>
+                    )}
                     {(deliveryMethod === "speedy-address" || deliveryMethod === "econt-address") && (
                       <>
                         <div className="space-y-2">
@@ -667,6 +688,18 @@ export default function CheckoutPage() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* Marketing consent — unchecked by default (ЗЕС чл. 261 soft opt-in) */}
+              <div className="flex items-start space-x-3 rounded-lg border border-border p-4">
+                <Checkbox
+                  id="marketingConsent"
+                  checked={marketingConsent}
+                  onCheckedChange={(checked) => setMarketingConsent(checked === true)}
+                />
+                <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
+                  Искам да получавам имейли с промоции и новини от Egg Origin
+                </Label>
+              </div>
             </div>
 
             {/* Order Summary */}

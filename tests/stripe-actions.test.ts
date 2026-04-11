@@ -429,9 +429,21 @@ describe("input validation", () => {
       createCheckoutSession({
         cartItems: validCartItems,
         customerInfo: { ...validCustomerInfo, city: "" },
-        deliveryMethod: "speedy-office",
+        deliveryMethod: "speedy-address",
       })
     ).rejects.toThrow("City is required")
+  })
+
+  it("does not require city for office delivery", async () => {
+    // City is optional for office delivery — it comes from the selected office
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        customerInfo: { ...validCustomerInfo, city: "" },
+        deliveryMethod: "speedy-office",
+        speedyOffice: { id: 1, name: "Test", city: "Sofia", fullAddress: "Sofia, Test" },
+      })
+    ).rejects.not.toThrow("City is required")
   })
 
   it("rejects missing Speedy office for office delivery", async () => {

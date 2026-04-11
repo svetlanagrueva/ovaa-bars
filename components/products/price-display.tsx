@@ -18,20 +18,19 @@ export function PriceDisplay({
 
   return (
     <div>
-      <div className={isLarge ? "flex items-center gap-2" : "relative"}>
-        {onSale && (
-          <span className={`line-through text-muted-foreground ${isLarge ? "text-lg" : "absolute bottom-full text-[10px] leading-none mb-0.5"}`}>
-            {formatPrice(product.originalPriceInCents! * quantity)}
-          </span>
-        )}
-
+      <div className="flex items-center gap-1">
         <span
-          className={`tracking-[0.01em] text-foreground ${
+          className={`tracking-[0.01em] ${onSale ? "text-accent-price" : "text-foreground"} ${
             isLarge ? "text-2xl font-light" : "text-sm font-medium"
           }`}
         >
           {formatPrice(product.priceInCents * quantity)}
         </span>
+        {onSale && (
+          <span className={`text-foreground/60 ${isLarge ? "text-2xl font-light" : "text-sm font-medium"}`}>
+            (<span className="line-through">{formatPrice(product.originalPriceInCents! * quantity)}</span>)
+          </span>
+        )}
       </div>
 
       {showPerBar && (

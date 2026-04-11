@@ -156,11 +156,6 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
               >
                 <ShoppingBag className="h-5 w-5" />
                 Добави в количката - {formatPrice(product.priceInCents * quantity)}
-                {isOnSale(product) && (
-                  <span className="text-xs opacity-75 ml-1">
-                    (спестявате {formatPrice((product.originalPriceInCents! - product.priceInCents) * quantity)})
-                  </span>
-                )}
               </Button>
             )}
 

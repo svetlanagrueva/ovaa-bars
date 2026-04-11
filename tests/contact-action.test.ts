@@ -27,8 +27,8 @@ describe("sendContactMessage", () => {
 
     const result = await sendContactMessage({
       name: "Иван",
+      lastName: "Петров",
       email: "ivan@test.com",
-      subject: "Въпрос",
       message: "Здравейте, имам въпрос.",
     })
 
@@ -37,26 +37,8 @@ describe("sendContactMessage", () => {
       expect.objectContaining({
         to: "info@eggorigin.com",
         replyTo: "ivan@test.com",
-        subject: "Contact: Въпрос",
-      })
-    )
-  })
-
-  it("uses name in subject when no subject provided", async () => {
-    vi.stubEnv("RESEND_API_KEY", "re_test_123")
-
-    const { sendContactMessage } = await import("@/app/actions/contact")
-
-    await sendContactMessage({
-      name: "Мария",
-      email: "maria@test.com",
-      subject: "",
-      message: "Здравейте!",
-    })
-
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subject: "Contact from Мария",
+        subject: "Иван Петров - запитване",
+        text: "Name: Иван Петров\nEmail: ivan@test.com\n\nЗдравейте, имам въпрос.",
       })
     )
   })
@@ -67,15 +49,19 @@ describe("sendContactMessage", () => {
     const { sendContactMessage } = await import("@/app/actions/contact")
 
     await expect(
-      sendContactMessage({ name: "", email: "test@test.com", subject: "", message: "Hello" })
+      sendContactMessage({ name: "", lastName: "Test", email: "test@test.com", message: "Hello" })
     ).rejects.toThrow("Missing required fields")
 
     await expect(
-      sendContactMessage({ name: "Test", email: "", subject: "", message: "Hello" })
+      sendContactMessage({ name: "Test", lastName: "", email: "test@test.com", message: "Hello" })
     ).rejects.toThrow("Missing required fields")
 
     await expect(
-      sendContactMessage({ name: "Test", email: "test@test.com", subject: "", message: "" })
+      sendContactMessage({ name: "Test", lastName: "Test", email: "", message: "Hello" })
+    ).rejects.toThrow("Missing required fields")
+
+    await expect(
+      sendContactMessage({ name: "Test", lastName: "Test", email: "test@test.com", message: "" })
     ).rejects.toThrow("Missing required fields")
   })
 
@@ -87,8 +73,8 @@ describe("sendContactMessage", () => {
     await expect(
       sendContactMessage({
         name: "Test",
+        lastName: "Test",
         email: "test@test.com",
-        subject: "",
         message: "Hello",
       })
     ).rejects.toThrow("Email service not configured")

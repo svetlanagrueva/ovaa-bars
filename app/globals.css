@@ -19,9 +19,12 @@
   --muted: oklch(0.91 0.012 75);
   --muted-foreground: oklch(0.50 0.015 55);
   --accent: oklch(0.68 0.10 25);
+  --accent-price: oklch(0.55 0.15 25);
   --accent-foreground: oklch(0.98 0.006 75);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.577 0.245 27.325);
+  --stripe-brand: oklch(0.51 0.24 285);
+  --trustpilot-green: oklch(0.65 0.17 160);
   --border: oklch(0.87 0.015 75);
   --input: oklch(0.91 0.012 75);
   --ring: oklch(0.50 0.015 55);
@@ -55,7 +58,10 @@
   --muted: oklch(0.269 0 0);
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
+  --accent-price: oklch(0.65 0.15 25);
   --accent-foreground: oklch(0.985 0 0);
+  --stripe-brand: oklch(0.60 0.24 285);
+  --trustpilot-green: oklch(0.70 0.17 160);
   --destructive: oklch(0.396 0.141 25.723);
   --destructive-foreground: oklch(0.637 0.237 25.331);
   --border: oklch(0.269 0 0);
@@ -93,9 +99,12 @@
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
+  --color-accent-price: var(--accent-price);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-stripe-brand: var(--stripe-brand);
+  --color-trustpilot-green: var(--trustpilot-green);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

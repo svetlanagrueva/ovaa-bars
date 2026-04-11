@@ -5,8 +5,8 @@ import { Resend } from "resend"
 
 interface ContactData {
   name: string
+  lastName: string
   email: string
-  subject: string
   message: string
 }
 
@@ -37,9 +37,9 @@ function checkContactRateLimit(ip: string) {
 }
 
 export async function sendContactMessage(data: ContactData) {
-  const { name, email, subject, message } = data
+  const { name, lastName, email, message } = data
 
-  if (!name || !email || !message) {
+  if (!name || !lastName || !email || !message) {
     throw new Error("Missing required fields")
   }
 
@@ -58,8 +58,8 @@ export async function sendContactMessage(data: ContactData) {
     from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to: "info@eggorigin.com",
     replyTo: email,
-    subject: subject ? `Contact: ${subject}` : `Contact from ${name}`,
-    text: `Name: ${name}\nEmail: ${email}\n\n${message}`,
+    subject: `${name} ${lastName} - запитване`,
+    text: `Name: ${name} ${lastName}\nEmail: ${email}\n\n${message}`,
   })
 
   return { success: true }
