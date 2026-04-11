@@ -215,7 +215,7 @@ export default function CartPage() {
             <div className="mt-6 space-y-1 rounded-[16px] bg-destructive/10 p-4">
               {stockWarnings.map((w) => (
                 <p key={w.productName} className="text-xs text-destructive">
-                  {w.productName}: {w.available === 0 ? "изчерпан" : `налични ${w.available} бр.`}
+                  {w.available === 0 ? `${w.productName} е изчерпан` : `Недостатъчна наличност на ${w.productName}. Налични ${w.available}бр.`}
                 </p>
               ))}
             </div>
