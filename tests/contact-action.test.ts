@@ -37,7 +37,7 @@ describe("sendContactMessage", () => {
       expect.objectContaining({
         to: "info@eggorigin.com",
         replyTo: "ivan@test.com",
-        subject: "Иван - запитване",
+        subject: "Иван Петров - запитване",
         text: "Name: Иван Петров\nEmail: ivan@test.com\n\nЗдравейте, имам въпрос.",
       })
     )

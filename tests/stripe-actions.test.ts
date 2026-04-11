@@ -429,7 +429,7 @@ describe("input validation", () => {
       createCheckoutSession({
         cartItems: validCartItems,
         customerInfo: { ...validCustomerInfo, city: "" },
-        deliveryMethod: "speedy-office",
+        deliveryMethod: "speedy-address",
       })
     ).rejects.toThrow("City is required")
   })

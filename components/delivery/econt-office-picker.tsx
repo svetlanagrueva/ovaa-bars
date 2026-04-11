@@ -17,9 +17,10 @@ export interface EcontOfficeOption {
 interface EcontOfficePickerProps {
   selectedOfficeId: number | null
   onSelect: (office: EcontOfficeOption) => void
+  onError?: (hasError: boolean) => void
 }
 
-export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePickerProps) {
+export function EcontOfficePicker({ selectedOfficeId, onSelect, onError }: EcontOfficePickerProps) {
   const [offices, setOffices] = useState<EcontOfficeOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,6 +63,7 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect }: EcontOfficePic
         if (err instanceof DOMException && err.name === "AbortError") return
         fetchedRef.current = false // allow retry on next open
         setError("Неуспешно зареждане на офисите на Еконт")
+        onError?.(true)
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)

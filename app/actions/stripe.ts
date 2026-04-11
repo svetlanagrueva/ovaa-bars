@@ -115,14 +115,18 @@ function validateAddressForDelivery(deliveryMethod: string, address: string) {
   }
 }
 
-function validateCustomerInfo(info: CustomerInfo) {
+function validateCustomerInfo(info: CustomerInfo, deliveryMethod?: string) {
   const required: Array<[string, string]> = [
     [info.firstName, "First name"],
     [info.lastName, "Last name"],
     [info.email, "Email"],
     [info.phone, "Phone"],
-    [info.city, "City"],
   ]
+
+  const isAddressDelivery = deliveryMethod === "speedy-address" || deliveryMethod === "econt-address"
+  if (isAddressDelivery || (info.city && info.city.trim().length > 0)) {
+    required.push([info.city, "City"])
+  }
 
   for (const [value, label] of required) {
     if (!value || value.trim().length === 0) {
@@ -460,9 +464,9 @@ function validateInvoiceInfo(needsInvoice: boolean | undefined, invoiceInfo: Inv
 export async function createCheckoutSession(data: CheckoutData) {
   const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice, speedyOffice } = data
 
-  validateCustomerInfo(customerInfo)
-  validateInvoiceInfo(needsInvoice, invoiceInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
+  validateCustomerInfo(customerInfo, deliveryMethod)
+  validateInvoiceInfo(needsInvoice, invoiceInfo)
   validateAddressForDelivery(deliveryMethod, customerInfo.address)
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
   validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
@@ -700,9 +704,9 @@ export async function confirmOrder(orderId: string) {
 export async function createCODOrder(data: CODOrderData) {
   const { cartItems, customerInfo, needsInvoice, invoiceInfo, econtOffice, speedyOffice } = data
 
-  validateCustomerInfo(customerInfo)
-  validateInvoiceInfo(needsInvoice, invoiceInfo)
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
+  validateCustomerInfo(customerInfo, deliveryMethod)
+  validateInvoiceInfo(needsInvoice, invoiceInfo)
   validateAddressForDelivery(deliveryMethod, customerInfo.address)
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
   validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)

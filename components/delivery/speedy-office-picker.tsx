@@ -16,9 +16,10 @@ export interface SpeedyOfficeOption {
 interface SpeedyOfficePickerProps {
   selectedOfficeId: number | null
   onSelect: (office: SpeedyOfficeOption) => void
+  onError?: (hasError: boolean) => void
 }
 
-export function SpeedyOfficePicker({ selectedOfficeId, onSelect }: SpeedyOfficePickerProps) {
+export function SpeedyOfficePicker({ selectedOfficeId, onSelect, onError }: SpeedyOfficePickerProps) {
   const [offices, setOffices] = useState<SpeedyOfficeOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -61,6 +62,7 @@ export function SpeedyOfficePicker({ selectedOfficeId, onSelect }: SpeedyOfficeP
         if (err instanceof DOMException && err.name === "AbortError") return
         fetchedRef.current = false // allow retry on next open
         setError("Неуспешно зареждане на офисите на Speedy")
+        onError?.(true)
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
