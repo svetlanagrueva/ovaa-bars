@@ -25,8 +25,8 @@ export function ContactForm() {
     try {
       await sendContactMessage({
         name: formData.get("name") as string,
+        lastName: formData.get("lastName") as string,
         email: formData.get("email") as string,
-        subject: formData.get("subject") as string,
         message: formData.get("message") as string,
       })
       setIsSubmitted(true)
@@ -62,13 +62,13 @@ export function ContactForm() {
           <Input id="name" name="name" required />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="email">Имейл *</Label>
-          <Input id="email" name="email" type="email" required />
+          <Label htmlFor="lastName">Фамилия *</Label>
+          <Input id="lastName" name="lastName" required />
         </div>
       </div>
       <div className="space-y-2">
-        <Label htmlFor="subject">Тема</Label>
-        <Input id="subject" name="subject" />
+        <Label htmlFor="email">Имейл *</Label>
+        <Input id="email" name="email" type="email" required />
       </div>
       <div className="space-y-2">
         <Label htmlFor="message">Съобщение *</Label>
