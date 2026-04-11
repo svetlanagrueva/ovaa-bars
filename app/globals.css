@@ -23,6 +23,8 @@
   --accent-foreground: oklch(0.98 0.006 75);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.577 0.245 27.325);
+  --stripe-brand: oklch(0.51 0.24 285);
+  --trustpilot-green: oklch(0.65 0.17 160);
   --border: oklch(0.87 0.015 75);
   --input: oklch(0.91 0.012 75);
   --ring: oklch(0.50 0.015 55);
@@ -98,6 +100,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-stripe-brand: var(--stripe-brand);
+  --color-trustpilot-green: var(--trustpilot-green);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

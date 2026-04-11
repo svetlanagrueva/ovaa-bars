@@ -10,7 +10,7 @@ function StripeBadge() {
         <span className="text-sm font-semibold leading-tight tracking-wide">Secure Payments</span>
         <span className="flex items-center gap-1 text-xs leading-tight text-neutral-500">
           Powered by
-          <span className="text-base font-bold text-[#635BFF]">stripe</span>
+          <span className="text-base font-bold text-stripe-brand">stripe</span>
         </span>
       </div>
     </div>
