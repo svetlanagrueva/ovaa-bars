@@ -8,29 +8,28 @@ Key lifestyle touchpoints: pilates/reformer studios, weight training, MacBook + 
 Reference brands: **Puresport, PROMIX, Aesop** — premium performance, not supplement store.
 
 ## Brand Pillars
-- **Dark chocolate flavour**: deep, grounded, disciplined performance
+- **Натурален шоколад** (formerly Тъмен шоколад): deep, grounded, disciplined performance
 - **White chocolate raspberry**: light, clean, balanced
 - These two axes map directly to the colour system (see below)
 
 ## Colour System
-All tokens live in `app/globals.css`. Current palette:
+All tokens live in `app/globals.css`. Current palette (hue 60 — neutral stone/charcoal):
 
 | Token | Value | Why |
 |---|---|---|
-| `--background` | `oklch(0.975 0.008 75)` | Warm ivory/cream — white chocolate box |
-| `--foreground` / `--primary` | `oklch(0.19 0.04 115)` | Dark olive-green — dark chocolate box |
-| `--card` | `oklch(0.99 0.005 75)` | Slightly lighter warm white |
-| `--secondary` | `oklch(0.93 0.014 75)` | Warm linen — alternate section bg |
-| `--muted-foreground` | `oklch(0.50 0.02 100)` | Warm mid-olive grey |
-| `--accent` | `oklch(0.68 0.10 25)` | Warm sand/stone |
-| `--accent-price` | `oklch(0.55 0.15 25)` | Denser accent for sale prices only |
+| `--background` | `oklch(0.97 0.003 60)` | Warm stone white |
+| `--foreground` | `oklch(0.18 0.01 60)` | Deep charcoal |
+| `--primary` | `oklch(0.22 0.01 60)` | Near-black charcoal — buttons, text |
+| `--card` | `oklch(0.99 0.002 60)` | Slightly lighter warm white |
+| `--secondary` | `oklch(0.94 0.004 60)` | Muted stone — alternate section bg |
+| `--muted-foreground` | `oklch(0.40 0.01 60)` | Stone grey — body text (~6:1 contrast) |
+| `--accent` | `oklch(0.58 0.12 35)` | Muted terracotta — decorative, hover |
+| `--accent-price` | `oklch(0.50 0.14 35)` | Denser terracotta for sale prices only |
 | `--stripe-brand` | `oklch(0.51 0.24 285)` | Stripe purple — footer badge |
 | `--trustpilot-green` | `oklch(0.65 0.17 160)` | Trustpilot stars |
-| `--border` | `oklch(0.87 0.012 95)` | Warm cream-olive border |
+| `--border` | `oklch(0.90 0.006 60)` | Light stone border |
 
-**Do not** reintroduce pink/rose (hue 350). That palette was removed intentionally — it read as generic supplement-brand, not premium wellness.
-
-The olive-green primary is the dark chocolate box colour. The cream background is the white chocolate box colour. Both product lines are literally embedded in the design system.
+**Do not** reintroduce pink/rose (hue 350) or olive-green (hue 115). The palette moved from olive to neutral stone/terracotta intentionally.
 
 ## Typography Rules
 
@@ -54,9 +53,17 @@ Uniform weight throughout — `font-medium tracking-[0.35em] uppercase`. Do not 
 - No serif fonts — the packaging uses geometric sans-serif; Geist is correct
 
 ### Body
-- `text-sm leading-7 text-muted-foreground` — generous line height
-- Constrain width with `max-w-xl` or `max-w-md` for readability
+- `text-sm leading-relaxed text-muted-foreground` — comfortable 1.625 line height (not `leading-7` which was too spacious)
+- Constrain width with `max-w-xl`, `max-w-md`, or `max-w-prose` for readability
+- Long-form text (product descriptions, privacy, terms) must have `max-w-prose`
 - Never `text-base` with tight leading — reads as supplement copy
+
+### Prices
+- Current price: `tabular-nums text-sm font-semibold` (cards) / `text-2xl font-medium` (detail page)
+- Sale price color: `text-accent-price` — old price: `font-normal text-foreground/50 line-through`
+- Old price smaller than current: `text-xs` (cards) / `text-lg` (detail)
+- Small size stacks vertically (`flex flex-col`), large size is inline (`flex items-center gap-1`)
+- Always use `tabular-nums` on price spans for digit alignment
 
 ### Buttons
 **Primary CTA:** `h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90` — pill-shaped, understated
@@ -95,8 +102,8 @@ Custom card pattern (used on cart items, contact info, about values, homepage pi
 
 | File | Description | Use |
 |---|---|---|
-| `dark-chocolate-bar.png` | Dark olive box, 12 bars — portrait | Main product image, dark choc card |
-| `dark-chocolate-single-bar.png` | Dark wrapper bar on concrete, MacBook + ring props — landscape | Gallery second image, dark choc detail |
+| `dark-chocolate-bar.png` | Натурален шоколад box, 12 bars — portrait | Main product image, натурален шоколад card |
+| `dark-chocolate-single-bar.png` | Dark wrapper bar on concrete, MacBook + ring props — landscape | Gallery second image, натурален шоколад detail |
 | `white-chocolate-raspberry-bar.png` | Cream/ivory box, 12 bars — portrait | Main product image, white choc card |
 | `white-chocolate-single-bar.png` | Cream wrapper bar, MacBook + rose-gold ring props — landscape | Gallery second image, white choc detail |
 
@@ -115,8 +122,8 @@ Do not use `a-very-good-dark-chocolate-alternative.png` (cream-wrapped dark choc
 - Decorative lines: `h-px bg-accent/50` (section dividers, under headings)
 - Hover on text links: `hover:text-accent`
 - Product detail: check marks (`text-accent`), ingredient bullets (`bg-accent`), nutrition badges (`text-accent`)
-- **Sale prices**: `text-accent-price` (denser variant) — used in `PriceDisplay` component only
-- Original price shown inline in brackets with strikethrough: `19,90 € (<s>25,50 €</s>)`
+- **Sale prices**: `text-accent-price` (denser terracotta) — used in `PriceDisplay` component only
+- Original price below (cards) or inline (detail): strikethrough, `text-foreground/50`, smaller size
 - Third-party brand colors: `text-stripe-brand` (footer), `text-trustpilot-green` (social proof)
 - Never use accent as a button background on the shop side
 - No hardcoded hex colors in components — all colors go through `globals.css` + `@theme` mapping
@@ -133,3 +140,18 @@ Do not use `a-very-good-dark-chocolate-alternative.png` (cream-wrapped dark choc
 - No `hover:bg-accent` on buttons — use `hover:bg-secondary` or `hover:opacity-90`
 - Do not change card aspect ratio back to `aspect-square` — portrait is correct for these box shots
 - No `backdrop-blur-md` on cards with solid backgrounds
+
+## Toast (Sonner)
+Custom `Toaster` wrapper in `components/ui/sonner.tsx` (not raw Sonner). Imported from `@/components/ui/sonner` in `app/layout.tsx`.
+- Background: `bg-card`, border: `border-border/60`, shadow: `shadow-accent/[0.05]`, corners: `rounded-[16px]`
+- Action button: `bg-primary rounded-full text-[10px] uppercase tracking-[0.12em]` — matches CTA button style
+- Close button: `bg-card hover:bg-secondary`
+
+## Stripe Badge (footer)
+- `bg-card` background (not `bg-white`), `text-foreground` (not `text-black`), `border-border/60`
+- Stripe text: `text-stripe-brand`
+
+## Delivery Options (checkout)
+- Еконт офис (default), Speedy офис, Speedy до адрес
+- `econt-address` removed from UI and `VALID_DELIVERY_METHODS`
+- City field shown only for address delivery or when office picker fails
