@@ -74,7 +74,7 @@ interface CODOrderData {
   marketingConsent?: boolean
 }
 
-const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office", "econt-address"]
+const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office"]
 const MAX_FIELD_LENGTH = 500
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
@@ -113,7 +113,7 @@ function validateDeliveryMethod(method: string): string {
 }
 
 function validateAddressForDelivery(deliveryMethod: string, address: string) {
-  if ((deliveryMethod === "speedy-address" || deliveryMethod === "econt-address") && (!address || address.trim().length === 0)) {
+  if (deliveryMethod.endsWith("-address") && (!address || address.trim().length === 0)) {
     throw new Error("Address is required for address delivery")
   }
 }
@@ -126,7 +126,7 @@ function validateCustomerInfo(info: CustomerInfo, deliveryMethod?: string) {
     [info.phone, "Phone"],
   ]
 
-  const isAddressDelivery = deliveryMethod === "speedy-address" || deliveryMethod === "econt-address"
+  const isAddressDelivery = deliveryMethod.endsWith("-address")
   if (isAddressDelivery || (info.city && info.city.trim().length > 0)) {
     required.push([info.city, "City"])
   }

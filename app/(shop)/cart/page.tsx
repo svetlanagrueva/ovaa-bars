@@ -103,6 +103,7 @@ export default function CartPage() {
           <span className="block text-muted-foreground">количка</span>
         </h1>
 
+        {/* Custom card pattern from design-system.md instead of <Card> for richer hover/transition effects */}
         <div className="mt-12 space-y-4">
           {items.map((item) => (
             <div
@@ -185,7 +186,7 @@ export default function CartPage() {
               <span className="text-foreground">{formatPrice(totalPrice)}</span>
             </div>
             {items.some((item) => isOnSale(item.product)) && (
-              <div className="flex justify-between text-sm text-accent">
+              <div className="flex justify-between text-sm text-green-600">
                 <span>Спестявате</span>
                 <span>-{formatPrice(items.reduce((s, item) =>
                   s + (isOnSale(item.product)

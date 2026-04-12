@@ -396,12 +396,12 @@ describe("input validation", () => {
     ).rejects.toThrow("Address is required for address delivery")
   })
 
-  it("rejects empty address for econt address delivery", async () => {
+  it("rejects empty address for COD address delivery", async () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
         customerInfo: { ...validCustomerInfo, address: "" },
-        deliveryMethod: "econt-address",
+        deliveryMethod: "speedy-address",
       })
     ).rejects.toThrow("Address is required for address delivery")
   })

@@ -53,7 +53,7 @@ export default function CheckoutPage() {
   const [stockWarnings, setStockWarnings] = useState<Array<{ productName: string; available: number; requested: number }>>([])
 
   const [paymentMethod, setPaymentMethod] = useState("card")
-  const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
+  const [deliveryMethod, setDeliveryMethod] = useState("econt-office")
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
   const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
   const [officePickerError, setOfficePickerError] = useState(false)
@@ -378,7 +378,15 @@ export default function CheckoutPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <RadioGroup value={deliveryMethod} onValueChange={(v) => { setDeliveryMethod(v); setOfficePickerError(false) }}>
-                    <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
+                    <p className="text-sm font-medium text-foreground mb-2">Еконт</p>
+                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                      <RadioGroupItem value="econt-office" id="econt-office" />
+                      <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
+                        <span className="font-medium">Еконт офис</span>
+                        <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
+                      </Label>
+                    </div>
+                    <p className="text-sm font-medium text-foreground mb-2 mt-4">Speedy</p>
                     <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
                       <RadioGroupItem value="speedy-office" id="speedy-office" />
                       <Label htmlFor="speedy-office" className="flex-1 cursor-pointer">
@@ -390,21 +398,6 @@ export default function CheckoutPage() {
                       <RadioGroupItem value="speedy-address" id="speedy-address" />
                       <Label htmlFor="speedy-address" className="flex-1 cursor-pointer">
                         <span className="font-medium">Speedy до адрес</span>
-                        <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
-                      </Label>
-                    </div>
-                    <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="econt-office" id="econt-office" />
-                      <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Еконт офис</span>
-                        <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="econt-address" id="econt-address" />
-                      <Label htmlFor="econt-address" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Еконт до адрес</span>
                         <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
                       </Label>
                     </div>
@@ -427,7 +420,7 @@ export default function CheckoutPage() {
                   )}
 
                   <div className="space-y-4 pt-4">
-                    {(deliveryMethod === "speedy-address" || deliveryMethod === "econt-address" || officePickerError) && (
+                    {(deliveryMethod === "speedy-address" || officePickerError) && (
                       <div className="space-y-2">
                         <Label htmlFor="city">Град *</Label>
                         <Input
@@ -439,7 +432,7 @@ export default function CheckoutPage() {
                         />
                       </div>
                     )}
-                    {(deliveryMethod === "speedy-address" || deliveryMethod === "econt-address") && (
+                    {(deliveryMethod === "speedy-address") && (
                       <>
                         <div className="space-y-2">
                           <Label htmlFor="address">Адрес *</Label>
@@ -448,7 +441,7 @@ export default function CheckoutPage() {
                             name="address"
                             value={customerInfo.address}
                             onChange={handleInputChange}
-                            required={deliveryMethod === "speedy-address" || deliveryMethod === "econt-address"}
+                            required={deliveryMethod === "speedy-address"}
                           />
                         </div>
                         <div className="space-y-2">
@@ -708,7 +701,7 @@ export default function CheckoutPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className={`flex items-start space-x-3 rounded-lg p-3 -mx-3 transition-colors ${!acceptedTerms ? "bg-accent/10" : ""}`}>
+                  <div className={`flex items-start space-x-3 rounded-lg p-3 -mx-3`}>
                     <Checkbox
                       id="acceptedTerms"
                       checked={acceptedTerms}
@@ -716,8 +709,8 @@ export default function CheckoutPage() {
                       className="mt-0.5"
                       required
                     />
-                    <label htmlFor="acceptedTerms" className={`cursor-pointer text-sm font-medium leading-snug`}>
-                      Приемам{"\u00A0"}<a href="/terms" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2 hover:text-accent">Условията{"\u00A0"}за{"\u00A0"}ползване</a> и{"\u00A0"}<a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2 hover:text-accent">Политиката{"\u00A0"}за{"\u00A0"}поверителност</a>
+                    <label htmlFor="acceptedTerms" className="cursor-pointer text-sm font-medium leading-snug text-foreground">
+                      Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>
                     </label>
                   </div>
                   <div className="flex items-start space-x-3">
@@ -726,7 +719,7 @@ export default function CheckoutPage() {
                       checked={marketingConsent}
                       onCheckedChange={(checked) => setMarketingConsent(checked === true)}
                     />
-                    <label htmlFor="marketingConsent" className="cursor-pointer font-medium text-sm leading-snug text-muted-foreground">
+                    <label htmlFor="marketingConsent" className="cursor-pointer font-medium text-sm leading-snug text-foreground">
                       Искам да получавам имейли с промоции и новини от Egg Origin
                     </label>
                   </div>
