@@ -73,13 +73,13 @@ export function ContactForm() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="lastName">Фамилия *</Label>
-          <Input id="lastName" name="lastName" required />
+          <Label htmlFor="lastName" className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Фамилия *</Label>
+          <Input id="lastName" name="lastName" required className="h-11 rounded-full border-border/60 bg-background px-4 text-sm focus:border-accent focus:ring-accent" />
         </div>
       </div>
       <div className="space-y-2">
-        <Label htmlFor="email">Имейл *</Label>
-        <Input id="email" name="email" type="email" required />
+        <Label htmlFor="email" className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Имейл *</Label>
+        <Input id="email" name="email" type="email" required className="h-11 rounded-full border-border/60 bg-background px-4 text-sm focus:border-accent focus:ring-accent" />
       </div>
       <div className="space-y-2">
         <Label htmlFor="message" className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">

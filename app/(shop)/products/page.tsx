@@ -19,7 +19,7 @@ export default async function ProductsPage() {
     <div className="bg-background py-16 sm:py-20 lg:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
             Продукти
           </p>
           <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
@@ -40,30 +40,30 @@ export default async function ProductsPage() {
 
         {/* Benefits Grid */}
         <div className="mt-24 border-t border-border pt-16">
-          <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
             Защо Egg Origin
           </p>
           <div className="mt-8 grid gap-12 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <p className="text-sm font-medium tracking-wide text-foreground">Пълноценен Протеин</p>
+              <p className="text-sm font-medium tracking-[-0.01em] text-foreground">Пълноценен Протеин</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Всички есенциални аминокиселини в прецизно балансирана формула.
               </p>
             </div>
             <div>
-              <p className="text-sm font-medium text-foreground">Без Добавена Захар</p>
+              <p className="text-sm font-medium tracking-[-0.01em] text-foreground">Без Добавена Захар</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Подсладен естествено, без добавени захари.
               </p>
             </div>
             <div>
-              <p className="text-sm font-medium text-foreground">Стабилна Енергия</p>
+              <p className="text-sm font-medium tracking-[-0.01em] text-foreground">Стабилна Енергия</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Равномерна енергия през целия ден.
               </p>
             </div>
             <div>
-              <p className="text-sm font-medium text-foreground">Чист Етикет</p>
+              <p className="text-sm font-medium tracking-[-0.01em] text-foreground">Чист Етикет</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Функционален протеин. Без излишни съставки.
               </p>

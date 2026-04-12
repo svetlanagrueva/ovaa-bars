@@ -57,8 +57,13 @@ export default function CheckoutSuccessPage() {
     return (
       <div className="bg-background py-16 sm:py-20 lg:py-24">
         <div className="mx-auto max-w-xl px-6 text-center lg:px-8">
-          <h1 className="text-3xl font-light tracking-wide text-foreground">Възникна проблем</h1>
-          <p className="mt-4 text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+            Грешка
+          </p>
+          <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">
+            Възникна проблем
+          </h1>
+          <p className="mt-4 text-sm leading-7 text-muted-foreground">
             Не успяхме да потвърдим поръчката. Моля, свържете се с нас.
           </p>
           <Button asChild className="mt-8 h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg">
@@ -78,10 +83,14 @@ export default function CheckoutSuccessPage() {
           </div>
         </div>
 
+        <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+          Готово
+        </p>
         <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
-          Поръчката е успешна!
+          Поръчката
+          <span className="block text-muted-foreground">е успешна</span>
         </h1>
-        <p className="mt-4 text-lg text-muted-foreground">
+        <p className="mt-6 max-w-md mx-auto text-sm leading-7 text-muted-foreground">
           Благодарим Ви за поръчката. Ще получите имейл с потвърждение.
         </p>
 

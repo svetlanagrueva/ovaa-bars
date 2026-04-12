@@ -22,7 +22,7 @@ export function SocialProof() {
               Общност
             </p>
 
-            <h3 className="mt-4 text-2xl font-light text-foreground">
+            <h3 className="mt-4 text-2xl font-light tracking-[-0.02em] text-foreground">
               Балансирай ежедневието
             </h3>
 

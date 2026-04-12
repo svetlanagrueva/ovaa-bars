@@ -70,7 +70,7 @@ export function Footer() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Навигация</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground">Навигация</h3>
             <ul className="mt-4 space-y-3">
               <li>
                 <Link href="/products" className="text-sm text-muted-foreground hover:text-accent">
@@ -91,7 +91,7 @@ export function Footer() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Правна информация</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground">Правна информация</h3>
             <ul className="mt-4 space-y-3">
               <li>
                 <Link href="/terms" className="text-sm text-muted-foreground hover:text-accent">

@@ -73,7 +73,7 @@ export function UsageMoments() {
                 />
               </div>
 
-              <h3 className="mt-6 text-base font-medium text-foreground">
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground">
                 {moment.title}
               </h3>
 

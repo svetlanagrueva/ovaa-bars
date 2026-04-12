@@ -292,13 +292,18 @@ export default function CheckoutPage() {
       <div className="mx-auto max-w-4xl px-6 lg:px-8">
         <Link
           href="/cart"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Обратно към количката
         </Link>
 
-        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">Плащане</h1>
+        <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+          Поръчка
+        </p>
+        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+          Плащане
+        </h1>
 
         <form onSubmit={handleSubmit} className="mt-8">
           <div className="grid gap-8 lg:grid-cols-2">
