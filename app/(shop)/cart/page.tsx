@@ -72,7 +72,7 @@ export default function CartPage() {
             Количката
             <span className="block text-muted-foreground">е празна</span>
           </h1>
-          <p className="mx-auto mt-6 max-w-md text-sm leading-7 text-muted-foreground">
+          <p className="mx-auto mt-6 max-w-md text-sm leading-relaxed text-muted-foreground">
             Добавете продукти, за да продължите с поръчката
           </p>
           <div className="mt-10">

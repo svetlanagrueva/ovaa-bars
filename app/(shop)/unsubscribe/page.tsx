@@ -52,7 +52,7 @@ function UnsubscribeContent() {
               Отписване
               <span className="block text-muted-foreground">от имейли</span>
             </h1>
-            <p className="mt-6 text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
               Сигурни ли сте, че искате да се отпишете от маркетинг имейли на Egg Origin?
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
@@ -83,7 +83,7 @@ function UnsubscribeContent() {
               Успешно
               <span className="block text-muted-foreground">се отписахте</span>
             </h1>
-            <p className="mt-6 text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
               Няма да получавате повече маркетинг имейли от Egg Origin.
               Ще продължите да получавате имейли за Вашите поръчки.
             </p>
@@ -99,7 +99,7 @@ function UnsubscribeContent() {
               Невалиден
               <span className="block text-muted-foreground">линк</span>
             </h1>
-            <p className="mt-6 text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
               {errorMessage || "Невалиден или изтекъл линк."}
             </p>
             <p className="mt-2 text-sm text-muted-foreground">

@@ -30,7 +30,7 @@ export default function AboutPage() {
                   Чистота / Функция / Баланс
                 </span>
               </div>
-              <p className="mt-8 text-sm leading-7 text-muted-foreground">
+              <p className="mt-8 text-sm leading-relaxed text-muted-foreground">
                 Egg Origin започна с едно ясно убеждение: функционалното хранене трябва да бъде чисто,
                 прецизно и създадено за динамичното ежедневие на съвременния човек. Създадохме продукт за хора,
                 които съчетават тренировки, работа и активен начин на живот с дисциплина и намерение —
@@ -39,7 +39,7 @@ export default function AboutPage() {
                 който естествено се вписва във всяка модерна рутина.
 
               </p>
-              <p className="mt-4 text-sm leading-7 text-muted-foreground">
+              <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
                 Egg Origin не е просто протеинов бар. Това е инструмент за хора, които подхождат към тренировките, работата и живота с яснота и намерение.
               </p>
             </div>
@@ -68,7 +68,7 @@ export default function AboutPage() {
             <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
               По-малко е повече
             </h2>
-            <p className="mt-8 max-w-xl mx-auto text-sm leading-7 text-muted-foreground">
+            <p className="mt-8 max-w-xl mx-auto text-sm leading-relaxed text-muted-foreground">
               Вярваме в прозрачността. Всяка съставка в Egg Origin има своята цел.
               Без изкуствени подсладители и излишни добавки.
               Само това, от което тялото ти има нужда.
@@ -93,7 +93,7 @@ export default function AboutPage() {
               <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
                 Качеството на Първо Място
               </h3>
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 Използваме яйчен протеин от най-високо качество, съчетан с
                 внимателно подбрани съставки.
               </p>
@@ -108,7 +108,7 @@ export default function AboutPage() {
               <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
                 Прозрачност
               </h3>
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 Вярваме, че заслужавате да знаете точно какво ядете.
                 Без консерванти, изкуствени оцветители и овкусители.
               </p>
@@ -123,7 +123,7 @@ export default function AboutPage() {
               <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
                 Създаден с цел
               </h3>
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 Egg Origin е продукт, създаден за хора, които избират съзнателно и изискват най-доброто за себе си.
               </p>
             </div>
@@ -143,7 +143,7 @@ export default function AboutPage() {
               Усетете
               <span className="block text-background/60">разликата</span>
             </h2>
-            <p className="mt-6 max-w-md mx-auto text-sm leading-7 text-background/70">
+            <p className="mt-6 max-w-md mx-auto text-sm leading-relaxed text-background/70">
               Опитайте Egg Origin и открийте какъв е вкусът на чистия протеин.
             </p>
             <div className="mt-10">

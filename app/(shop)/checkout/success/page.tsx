@@ -63,7 +63,7 @@ export default function CheckoutSuccessPage() {
           <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">
             Възникна проблем
           </h1>
-          <p className="mt-4 text-sm leading-7 text-muted-foreground">
+          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
             Не успяхме да потвърдим поръчката. Моля, свържете се с нас.
           </p>
           <Button asChild className="mt-8 h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg">
@@ -90,7 +90,7 @@ export default function CheckoutSuccessPage() {
           Поръчката
           <span className="block text-muted-foreground">е успешна</span>
         </h1>
-        <p className="mt-6 max-w-md mx-auto text-sm leading-7 text-muted-foreground">
+        <p className="mt-6 max-w-md mx-auto text-sm leading-relaxed text-muted-foreground">
           Благодарим Ви за поръчката. Ще получите имейл с потвърждение.
         </p>
 

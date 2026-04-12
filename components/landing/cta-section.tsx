@@ -27,7 +27,7 @@ export function CtaSection() {
             Безплатна доставка до офис над 30 €
           </h2>
 
-          <p className="mx-auto mt-8 max-w-md text-sm leading-7 opacity-70">
+          <p className="mx-auto mt-8 max-w-md text-sm leading-relaxed opacity-70">
             Доставка до 3 работни дни в цяла България.
           </p>
 

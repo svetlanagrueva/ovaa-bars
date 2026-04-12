@@ -3,7 +3,7 @@ import { FREE_SHIPPING_THRESHOLD, SHIPPING_PRICE_OFFICE, SHIPPING_PRICE_ADDRESS 
 
 export function DeliveryInfo() {
   return (
-    <div className="space-y-4 text-sm leading-7 text-muted-foreground">
+    <div className="space-y-4 text-sm leading-relaxed text-muted-foreground">
       <p>Всички поръчки над {formatPrice(FREE_SHIPPING_THRESHOLD)} са с безплатна доставка до офис на куриер.</p>
       <p>При поръчка под {formatPrice(FREE_SHIPPING_THRESHOLD)} се начислява доставка {formatPrice(SHIPPING_PRICE_OFFICE)}.</p>
       <p>При доставка до адрес се начислява доставка {formatPrice(SHIPPING_PRICE_ADDRESS)} независимо от стойността на поръчката.</p>

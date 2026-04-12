@@ -21,7 +21,7 @@ export default function ContactPage() {
               Свържете се
               <span className="block text-muted-foreground">с нас</span>
             </h1>
-            <p className="mt-6 max-w-xl mx-auto text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 max-w-xl mx-auto text-sm leading-relaxed text-muted-foreground">
               Имате въпрос или искате да научите повече? Ще се радваме да чуем от вас.
             </p>
           </div>
@@ -94,7 +94,7 @@ export default function ContactPage() {
                 <div className="mt-6 space-y-6">
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Колко време отнема доставката?</h3>
-                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                       Доставката е до 3 работни дни в цяла България. Поръчките направени до 14:00 ч.
                       се изпращат в същия ден, когато това е възможно. Поръчките, направени след 14:00 ч.,
                       се изпращат на следващия ден.
@@ -103,14 +103,14 @@ export default function ContactPage() {
                   <div className="h-px bg-border/60" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Мога ли да платя с карта?</h3>
-                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                       Да, приемаме плащания с дебитна и кредитна карта.
                     </p>
                   </div>
                   <div className="h-px bg-border/60" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Има ли безплатна доставка?</h3>
-                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                       Да, при поръчки над 30 EUR доставката до офис на куриер е безплатна.
                     </p>
                   </div>

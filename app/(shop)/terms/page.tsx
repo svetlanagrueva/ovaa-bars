@@ -13,9 +13,9 @@ export default function TermsPage() {
           Правна информация
         </p>
         <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">Общи условия</h1>
-        <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Януари 2026</p>
+        <p className="mt-6 text-sm leading-relaxed text-muted-foreground">Последна актуализация: Януари 2026</p>
 
-        <div className="mt-8 space-y-8 text-muted-foreground">
+        <div className="mt-8 max-w-prose space-y-8 text-muted-foreground">
           <section>
             <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">1. Общи положения</h2>
             <p className="mt-4">

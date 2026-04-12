@@ -26,7 +26,7 @@ export function SocialProof() {
               Балансирай ежедневието
             </h3>
 
-            <p className="mt-4 max-w-sm text-sm leading-7 text-muted-foreground">
+            <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted-foreground">
               Виж как Egg Origin се вписва в ежедневието на хора с фокус,
               движение и баланс.
             </p>

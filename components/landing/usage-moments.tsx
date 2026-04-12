@@ -51,7 +51,7 @@ export function UsageMoments() {
             </span>
           </h2>
 
-          <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
+          <p className="mt-6 max-w-xl text-sm leading-relaxed text-muted-foreground">
             От динамичните сутрини до моментите на пауза — Egg Origin е част от ежедневието ти.
           </p>
         </motion.div>
@@ -77,7 +77,7 @@ export function UsageMoments() {
                 {moment.title}
               </h3>
 
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 {moment.description}
               </p>
             </motion.div>

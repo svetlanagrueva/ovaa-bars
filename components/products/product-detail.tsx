@@ -163,7 +163,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
             <div className="mt-12 space-y-6">
               <div>
                 <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Описание</h2>
-                <div className="mt-3 space-y-4 text-muted-foreground">
+                <div className="mt-3 max-w-prose space-y-4 text-muted-foreground">
                   {product.fullDescription.split('\n\n').map((paragraph, index) => (
                     <p key={index}>{paragraph}</p>
                   ))}
