@@ -84,7 +84,7 @@ export default async function HomePage() {
                 <Button
                   asChild
                   size="lg"
-                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                  className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
                 >
                   <Link href="/products">
                     {HERO.cta}
@@ -129,7 +129,7 @@ export default async function HomePage() {
                 <Button
                   asChild
                   size="lg"
-                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                  className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
                 >
                   <Link href="/products">
                     {HERO.cta}
@@ -177,7 +177,7 @@ export default async function HomePage() {
           </div>
 
           <div className="mt-12 grid gap-4 sm:gap-5 lg:mt-14 lg:grid-cols-3 lg:gap-6">
-            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
                 01
@@ -189,12 +189,11 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Всички есенциални аминокиселини в прецизно балансирана форма — за
-                възстановяване, баланс и устойчив тонус.
+                Пълен аминокиселинен профил в добре балансирана формула.
               </p>
             </div>
 
-            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
                 02
@@ -206,12 +205,12 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Създаден да поддържа баланс и яснота — в синхрон с ежедневния ти
+                 Равномерна енергия през целия ден. В синхрон с ежедневния ти
                 ритъм.
               </p>
             </div>
 
-            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 backdrop-blur-md transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
                 03
@@ -223,8 +222,7 @@ export default async function HomePage() {
               </h3>
 
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Без млечни продукти, без суроватка и без излишни съставки — само
-                това, което има реална функция.
+                Функционален протеин. Без излишни съставки.
               </p>
             </div>
           </div>
@@ -265,7 +263,7 @@ export default async function HomePage() {
                   <Button
                     asChild
                     size="lg"
-                    className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                    className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
                   >
                     <Link href={FLAVORS.white.href}>
                       Виж продукта
@@ -303,7 +301,7 @@ export default async function HomePage() {
                 <Button
                   asChild
                   size="lg"
-                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                  className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
                 >
                   <Link href={FLAVORS.white.href}>
                     Виж продукта
@@ -348,7 +346,7 @@ export default async function HomePage() {
                   <Button
                     asChild
                     size="lg"
-                    className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                    className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
                   >
                     <Link href={FLAVORS.dark.href}>
                       Виж продукта
@@ -386,7 +384,7 @@ export default async function HomePage() {
                 <Button
                   asChild
                   size="lg"
-                  className="h-11 gap-2 rounded-full bg-foreground px-6 text-[10px] uppercase tracking-[0.16em] text-background hover:opacity-90"
+                  className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
                 >
                   <Link href={FLAVORS.dark.href}>
                     Виж продукта

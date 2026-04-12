@@ -16,22 +16,23 @@ export default async function ProductsPage() {
     getInventoryMap(),
   ])
   return (
-    <div className="bg-background py-16 sm:py-24">
+    <div className="bg-background py-16 sm:py-20 lg:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.4em] text-muted-foreground">
             Продукти
           </p>
-          <h1 className="mt-6 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
-            Чист протеин. Всеки ден.
+          <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+            Чист протеин
+              <span className="block text-muted-foreground">Всеки ден</span>
           </h1>
-          <p className="mt-6 text-sm leading-loose tracking-wide text-muted-foreground">
-            Пълноценен яйчен протеин с всички есенциални аминокиселини.
+          <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
+            Пълноценен яйчен протеин с пълен аминокиселинен профил.
             Без добавена захар и излишни съставки. Създаден за твоето ежедневие.
           </p>
         </div>
 
-        <div className="mt-16 grid grid-cols-2 gap-3 sm:gap-8 lg:grid-cols-3">
+        <div className="mt-14 grid grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-3 lg:gap-8">
           {PRODUCTS.map((product) => (
             <ProductCard key={product.id} product={product} soldOut={inventoryMap.has(product.id) && inventoryMap.get(product.id) === 0} />
           ))}
@@ -46,7 +47,7 @@ export default async function ProductsPage() {
             <div>
               <p className="text-sm font-medium tracking-wide text-foreground">Пълноценен Протеин</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                Всички есенциални аминокиселини в прецизно балансирана форма.
+                Всички есенциални аминокиселини в прецизно балансирана формула.
               </p>
             </div>
             <div>
@@ -71,10 +72,14 @@ export default async function ProductsPage() {
         </div>
 
         {/* Shipping Info */}
-        <div className="mt-16 border-t border-border pt-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            Безплатна доставка до офис при поръчки над 30 €. Доставка до 2 работни дни в цяла България.
-          </p>
+        <div className="mt-20 border-t border-border pt-14">
+          <div className="flex items-center justify-center gap-4">
+            <div className="h-px w-10 bg-accent/50" />
+            <p className="text-center text-sm text-muted-foreground">
+              Безплатна доставка до офис при поръчки над 30 €. Доставка до 2 работни дни в цяла България.
+            </p>
+            <div className="h-px w-10 bg-accent/50" />
+          </div>
         </div>
       </div>
     </div>

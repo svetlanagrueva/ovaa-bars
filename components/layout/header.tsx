@@ -45,15 +45,14 @@ export function Header() {
         <div className="flex items-center gap-4">
           <Link href="/cart" className="relative">
             <Button
-              variant={mounted && totalItems > 0 ? "default" : "outline"}
+              variant="ghost"
               size="sm"
-              className="relative gap-2 px-4 text-[11px] uppercase tracking-[0.15em]"
+              className="relative gap-2 bg-transparent px-4 text-[11px] uppercase tracking-[0.15em] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
             >
               <ShoppingCart className="h-4 w-4" />
-              {mounted && totalItems > 0 ? (
-                <span className="font-medium">{totalItems}</span>
-              ) : (
-                <span className="hidden sm:inline">Количка</span>
+              <span className="hidden sm:inline">Количка</span>
+              {mounted && totalItems > 0 && (
+                <span className="font-medium">({totalItems})</span>
               )}
             </Button>
           </Link>

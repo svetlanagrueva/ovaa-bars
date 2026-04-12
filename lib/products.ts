@@ -43,7 +43,7 @@ export const PRODUCTS: Product[] = [
     badge: 'Бестселър',
     boxContents: '12 x бара Тъмен Шоколад',
     barsCount: 12,
-    nutritionHighlights: ['20g Протеин', 'Ниска Захар', 'Чиста Етикета'],
+    nutritionHighlights: ['20g Протеин', 'Без добавена захар', 'Чист Етикет'],
     nutritionFacts: {
       calories: 195,
       protein: 20,
@@ -85,7 +85,7 @@ export const PRODUCTS: Product[] = [
     badge: 'Ново',
     boxContents: '12 x бара Бял Шоколад с Малини',
     barsCount: 12,
-    nutritionHighlights: ['20g Протеин', 'Ниска Захар', 'Чиста Етикета'],
+    nutritionHighlights: ['20g Протеин', 'Без добавена захар', 'Чист Етикет'],
     nutritionFacts: {
       calories: 190,
       protein: 20,
@@ -127,7 +127,7 @@ export const PRODUCTS: Product[] = [
     badge: 'Популярен',
     boxContents: '6 x Тъмен Шоколад + 6 x Бял Шоколад с Малини',
     barsCount: 12,
-    nutritionHighlights: ['20g Протеин', 'Ниска Захар', 'Чиста Етикета'],
+    nutritionHighlights: ['20g Протеин', 'Без добавена захар', 'Чист Етикет'],
     nutritionFacts: {
       calories: 192,
       protein: 20,

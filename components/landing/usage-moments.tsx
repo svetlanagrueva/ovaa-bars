@@ -11,19 +11,19 @@ const moments = [
     image: "/images/usage-meetings.png",
     title: "Между срещи",
     description:
-      "Когато графикът е плътен, а фокусът има значение — чиста и удобна опция за междинен момент през деня.",
+      "Когато графикът е натоварен, а фокусът е важен — чиста и удобна опция за деня.",
   },
   {
     image: "/images/usage-workout.png",
     title: "След кратка тренировка",
     description:
-      "Практичен избор за динамични сутрини и бърз преход обратно към работния ритъм.",
+      "За динамичните сутрини, когато енергията има значение.",
   },
   {
     image: "/images/usage-reset.png",
     title: "В момент на баланс",
     description:
-      "За по-тихите части на деня — когато търсиш лекота, яснота и предвидимост в избора си.",
+      "За по-спокойните моменти — когато търсиш лекота и яснота.",
   },
 ]
 
@@ -47,13 +47,12 @@ export function UsageMoments() {
           <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
             Създаден за ритъма
             <span className="block text-muted-foreground">
-              на модерния професионалист
+              на твоя ден
             </span>
           </h2>
 
           <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
-            От натоварени сутрини до по-тихи моменти на баланс — Egg Origin е
-            създаден да бъде естествена част от ежедневието ти.
+            От динамични сутрини до кратки паузи — Egg Origin е част от ежедневието ти.
           </p>
         </motion.div>
 
@@ -93,7 +92,7 @@ export function UsageMoments() {
         >
           <Link
             href="/products"
-            className="inline-flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground transition-colors hover:text-accent"
+            className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent"
           >
             Виж продуктите
             <ArrowRight className="h-3.5 w-3.5" />

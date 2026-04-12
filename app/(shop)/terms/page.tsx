@@ -7,14 +7,17 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <div className="bg-background py-12 sm:py-16">
-      <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Общи условия</h1>
-        <p className="mt-4 text-muted-foreground">Последна актуализация: Януари 2026</p>
+    <div className="bg-background py-16 sm:py-20 lg:py-24">
+      <div className="mx-auto max-w-3xl px-6 lg:px-8">
+        <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+          Правна информация
+        </p>
+        <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">Общи условия</h1>
+        <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Януари 2026</p>
 
         <div className="mt-8 space-y-8 text-muted-foreground">
           <section>
-            <h2 className="text-xl font-semibold text-foreground">1. Общи положения</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">1. Общи положения</h2>
             <p className="mt-4">
               Настоящите Общи условия уреждат отношенията между Egg Origin (наричан по-долу 
               &quot;Продавач&quot;) и потребителите на уебсайта eggorigin.com (наричани по-долу &quot;Купувач&quot;) 
@@ -23,7 +26,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">2. Поръчки</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">2. Поръчки</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Поръчките се правят чрез уебсайта eggorigin.com. След завършване на поръчката, 
@@ -42,7 +45,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">3. Цени и плащане</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">3. Цени и плащане</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Всички цени са в евро (EUR) и включват ДДС. Цената на доставката
@@ -56,7 +59,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">4. Доставка</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">4. Доставка</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Доставката се извършва чрез куриерска фирма Speedy до офис или адрес на 
@@ -74,7 +77,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">5. Право на отказ</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">5. Право на отказ</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Съгласно Закона за защита на потребителите, Купувачът има право да се откаже 
@@ -90,7 +93,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">6. Рекламации</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">6. Рекламации</h2>
             <div className="mt-4 space-y-4">
               <p>
                 При получаване на дефектен или повреден продукт, Купувачът има право да предяви 
@@ -101,7 +104,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground">7. Контакт</h2>
+            <h2 className="text-lg font-medium tracking-wide text-foreground">7. Контакт</h2>
             <p className="mt-4">
               При въпроси относно тези Общи условия, моля свържете се с нас на:
               <br />

@@ -35,7 +35,7 @@ export function SocialProof() {
               href="https://instagram.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 inline-block text-[11px] uppercase tracking-[0.3em] text-foreground transition-colors hover:text-accent"
+              className="mt-6 inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent"
             >
               Instagram →
             </Link>

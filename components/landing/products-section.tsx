@@ -22,7 +22,7 @@ export function ProductsSection({ products, inventoryMap }: ProductsSectionProps
           </div>
           <Link
             href="/products"
-            className="hidden rounded-full bg-muted/50 px-4 py-2 text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground hover:bg-muted hover:text-foreground sm:block"
+            className="hidden items-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent sm:inline-flex"
           >
             Виж всички
           </Link>
@@ -41,7 +41,7 @@ export function ProductsSection({ products, inventoryMap }: ProductsSectionProps
         <div className="mt-8 text-center sm:hidden">
           <Link
             href="/products"
-            className="inline-block rounded-full bg-muted/50 px-4 py-2 text-[10px] font-medium uppercase tracking-[0.3em] text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent"
           >
             Виж всички
           </Link>

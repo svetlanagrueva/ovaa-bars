@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText, HelpCircle } from "lucide-react"
+import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText, HelpCircle, ShieldCheck } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -53,7 +53,7 @@ export default function CheckoutPage() {
   const [stockWarnings, setStockWarnings] = useState<Array<{ productName: string; available: number; requested: number }>>([])
 
   const [paymentMethod, setPaymentMethod] = useState("card")
-  const [deliveryMethod, setDeliveryMethod] = useState("speedy-office")
+  const [deliveryMethod, setDeliveryMethod] = useState("econt-office")
   const [selectedEcontOffice, setSelectedEcontOffice] = useState<EcontOfficeOption | null>(null)
   const [selectedSpeedyOffice, setSelectedSpeedyOffice] = useState<SpeedyOfficeOption | null>(null)
   const [officePickerError, setOfficePickerError] = useState(false)
@@ -80,6 +80,7 @@ export default function CheckoutPage() {
 
   const [wantsInvoice, setWantsInvoice] = useState(false)
   const [marketingConsent, setMarketingConsent] = useState(false)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [billingType, setBillingType] = useState<"individual" | "company">("individual")
 
   const [billingInfo, setBillingInfo] = useState<BillingInfo>({
@@ -169,6 +170,13 @@ export default function CheckoutPage() {
     setError(null)
 
     try {
+      if (!acceptedTerms) {
+        setError("Моля, приемете условията за ползване и политиката за поверителност.")
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
       if (deliveryMethod === "econt-office" && !selectedEcontOffice) {
         setError("Моля, изберете офис на Еконт")
         setIsLoading(false)
@@ -268,8 +276,8 @@ export default function CheckoutPage() {
 
   if (!mounted || items.length === 0) {
     return (
-      <div className="bg-background py-12 sm:py-16">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+      <div className="bg-background py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-4xl px-6 lg:px-8">
           <div className="animate-pulse">
             <div className="h-8 w-48 rounded bg-secondary" />
             <div className="mt-8 h-96 rounded-lg bg-secondary" />
@@ -280,17 +288,17 @@ export default function CheckoutPage() {
   }
 
   return (
-    <div className="bg-background py-12 sm:py-16">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+    <div className="bg-background py-16 sm:py-20 lg:py-24">
+      <div className="mx-auto max-w-4xl px-6 lg:px-8">
         <Link
           href="/cart"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-3.5 w-3.5" />
           Обратно към количката
         </Link>
 
-        <h1 className="mt-6 text-3xl font-bold tracking-tight text-foreground">Плащане</h1>
+        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">Плащане</h1>
 
         <form onSubmit={handleSubmit} className="mt-8">
           <div className="grid gap-8 lg:grid-cols-2">
@@ -298,7 +306,7 @@ export default function CheckoutPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       1
                     </span>
@@ -360,7 +368,7 @@ export default function CheckoutPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       2
                     </span>
@@ -370,7 +378,15 @@ export default function CheckoutPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <RadioGroup value={deliveryMethod} onValueChange={(v) => { setDeliveryMethod(v); setOfficePickerError(false) }}>
-                    <p className="text-sm font-medium text-foreground mb-2">Speedy</p>
+                    <p className="text-sm font-medium text-foreground mb-2">Еконт</p>
+                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                      <RadioGroupItem value="econt-office" id="econt-office" />
+                      <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
+                        <span className="font-medium">Еконт офис</span>
+                        <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
+                      </Label>
+                    </div>
+                    <p className="text-sm font-medium text-foreground mb-2 mt-4">Speedy</p>
                     <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
                       <RadioGroupItem value="speedy-office" id="speedy-office" />
                       <Label htmlFor="speedy-office" className="flex-1 cursor-pointer">
@@ -382,21 +398,6 @@ export default function CheckoutPage() {
                       <RadioGroupItem value="speedy-address" id="speedy-address" />
                       <Label htmlFor="speedy-address" className="flex-1 cursor-pointer">
                         <span className="font-medium">Speedy до адрес</span>
-                        <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
-                      </Label>
-                    </div>
-                    <p className="text-sm font-medium text-foreground mb-2 mt-4">Еконт</p>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="econt-office" id="econt-office" />
-                      <Label htmlFor="econt-office" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Еконт офис</span>
-                        <p className="text-sm text-muted-foreground">До най-близкия офис на Еконт</p>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="econt-address" id="econt-address" />
-                      <Label htmlFor="econt-address" className="flex-1 cursor-pointer">
-                        <span className="font-medium">Еконт до адрес</span>
                         <p className="text-sm text-muted-foreground">Доставка до посочен адрес</p>
                       </Label>
                     </div>
@@ -419,7 +420,7 @@ export default function CheckoutPage() {
                   )}
 
                   <div className="space-y-4 pt-4">
-                    {(deliveryMethod === "speedy-address" || deliveryMethod === "econt-address" || officePickerError) && (
+                    {(deliveryMethod === "speedy-address" || officePickerError) && (
                       <div className="space-y-2">
                         <Label htmlFor="city">Град *</Label>
                         <Input
@@ -431,7 +432,7 @@ export default function CheckoutPage() {
                         />
                       </div>
                     )}
-                    {(deliveryMethod === "speedy-address" || deliveryMethod === "econt-address") && (
+                    {(deliveryMethod === "speedy-address") && (
                       <>
                         <div className="space-y-2">
                           <Label htmlFor="address">Адрес *</Label>
@@ -440,7 +441,7 @@ export default function CheckoutPage() {
                             name="address"
                             value={customerInfo.address}
                             onChange={handleInputChange}
-                            required={deliveryMethod === "speedy-address" || deliveryMethod === "econt-address"}
+                            required={deliveryMethod === "speedy-address"}
                           />
                         </div>
                         <div className="space-y-2">
@@ -470,7 +471,7 @@ export default function CheckoutPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       3
                     </span>
@@ -480,7 +481,7 @@ export default function CheckoutPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod}>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                    <div className="flex items-center space-x-3 rounded-[26px] border border-border/40 p-4 transition-all duration-500">
                       <RadioGroupItem value="card" id="card" />
                       <Label htmlFor="card" className="flex-1 cursor-pointer">
                         <span className="flex items-center gap-2 font-medium">
@@ -490,7 +491,7 @@ export default function CheckoutPage() {
                         <p className="text-sm text-muted-foreground">Сигурно плащане с дебитна/кредитна карта</p>
                       </Label>
                     </div>
-                    <div className="flex items-center space-x-3 rounded-lg border border-border p-4">
+                    <div className="flex items-center space-x-3 rounded-[26px] border border-border/40 p-4 transition-all duration-500">
                       <RadioGroupItem value="cod" id="cod" />
                       <Label htmlFor="cod" className="flex-1 cursor-pointer">
                         <span className="flex items-center gap-2 font-medium">
@@ -506,7 +507,7 @@ export default function CheckoutPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                       4
                     </span>
@@ -528,13 +529,13 @@ export default function CheckoutPage() {
 
                   {wantsInvoice && (
                     <div className="space-y-4 pt-4 border-t border-border">
-                      <div className="grid grid-cols-2 rounded-lg border border-border overflow-hidden">
+                      <div className="grid grid-cols-2 rounded-full border border-border/40 overflow-hidden">
                         <button
                           type="button"
-                          className={`px-4 py-2.5 text-sm font-medium transition-colors ${
+                          className={`px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.16em] transition-colors ${
                             billingType === "individual"
                               ? "bg-primary text-primary-foreground"
-                              : "bg-background text-muted-foreground hover:bg-secondary"
+                              : "bg-background text-muted-foreground hover:text-foreground"
                           }`}
                           onClick={() => setBillingType("individual")}
                         >
@@ -542,10 +543,10 @@ export default function CheckoutPage() {
                         </button>
                         <button
                           type="button"
-                          className={`px-4 py-2.5 text-sm font-medium transition-colors border-l border-border ${
+                          className={`px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.16em] transition-colors border-l border-border/40 ${
                             billingType === "company"
                               ? "bg-primary text-primary-foreground"
-                              : "bg-background text-muted-foreground hover:bg-secondary"
+                              : "bg-background text-muted-foreground hover:text-foreground"
                           }`}
                           onClick={() => setBillingType("company")}
                         >
@@ -689,24 +690,48 @@ export default function CheckoutPage() {
                 </CardContent>
               </Card>
 
-              {/* Marketing consent — unchecked by default (ЗЕС чл. 261 soft opt-in) */}
-              <div className="flex items-start space-x-3 rounded-lg border border-border p-4">
-                <Checkbox
-                  id="marketingConsent"
-                  checked={marketingConsent}
-                  onCheckedChange={(checked) => setMarketingConsent(checked === true)}
-                />
-                <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
-                  Искам да получавам имейли с промоции и новини от Egg Origin
-                </Label>
-              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                      5
+                    </span>
+                    <ShieldCheck className="h-4 w-4" />
+                    Съгласия
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className={`flex items-start space-x-3 rounded-lg p-3 -mx-3`}>
+                    <Checkbox
+                      id="acceptedTerms"
+                      checked={acceptedTerms}
+                      onCheckedChange={(checked) => setAcceptedTerms(checked === true)}
+                      className="mt-0.5"
+                      required
+                    />
+                    <label htmlFor="acceptedTerms" className="cursor-pointer text-sm font-medium leading-snug text-foreground">
+                      Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>
+                    </label>
+                  </div>
+                  <div className="flex items-start space-x-3">
+                    <Checkbox
+                      id="marketingConsent"
+                      checked={marketingConsent}
+                      onCheckedChange={(checked) => setMarketingConsent(checked === true)}
+                    />
+                    <label htmlFor="marketingConsent" className="cursor-pointer font-medium text-sm leading-snug text-foreground">
+                      Искам да получавам имейли с промоции и новини от Egg Origin
+                    </label>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
             {/* Order Summary */}
             <div>
               <Card className="sticky top-24">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-primary">
                     <CreditCard className="h-4 w-4" />
                     Вашата поръчка
                   </CardTitle>
@@ -833,7 +858,7 @@ export default function CheckoutPage() {
                         <p key={w.productName} className="text-sm text-destructive">
                           {w.available === 0
                             ? `${w.productName} е изчерпан`
-                            : `${w.productName} — налични само ${w.available} бр. (искани ${w.requested})`}
+                            : `Недостатъчна наличност на ${w.productName}. Налични ${w.available}бр.`}
                         </p>
                       ))}
                       <p className="text-xs text-muted-foreground">Моля, актуализирайте количката.</p>
@@ -844,10 +869,10 @@ export default function CheckoutPage() {
                     <p className="text-sm text-destructive">{error}</p>
                   )}
 
-                  <Button type="submit" className="mt-6 w-full" size="lg" disabled={isLoading || stockWarnings.length > 0}>
+                  <Button type="submit" className="mt-6 h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg" disabled={isLoading || stockWarnings.length > 0}>
                     {isLoading ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                         Обработка...
                       </>
                     ) : paymentMethod === "card" ? (

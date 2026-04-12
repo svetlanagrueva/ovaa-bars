@@ -42,8 +42,8 @@ export default function CheckoutSuccessPage() {
 
   if (status === "loading") {
     return (
-      <div className="bg-background py-16 sm:py-24">
-        <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
+      <div className="bg-background py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-xl px-6 text-center lg:px-8">
           <div className="flex justify-center">
             <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
           </div>
@@ -55,13 +55,13 @@ export default function CheckoutSuccessPage() {
 
   if (status === "error") {
     return (
-      <div className="bg-background py-16 sm:py-24">
-        <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
-          <h1 className="text-2xl font-bold text-foreground">Възникна проблем</h1>
+      <div className="bg-background py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-xl px-6 text-center lg:px-8">
+          <h1 className="text-3xl font-light tracking-wide text-foreground">Възникна проблем</h1>
           <p className="mt-4 text-muted-foreground">
             Не успяхме да потвърдим поръчката. Моля, свържете се с нас.
           </p>
-          <Button asChild className="mt-8" size="lg">
+          <Button asChild className="mt-8 h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg">
             <Link href="/contact">Свържете се с нас</Link>
           </Button>
         </div>
@@ -70,15 +70,15 @@ export default function CheckoutSuccessPage() {
   }
 
   return (
-    <div className="bg-background py-16 sm:py-24">
-      <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
+    <div className="bg-background py-16 sm:py-20 lg:py-24">
+      <div className="mx-auto max-w-xl px-6 text-center lg:px-8">
         <div className="flex justify-center">
           <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10">
             <CheckCircle className="h-12 w-12 text-primary" />
           </div>
         </div>
 
-        <h1 className="mt-6 text-3xl font-bold tracking-tight text-foreground">
+        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
           Поръчката е успешна!
         </h1>
         <p className="mt-4 text-lg text-muted-foreground">
@@ -103,10 +103,10 @@ export default function CheckoutSuccessPage() {
           <p className="text-sm text-muted-foreground">
             Очаквайте доставка в рамките на 2 работни дни.
           </p>
-          <Button asChild size="lg" className="w-full sm:w-auto">
+          <Button asChild size="lg" className="h-11 w-full gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:w-auto">
             <Link href="/products">
               Продължи пазаруването
-              <ArrowRight className="ml-2 h-4 w-4" />
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
         </div>

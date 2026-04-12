@@ -1,6 +1,5 @@
 import type { Metadata } from "next"
 import { Mail, Phone, MapPin, Clock } from "lucide-react"
-import { Card, CardContent } from "@/components/ui/card"
 import { ContactForm } from "@/components/contact/contact-form"
 
 export const metadata: Metadata = {
@@ -10,113 +9,133 @@ export const metadata: Metadata = {
 
 export default function ContactPage() {
   return (
-    <div className="bg-background py-12 sm:py-16">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Свържете се с нас
-          </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
-            Имате въпрос или искате да научите повече? Ще се радваме да чуем от вас!
-          </p>
-        </div>
-
-        <div className="mt-12 grid gap-8 lg:grid-cols-2">
-          {/* Contact Info */}
-          <div className="space-y-6">
-            <h2 className="text-xl font-semibold text-foreground">Информация за контакт</h2>
-            
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <Mail className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-foreground">Имейл</h3>
-                    <a href="mailto:info@eggorigin.com" className="text-muted-foreground hover:text-primary">
-                      info@eggorigin.com
-                    </a>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <Phone className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-foreground">Телефон</h3>
-                    <a href="tel:+359888123456" className="text-muted-foreground hover:text-primary">
-                      +359 888 123 456
-                    </a>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <MapPin className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-foreground">Адрес</h3>
-                    <p className="text-muted-foreground">
-                      София, България
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <Clock className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-foreground">Работно време</h3>
-                    <p className="text-muted-foreground">
-                      Пон-Пет: 9:00 - 18:00
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="rounded-lg bg-secondary p-6">
-              <h3 className="font-semibold text-foreground">Често задавани въпроси</h3>
-              <ul className="mt-4 space-y-3 text-muted-foreground">
-                <li>
-                  <strong className="text-foreground">Колко време отнема доставката?</strong>
-                  <p className="mt-1">Доставката със Speedy е до 2 работни дни в цяла България.</p>
-                </li>
-                <li>
-                  <strong className="text-foreground">Мога ли да върна продукт?</strong>
-                  <p className="mt-1">Да, в рамките на 14 дни от получаването, при непокътната опаковка.</p>
-                </li>
-                <li>
-                  <strong className="text-foreground">Има ли безплатна доставка?</strong>
-                  <p className="mt-1">Да, при поръчки над 30 € доставката до офис на куриер е безплатна.</p>
-                </li>
-              </ul>
-            </div>
+    <div className="bg-background">
+      {/* Hero Section */}
+      <section className="py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="mx-auto max-w-2xl text-center">
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              Контакти
+            </p>
+            <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+              Свържете се
+              <span className="block text-muted-foreground">с нас</span>
+            </h1>
+            <p className="mt-6 max-w-xl mx-auto text-sm leading-7 text-muted-foreground">
+              Имате въпрос или искате да научите повече? Ще се радваме да чуем от вас.
+            </p>
           </div>
+        </div>
+      </section>
 
-          {/* Contact Form */}
-          <div>
-            <Card>
-              <CardContent className="p-6">
-                <h2 className="text-xl font-semibold text-foreground">Изпратете съобщение</h2>
-                <p className="mt-2 text-muted-foreground">
+      {/* Contact Content */}
+      <section className="pb-16 sm:pb-20 lg:pb-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="grid gap-10 lg:grid-cols-2 lg:gap-16">
+            {/* Contact Info */}
+            <div className="space-y-8">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+                  Информация за контакт
+                </p>
+              </div>
+              
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                  <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                    <Mail className="h-4 w-4 text-foreground" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-medium text-foreground">Имейл</h3>
+                  <a href="mailto:info@eggorigin.com" className="mt-1 block text-sm text-muted-foreground transition-colors hover:text-accent">
+                    info@eggorigin.com
+                  </a>
+                </div>
+
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                  <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                    <Phone className="h-4 w-4 text-foreground" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-medium text-foreground">Телефон</h3>
+                  <a href="tel:+359888123456" className="mt-1 block text-sm text-muted-foreground transition-colors hover:text-accent">
+                    +359 888 123 456
+                  </a>
+                </div>
+
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                  <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                    <MapPin className="h-4 w-4 text-foreground" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-medium text-foreground">Адрес</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    София, България
+                  </p>
+                </div>
+
+                <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05]">
+                  <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                    <Clock className="h-4 w-4 text-foreground" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-medium text-foreground">Работно време</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Пон-Пет: 9:00 - 18:00
+                  </p>
+                </div>
+              </div>
+
+              {/* FAQ Section */}
+              <div className="mt-8 rounded-[26px] border border-border/40 bg-card/80 p-8">
+                <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+                  Често задавани въпроси
+                </p>
+                <div className="mt-6 space-y-6">
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground">Колко време отнема доставката?</h3>
+                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                      Доставката е до 3 работни дни в цяла България. Поръчките направени до 14:00 ч.
+                      се изпращат в същия ден, когато това е възможно. Поръчките, направени след 14:00 ч.,
+                      се изпращат на следващия ден.
+                    </p>
+                  </div>
+                  <div className="h-px bg-border/60" />
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground">Мога ли да платя с карта?</h3>
+                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                      Да, приемаме плащания с дебитна и кредитна карта.
+                    </p>
+                  </div>
+                  <div className="h-px bg-border/60" />
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground">Има ли безплатна доставка?</h3>
+                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                      Да, при поръчки над 30 EUR доставката до офис на куриер е безплатна.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Contact Form */}
+            <div>
+              <div className="rounded-[26px] border border-border/40 bg-card/80 p-8 md:p-10">
+                <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+                  Изпратете съобщение
+                </p>
+                <h2 className="mt-4 text-2xl font-light tracking-[-0.02em] text-foreground">
+                  Пишете ни
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
                   Попълнете формата и ще ви отговорим възможно най-скоро.
                 </p>
                 <ContactForm />
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   )
 }

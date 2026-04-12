@@ -3,7 +3,7 @@
 import React from "react"
 
 import { useState } from "react"
-import { Loader2, CheckCircle } from "lucide-react"
+import { Loader2, CheckCircle, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -39,15 +39,19 @@ export function ContactForm() {
 
   if (isSubmitted) {
     return (
-      <div className="mt-6 flex flex-col items-center py-8 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-          <CheckCircle className="h-8 w-8 text-primary" />
+      <div className="mt-8 flex flex-col items-center py-8 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-secondary">
+          <CheckCircle className="h-8 w-8 text-foreground" />
         </div>
-        <h3 className="mt-4 text-lg font-semibold text-foreground">Съобщението е изпратено!</h3>
+        <h3 className="mt-6 text-lg font-light tracking-[-0.02em] text-foreground">Съобщението е изпратено</h3>
         <p className="mt-2 text-sm text-muted-foreground">
           Благодарим ви! Ще се свържем с вас възможно най-скоро.
         </p>
-        <Button className="mt-6 bg-transparent" variant="outline" onClick={() => setIsSubmitted(false)}>
+        <Button
+          variant="outline"
+          className="mt-8 h-10 rounded-full border-border/60 bg-transparent px-6 text-[10px] uppercase tracking-[0.16em] text-foreground hover:bg-secondary"
+          onClick={() => setIsSubmitted(false)}
+        >
           Изпрати ново съобщение
         </Button>
       </div>
@@ -55,11 +59,18 @@ export function ContactForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
+    <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+      <div className="grid gap-6 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="name">Име *</Label>
-          <Input id="name" name="name" required />
+          <Label htmlFor="name" className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            Име *
+          </Label>
+          <Input
+            id="name"
+            name="name"
+            required
+            className="h-11 rounded-full border-border/60 bg-background px-4 text-sm focus:border-accent focus:ring-accent"
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="lastName">Фамилия *</Label>
@@ -71,26 +82,38 @@ export function ContactForm() {
         <Input id="email" name="email" type="email" required />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="message">Съобщение *</Label>
+        <Label htmlFor="message" className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Съобщение *
+        </Label>
         <Textarea
           id="message"
           name="message"
           rows={5}
           required
           placeholder="Как можем да ви помогнем?"
+          className="rounded-[20px] border-border/60 bg-background px-4 py-3 text-sm focus:border-accent focus:ring-accent"
         />
       </div>
       {error && (
-        <p className="text-sm text-destructive">{error}</p>
+        <div className="rounded-[16px] bg-destructive/10 p-4">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
       )}
-      <Button type="submit" className="w-full" disabled={isLoading}>
+      <Button
+        type="submit"
+        disabled={isLoading}
+        className="h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
+      >
         {isLoading ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
             Изпращане...
           </>
         ) : (
-          "Изпрати съобщение"
+          <>
+            Изпрати съобщение
+            <ArrowRight className="h-4 w-4" />
+          </>
         )}
       </Button>
     </form>

@@ -36,7 +36,7 @@ function TikTokIcon({ className }: { className?: string }) {
 
 export function Footer() {
   return (
-    <footer className="border-t border-border bg-card">
+    <footer className="border-t border-border">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="grid gap-8 md:grid-cols-4">
           <div className="md:col-span-2">
@@ -44,8 +44,8 @@ export function Footer() {
               <span className="text-base font-medium tracking-[0.3em] uppercase text-foreground">Egg Origin</span>
             </Link>
             <p className="mt-4 max-w-md text-sm text-muted-foreground">
-              Протеинови барове с яйчен белтък. Високо съдържание на протеин,
-              без суроватка, без добавена захар - създадени за ежедневна употреба.
+              Протеинови барове с яйчен белтък. Пълноценен протеин без излишни съставки
+              — за стабилна енергия през целия ден.
             </p>
             <div className="mt-4 flex items-center gap-4">
               <a

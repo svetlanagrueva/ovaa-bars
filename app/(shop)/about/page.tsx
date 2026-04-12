@@ -6,37 +6,46 @@ import { Button } from "@/components/ui/button"
 
 export const metadata: Metadata = {
   title: "За нас - Egg Origin",
-  description: "Научете повече за Egg Origin и нашата мисия да създаваме протеинови барове с яйчен белтък и чиста етикета.",
+  description: "Научете повече за Egg Origin и нашата мисия да създаваме протеинови барове с яйчен белтък.",
 }
 
 export default function AboutPage() {
   return (
-    <div className="bg-background">
+    <div>
       {/* Hero Section */}
-      <section className="py-16 sm:py-24">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="grid items-center gap-16 lg:grid-cols-2">
+      <section className="py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
             <div className="max-w-xl">
-              <p className="text-xs font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
                 Нашата История
               </p>
-              <h1 className="mt-6 text-4xl font-light tracking-tight text-foreground sm:text-5xl">
-                Протеин, преосмислен
+              <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+                Протеин
+                <span className="block text-muted-foreground">преосмислен</span>
               </h1>
-              <p className="mt-8 text-base leading-relaxed text-muted-foreground">
-                Egg Origin се роди от едно просто убеждение: протеиновите барове трябва да бъдат
-                функционално хранене, а не бонбони в дегизировка. Създадохме бар с чиста етикета,
-                който доставя пълноценен протеин без компромиси.
+              <div className="mt-10 flex items-center gap-4">
+                <div className="h-px w-10 bg-accent/50" />
+                <span className="text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
+                  Чистота / Функция / Баланс
+                </span>
+              </div>
+              <p className="mt-8 text-sm leading-7 text-muted-foreground">
+                Egg Origin започна с едно ясно убеждение: функционалното хранене трябва да бъде чисто,
+                прецизно и създадено за динамичното ежедневие на съвременния човек. Създадохме продукт за хора,
+                които съчетават тренировки, работа и активен начин на живот с дисциплина и намерение —
+                за които представянето има значение във всеки момент от деня, не само във фитнеса.
+                Нашата мисия е проста: да предложим висококачествен протеин в изчистен формат,
+                който естествено се вписва във всяка модерна рутина.
+
               </p>
-              <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-                Използването на яйчен протеин вместо суроватка означава по-лесно смилане,
-                без подуване и всички есенциални аминокиселини, от които тялото ви се нуждае.
-                Без млечни продукти, без добавена захар, без излишни съставки.
+              <p className="mt-4 text-sm leading-7 text-muted-foreground">
+                Egg Origin не е просто протеинов бар. Това е инструмент за хора, които подхождат към тренировките, работата и живота с яснота и намерение.
               </p>
             </div>
-            <div className="relative aspect-[4/5]">
+            <div className="relative aspect-[4/5] overflow-hidden rounded-[26px]">
               <Image
-                src="/images/hero-bg.jpg"
+                src="/images/egg-origin-white-hero.png"
                 alt="Egg Origin"
                 fill
                 className="object-cover"
@@ -47,53 +56,75 @@ export default function AboutPage() {
       </section>
 
       {/* Philosophy Section */}
-      <section className="border-y border-border bg-secondary/30 py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <section className="relative overflow-hidden py-16 sm:py-20 lg:py-24">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-secondary/30" />
+        </div>
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-8">
           <div className="mx-auto max-w-3xl text-center">
-            <p className="text-xs font-medium uppercase tracking-[0.3em] text-muted-foreground">
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               Нашата Философия
             </p>
-            <h2 className="mt-6 text-3xl font-light tracking-tight text-foreground sm:text-4xl">
+            <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
               По-малко е повече
             </h2>
-            <p className="mt-8 text-base leading-relaxed text-muted-foreground">
+            <p className="mt-8 max-w-xl mx-auto text-sm leading-7 text-muted-foreground">
               Вярваме в прозрачността. Всяка съставка в Egg Origin има своята цел.
-              Без пълнители, без изкуствени подсладители, без сложни химикали.
-              Само чисто, функционално хранене, създадено за ежедневна употреба.
+              Без изкуствени подсладители и излишни добавки.
+              Само чисто и функционално хранене, създадено за ежедневна употреба.
             </p>
           </div>
         </div>
       </section>
 
       {/* Values Section */}
-      <section className="py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <p className="text-xs font-medium uppercase tracking-[0.3em] text-muted-foreground">
+      <section className="py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
             Нашите Ценности
           </p>
-          <div className="mt-12 grid gap-16 lg:grid-cols-3">
-            <div>
-              <div className="mb-6 h-px w-12 bg-foreground" />
-              <h3 className="text-sm font-medium uppercase tracking-wider text-foreground">Качеството на Първо Място</h3>
-              <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+          <div className="mt-12 grid gap-4 sm:gap-5 lg:mt-14 lg:grid-cols-3 lg:gap-6">
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
+                01
+                <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
+              </span>
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
+                Качеството на Първо Място
+              </h3>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
                 Използваме яйчен протеин от най-високо качество, съчетан с
-                внимателно подбрани съставки. Всяка партида е тествана за чистота и консистентност.
+                внимателно подбрани съставки.
               </p>
             </div>
-            <div>
-              <div className="mb-6 h-px w-12 bg-foreground" />
-              <h3 className="text-sm font-medium uppercase tracking-wider text-foreground">Прозрачност</h3>
-              <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
+                02
+                <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
+              </span>
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
+                Прозрачност
+              </h3>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
                 Вярваме, че заслужавате да знаете точно какво ядете.
-                Нашата чиста етикета означава без скрити съставки, без дребен шрифт, без изненади.
+                Без консерванти, изкуствени оцветители и овкусители.
               </p>
             </div>
-            <div>
-              <div className="mb-6 h-px w-12 bg-foreground" />
-              <h3 className="text-sm font-medium uppercase tracking-wider text-foreground">Функция Пред Показност</h3>
-              <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-                Egg Origin не се опитва да бъде бонбон. Това е функционален протеин,
-                създаден за хора, които се грижат какво влиза в тялото им.
+
+            <div className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-8 transition-all duration-500 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/[0.05] md:p-9">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <span className="text-[11px] font-medium tracking-[0.3em] text-muted-foreground">
+                03
+                <span className="ml-2 inline-block h-px w-4 bg-accent/30 transition-all duration-300 group-hover:w-8 group-hover:bg-accent/50" />
+              </span>
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">
+                Създаден с цел
+              </h3>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                Egg Origin е продукт, създаден за хора, които подхождат съзнателно към храненето си.
               </p>
             </div>
           </div>
@@ -101,21 +132,32 @@ export default function AboutPage() {
       </section>
 
       {/* CTA Section */}
-      <section className="bg-foreground py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-light tracking-tight text-background sm:text-4xl">
-            Усетете разликата
-          </h2>
-          <p className="mx-auto mt-6 max-w-md text-sm text-background/70">
-            Опитайте Egg Origin и открийте какъв е вкусът на чистия протеин.
-          </p>
-          <div className="mt-10">
-            <Button asChild size="lg" variant="secondary" className="gap-2 px-8">
-              <Link href="/products">
-                Купи сега
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
+      <section className="relative overflow-hidden py-16 sm:py-20 lg:py-24">
+        <div className="absolute inset-0 bg-foreground" />
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="mx-auto max-w-2xl text-center">
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-background/60">
+              Готови ли сте
+            </p>
+            <h2 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-background sm:text-5xl">
+              Усетете
+              <span className="block text-background/60">разликата</span>
+            </h2>
+            <p className="mt-6 max-w-md mx-auto text-sm leading-7 text-background/70">
+              Опитайте Egg Origin и открийте какъв е вкусът на чистия протеин.
+            </p>
+            <div className="mt-10">
+              <Button
+                asChild
+                size="lg"
+                className="h-11 gap-2 rounded-full bg-background px-6 text-[10px] uppercase tracking-[0.16em] text-foreground hover:bg-background/90"
+              >
+                <Link href="/products">
+                  Купи сега
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
           </div>
         </div>
       </section>
