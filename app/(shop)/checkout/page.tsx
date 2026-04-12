@@ -4,7 +4,7 @@ import React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText, HelpCircle } from "lucide-react"
+import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText, HelpCircle, ShieldCheck } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -80,6 +80,7 @@ export default function CheckoutPage() {
 
   const [wantsInvoice, setWantsInvoice] = useState(false)
   const [marketingConsent, setMarketingConsent] = useState(false)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [billingType, setBillingType] = useState<"individual" | "company">("individual")
 
   const [billingInfo, setBillingInfo] = useState<BillingInfo>({
@@ -169,6 +170,13 @@ export default function CheckoutPage() {
     setError(null)
 
     try {
+      if (!acceptedTerms) {
+        setError("Моля, приемете условията за ползване и политиката за поверителност.")
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
       if (deliveryMethod === "econt-office" && !selectedEcontOffice) {
         setError("Моля, изберете офис на Еконт")
         setIsLoading(false)
@@ -689,17 +697,39 @@ export default function CheckoutPage() {
                 </CardContent>
               </Card>
 
-              {/* Marketing consent — unchecked by default (ЗЕС чл. 261 soft opt-in) */}
               <Card>
-                <CardContent className="flex items-start space-x-3 pt-6">
-                  <Checkbox
-                    id="marketingConsent"
-                    checked={marketingConsent}
-                    onCheckedChange={(checked) => setMarketingConsent(checked === true)}
-                  />
-                  <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
-                    Дръжте ме в течение за всички промоции и нови продукти на Egg Origin
-                  </Label>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                      5
+                    </span>
+                    <ShieldCheck className="h-4 w-4" />
+                    Съгласия
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className={`flex items-start space-x-3 rounded-lg p-3 -mx-3 transition-colors ${!acceptedTerms ? "bg-accent/10" : ""}`}>
+                    <Checkbox
+                      id="acceptedTerms"
+                      checked={acceptedTerms}
+                      onCheckedChange={(checked) => setAcceptedTerms(checked === true)}
+                      className="mt-0.5"
+                      required
+                    />
+                    <label htmlFor="acceptedTerms" className={`cursor-pointer text-sm font-medium leading-snug`}>
+                      Приемам{"\u00A0"}<a href="/terms" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2 hover:text-accent">Условията{"\u00A0"}за{"\u00A0"}ползване</a> и{"\u00A0"}<a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2 hover:text-accent">Политиката{"\u00A0"}за{"\u00A0"}поверителност</a>
+                    </label>
+                  </div>
+                  <div className="flex items-start space-x-3">
+                    <Checkbox
+                      id="marketingConsent"
+                      checked={marketingConsent}
+                      onCheckedChange={(checked) => setMarketingConsent(checked === true)}
+                    />
+                    <label htmlFor="marketingConsent" className="cursor-pointer font-medium text-sm leading-snug text-muted-foreground">
+                      Искам да получавам имейли с промоции и новини от Egg Origin
+                    </label>
+                  </div>
                 </CardContent>
               </Card>
             </div>
