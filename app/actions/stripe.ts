@@ -126,7 +126,7 @@ function validateCustomerInfo(info: CustomerInfo, deliveryMethod?: string) {
     [info.phone, "Phone"],
   ]
 
-  const isAddressDelivery = deliveryMethod.endsWith("-address")
+  const isAddressDelivery = deliveryMethod?.endsWith("-address") ?? false
   if (isAddressDelivery || (info.city && info.city.trim().length > 0)) {
     required.push([info.city, "City"])
   }
