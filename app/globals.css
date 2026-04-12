@@ -5,29 +5,30 @@
 
 :root {
   /* Egg Origin - Engineered Wellness Luxury */
-  /* Warm cream/ivory base (#F5F0EB) with charcoal and rose gold accent */
-  --background: oklch(0.965 0.008 75);
-  --foreground: oklch(0.25 0.015 55);
-  --card: oklch(0.98 0.006 75);
-  --card-foreground: oklch(0.25 0.015 55);
-  --popover: oklch(0.98 0.006 75);
-  --popover-foreground: oklch(0.25 0.015 55);
-  --primary: oklch(0.30 0.015 55);
-  --primary-foreground: oklch(0.965 0.008 75);
-  --secondary: oklch(0.93 0.01 75);
-  --secondary-foreground: oklch(0.30 0.015 55);
-  --muted: oklch(0.91 0.012 75);
-  --muted-foreground: oklch(0.50 0.015 55);
-  --accent: oklch(0.68 0.10 25);
-  --accent-price: oklch(0.55 0.15 25);
-  --accent-foreground: oklch(0.98 0.006 75);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
+  /* Oura x Apple x Alo Yoga aesthetic: clean, precise, minimal */
+  /* Neutral stone base with deep charcoal and muted terracotta accent */
+  --background: oklch(0.97 0.003 60);
+  --foreground: oklch(0.18 0.01 60);
+  --card: oklch(0.99 0.002 60);
+  --card-foreground: oklch(0.18 0.01 60);
+  --popover: oklch(0.99 0.002 60);
+  --popover-foreground: oklch(0.18 0.01 60);
+  --primary: oklch(0.22 0.01 60);
+  --primary-foreground: oklch(0.97 0.003 60);
+  --secondary: oklch(0.94 0.004 60);
+  --secondary-foreground: oklch(0.22 0.01 60);
+  --muted: oklch(0.92 0.005 60);
+  --muted-foreground: oklch(0.45 0.01 60);
+  --accent: oklch(0.58 0.12 35);
+  --accent-price: oklch(0.50 0.14 35);
+  --accent-foreground: oklch(0.99 0.002 60);
+  --destructive: oklch(0.55 0.20 25);
+  --destructive-foreground: oklch(0.55 0.20 25);
   --stripe-brand: oklch(0.51 0.24 285);
   --trustpilot-green: oklch(0.65 0.17 160);
-  --border: oklch(0.87 0.015 75);
-  --input: oklch(0.91 0.012 75);
-  --ring: oklch(0.50 0.015 55);
+  --border: oklch(0.90 0.006 60);
+  --input: oklch(0.94 0.004 60);
+  --ring: oklch(0.45 0.01 60);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
