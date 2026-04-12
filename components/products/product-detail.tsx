@@ -159,11 +159,11 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
               </Button>
             )}
 
-            {/* Description */}
+              {/* Description */}
             <div className="mt-12 space-y-6">
               <div>
-                <h2 className="text-lg font-medium text-foreground">Описание</h2>
-                <div className="mt-3 space-y-4 text-muted-foreground">
+                <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Описание</h2>
+                <div className="mt-3 max-w-prose space-y-4 text-muted-foreground">
                   {product.fullDescription.split('\n\n').map((paragraph, index) => (
                     <p key={index}>{paragraph}</p>
                   ))}
@@ -172,7 +172,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
 
               {/* Benefits */}
               <div className="border-t border-border pt-6">
-                <h2 className="text-lg font-medium text-foreground">Предимства</h2>
+                <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Предимства</h2>
                 <ul className="mt-3 space-y-2">
                   {product.benefits.map((benefit) => (
                     <li key={benefit} className="flex items-start gap-3 text-muted-foreground">
@@ -189,7 +189,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
         {/* Nutrition & Ingredients */}
         <div className="mt-20 grid gap-8 md:grid-cols-2">
           <div className="bg-secondary p-8">
-            <h2 className="text-lg font-medium text-foreground">Хранителна информация</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Хранителна информация</h2>
             <div className="mt-2 h-px w-12 bg-accent/50" />
             <p className="mt-3 text-sm text-muted-foreground">На бар</p>
             <div className="mt-6 space-y-4">
@@ -221,7 +221,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
           </div>
 
           <div className="bg-secondary p-8">
-            <h2 className="text-lg font-medium text-foreground">Съставки</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Съставки</h2>
             <div className="mt-2 h-px w-12 bg-accent/50" />
             <p className="mt-3 text-sm text-muted-foreground">Формула с натурални съставки</p>
             <ul className="mt-6 space-y-3">
@@ -238,7 +238,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
         {/* Other Products */}
         {otherProducts.length > 0 && (
           <div className="mt-20">
-            <h2 className="text-2xl font-light tracking-wide text-foreground">Може да ви хареса още</h2>
+            <h2 className="text-2xl font-light tracking-[-0.02em] text-foreground">Може да ви хареса още</h2>
             <div className="mt-8 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
               {otherProducts.map((p) => (
                 <ProductCard key={p.id} product={p} soldOut={otherProductsSoldOut[p.id]} />

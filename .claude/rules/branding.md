@@ -10,7 +10,13 @@ Brand name: **Egg Origin** (previously "Ovva Sculpt")
 - Social media: Instagram (@eggorigin), TikTok (@eggorigin)
 - Social URLs stored in `lib/constants.ts` as `INSTAGRAM_URL`, `TIKTOK_URL`
 
+Product names:
+- "Натурален Шоколад" (formerly "Тъмен Шоколад") — product rename applied across all copy
+- "Бял Шоколад с Малини" — unchanged
+- "Микс" — contains both flavours
+- Ingredient lists still reference "Тъмен шоколадов кувертюр" — that's the actual ingredient, not the product name
+
 Footer includes:
 - Instagram and TikTok icons (lucide + custom SVG)
-- "Secure Payments / Powered by stripe" badge (text-based, not SVG)
+- "Secure Payments / Powered by stripe" badge (`bg-card`, `text-stripe-brand`)
 - Speedy and Econt delivery mention

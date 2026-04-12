@@ -45,10 +45,14 @@ function UnsubscribeContent() {
       <div className="mx-auto max-w-lg px-4 text-center">
         {state === "confirm" && (
           <>
-            <h1 className="text-2xl font-light tracking-tight text-foreground">
-              Отписване от имейли
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              Настройки
+            </p>
+            <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">
+              Отписване
+              <span className="block text-muted-foreground">от имейли</span>
             </h1>
-            <p className="mt-4 text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
               Сигурни ли сте, че искате да се отпишете от маркетинг имейли на Egg Origin?
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
@@ -56,7 +60,7 @@ function UnsubscribeContent() {
             </p>
             <Button
               onClick={handleUnsubscribe}
-              className="mt-8"
+              className="mt-8 h-11 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
             >
               Да, отпиши ме
             </Button>
@@ -72,10 +76,14 @@ function UnsubscribeContent() {
 
         {state === "success" && (
           <>
-            <h1 className="text-2xl font-light tracking-tight text-foreground">
-              Успешно се отписахте
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              Готово
+            </p>
+            <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">
+              Успешно
+              <span className="block text-muted-foreground">се отписахте</span>
             </h1>
-            <p className="mt-4 text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
               Няма да получавате повече маркетинг имейли от Egg Origin.
               Ще продължите да получавате имейли за Вашите поръчки.
             </p>
@@ -84,15 +92,19 @@ function UnsubscribeContent() {
 
         {state === "error" && (
           <>
-            <h1 className="text-2xl font-light tracking-tight text-foreground">
-              Невалиден линк
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              Грешка
+            </p>
+            <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">
+              Невалиден
+              <span className="block text-muted-foreground">линк</span>
             </h1>
-            <p className="mt-4 text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
               {errorMessage || "Невалиден или изтекъл линк."}
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
               Моля, свържете се с нас на{" "}
-              <a href="mailto:info@eggorigin.com" className="text-foreground underline">
+              <a href="mailto:info@eggorigin.com" className="text-foreground underline hover:text-accent transition-colors">
                 info@eggorigin.com
               </a>
             </p>

@@ -25,16 +25,16 @@ const FLAVORS = {
     eyebrow: "Почивка и Възстановяване",
     title: "Бял шоколад",
     titleSub: "& малина",
-    body: "По-лека, по-мека енергия — създадена за баланс, възстановяване и ежедневен ритъм без излишна тежест.",
+    body: "Балансирана свежест от истински малини, обвита в копринен бял шоколад. За моментите, в които презареждаш с мисъл за себе си.",
     tagline: "Лекота / Баланс / Нежност",
     image: "/images/egg-origin-white-hero.png",
     href: "/products/white-chocolate-raspberry-box",
   },
   dark: {
     eyebrow: "Стабилно представяне",
-    title: "Тъмен",
+    title: "Натурален ",
     titleSub: "Шоколад",
-    body: "По-плътно, по-структурирано присъствие — за фокус, постоянство и тиха увереност в ежедневното представяне.",
+    body: "Елегантно съчетание на натурално какао и висококачествен яйчен протеин. За тези, които не правят компромис с резултатите.",
     tagline: "Фокус / Дисциплина / Увереност",
     image: "/images/egg-origin-dark-hero.png",
     href: "/products/dark-chocolate-box",
@@ -76,7 +76,7 @@ export default async function HomePage() {
                 </span>
               </p>
 
-              <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
+              <p className="mt-6 max-w-md text-sm leading-relaxed text-muted-foreground">
                 {HERO.body}
               </p>
 
@@ -110,7 +110,7 @@ export default async function HomePage() {
               </span>
             </h1>
 
-            <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 max-w-md text-sm leading-relaxed text-muted-foreground">
               {HERO.body}
             </p>
           </div>
@@ -170,7 +170,7 @@ export default async function HomePage() {
               </span>
             </h2>
 
-            <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
+            <p className="mt-6 max-w-xl text-sm leading-relaxed text-muted-foreground">
               Минимална формула, максимална функция. Създаден за модерен начин на
               живот с усещане за лекота, чистота и премиум грижа.
             </p>
@@ -188,7 +188,7 @@ export default async function HomePage() {
                 Пълноценен Протеин
               </h3>
 
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 Пълен аминокиселинен профил в добре балансирана формула.
               </p>
             </div>
@@ -204,7 +204,7 @@ export default async function HomePage() {
                 Стабилна Енергия
               </h3>
 
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                  Равномерна енергия през целия ден. В синхрон с ежедневния ти
                 ритъм.
               </p>
@@ -221,7 +221,7 @@ export default async function HomePage() {
                 Чиста Формула
               </h3>
 
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 Функционален протеин. Без излишни съставки.
               </p>
             </div>
@@ -248,7 +248,7 @@ export default async function HomePage() {
                   <span className="block text-muted-foreground">{FLAVORS.white.titleSub}</span>
                 </h2>
 
-                <p className="mt-8 hidden max-w-md text-sm leading-7 text-muted-foreground lg:block">
+                <p className="mt-8 hidden max-w-md text-sm leading-relaxed text-muted-foreground lg:block">
                   {FLAVORS.white.body}
                 </p>
 
@@ -292,7 +292,7 @@ export default async function HomePage() {
               </div>
 
               <div className="order-4 lg:hidden">
-                <p className="max-w-md text-sm leading-7 text-muted-foreground">
+                <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
                   {FLAVORS.white.body}
                 </p>
               </div>
@@ -331,7 +331,7 @@ export default async function HomePage() {
                   <span className="block text-muted-foreground">{FLAVORS.dark.titleSub}</span>
                 </h2>
 
-                <p className="mt-8 hidden max-w-md text-sm leading-7 text-muted-foreground lg:block">
+                <p className="mt-8 hidden max-w-md text-sm leading-relaxed text-muted-foreground lg:block">
                   {FLAVORS.dark.body}
                 </p>
 
@@ -375,7 +375,7 @@ export default async function HomePage() {
               </div>
 
               <div className="order-4 lg:hidden">
-                <p className="max-w-md text-sm leading-7 text-muted-foreground">
+                <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
                   {FLAVORS.dark.body}
                 </p>
               </div>

@@ -44,11 +44,20 @@
 - Email subject auto-generated as `${name} ${lastName} - запитване`
 - Server action: `sendContactMessage()` in `app/actions/contact.ts`
 
-## Checkout — City Field
-- City field is only shown for address delivery or when office picker fails to load
-- Server-side validation: city is only required for address deliveries (`speedy-address` / `econt-address`)
-- Office pickers expose `onError` callback to parent; checkout tracks `officePickerError` state
+## Checkout — Delivery Options
+- Available: Еконт офис (default), Speedy офис, Speedy до адрес
+- `econt-address` removed from UI and `VALID_DELIVERY_METHODS`
+- City field only shown for `speedy-address` or when office picker fails (`officePickerError`)
+- Office pickers expose `onError` callback; clear error on successful load (`onError?.(false)`)
+- Server-side: address validation uses `.endsWith("-address")` pattern, city validation uses `deliveryMethod?.endsWith("-address")`
+
+## Checkout — Terms & Marketing Consent
+- Card #5 "Съгласия" with two checkboxes:
+  - Terms acceptance (required) — links to `/terms` and `/privacy` in new tabs, accent highlight when unchecked
+  - Marketing consent (optional, unchecked by default) — stores `marketing_consent` on order (ЗЕС чл. 261)
+- Submit button enabled regardless of terms state — validation on submit shows error message
+- Stock warnings: `Недостатъчна наличност на {product}. Налични {n}бр. (искани {requested})`
 
 ## Checkout — Phone Validation
-- Phone input has HTML5 `pattern` attribute matching server-side `PHONE_REGEX`
+- Phone input has HTML5 `pattern` attribute with `minLength`/`maxLength` (requires at least one digit)
 - Server validation errors mapped to Bulgarian user-friendly messages in the catch block

@@ -11,7 +11,7 @@ const moments = [
     image: "/images/usage-meetings.png",
     title: "Между срещи",
     description:
-      "Когато графикът е натоварен, а фокусът е важен — чиста и удобна опция за деня.",
+      "Когато графикът е натоварен и имаш нужда от нещо леко между срещи.",
   },
   {
     image: "/images/usage-workout.png",
@@ -23,7 +23,7 @@ const moments = [
     image: "/images/usage-reset.png",
     title: "В момент на баланс",
     description:
-      "За по-спокойните моменти — когато търсиш лекота и яснота.",
+      "Твоето време за отдих. Прецизно хранене за лекота и вътрешен баланс.",
   },
 ]
 
@@ -51,8 +51,8 @@ export function UsageMoments() {
             </span>
           </h2>
 
-          <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
-            От динамични сутрини до кратки паузи — Egg Origin е част от ежедневието ти.
+          <p className="mt-6 max-w-xl text-sm leading-relaxed text-muted-foreground">
+            От динамичните сутрини до моментите на пауза — Egg Origin е част от ежедневието ти.
           </p>
         </motion.div>
 
@@ -73,11 +73,11 @@ export function UsageMoments() {
                 />
               </div>
 
-              <h3 className="mt-6 text-base font-medium text-foreground">
+              <h3 className="mt-6 text-base font-medium tracking-[-0.01em] text-foreground">
                 {moment.title}
               </h3>
 
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 {moment.description}
               </p>
             </motion.div>

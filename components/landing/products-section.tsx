@@ -16,7 +16,7 @@ export function ProductsSection({ products, inventoryMap }: ProductsSectionProps
             <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               Продукти
             </p>
-            <h2 className="mt-4 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
+            <h2 className="mt-4 text-3xl font-light tracking-[-0.02em] text-foreground sm:text-4xl">
               Избери своя вкус
             </h2>
           </div>
