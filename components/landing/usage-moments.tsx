@@ -11,7 +11,7 @@ const moments = [
     image: "/images/usage-meetings.png",
     title: "Между срещи",
     description:
-      "Когато графикът е натоварен, а фокусът е важен — чиста и удобна опция за деня.",
+      "Когато графикът е натоварен и имаш нужда от нещо леко между срещи.",
   },
   {
     image: "/images/usage-workout.png",
@@ -23,7 +23,7 @@ const moments = [
     image: "/images/usage-reset.png",
     title: "В момент на баланс",
     description:
-      "За по-спокойните моменти — когато търсиш лекота и яснота.",
+      "Твоето време за отдих. Прецизно хранене за лекота и вътрешен баланс.",
   },
 ]
 
@@ -52,7 +52,7 @@ export function UsageMoments() {
           </h2>
 
           <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
-            От динамични сутрини до кратки паузи — Egg Origin е част от ежедневието ти.
+            От динамичните сутрини до моментите на пауза — Egg Origin е част от ежедневието ти.
           </p>
         </motion.div>
 

@@ -71,7 +71,7 @@ export default function AboutPage() {
             <p className="mt-8 max-w-xl mx-auto text-sm leading-7 text-muted-foreground">
               Вярваме в прозрачността. Всяка съставка в Egg Origin има своята цел.
               Без изкуствени подсладители и излишни добавки.
-              Само чисто и функционално хранене, създадено за ежедневна употреба.
+              Само това, от което тялото ти има нужда.
             </p>
           </div>
         </div>
@@ -124,7 +124,7 @@ export default function AboutPage() {
                 Създаден с цел
               </h3>
               <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Egg Origin е продукт, създаден за хора, които подхождат съзнателно към храненето си.
+                Egg Origin е продукт, създаден за хора, които избират съзнателно и изискват най-доброто за себе си.
               </p>
             </div>
           </div>

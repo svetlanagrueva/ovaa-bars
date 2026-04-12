@@ -4,11 +4,11 @@ import { INSTAGRAM_URL, TIKTOK_URL } from "@/lib/constants"
 
 function StripeBadge() {
   return (
-    <div className="inline-flex items-center gap-3 rounded-lg border border-border bg-white px-5 py-3">
-      <Lock className="h-6 w-6 text-black" />
-      <div className="flex flex-col items-center text-black">
+    <div className="inline-flex items-center gap-3 rounded-lg border border-border/60 bg-card px-5 py-3">
+      <Lock className="h-6 w-6 text-foreground" />
+      <div className="flex flex-col items-center text-foreground">
         <span className="text-sm font-semibold leading-tight tracking-wide">Secure Payments</span>
-        <span className="flex items-center gap-1 text-xs leading-tight text-neutral-500">
+        <span className="flex items-center gap-1 text-xs leading-tight text-muted-foreground">
           Powered by
           <span className="text-base font-bold text-stripe-brand">stripe</span>
         </span>
