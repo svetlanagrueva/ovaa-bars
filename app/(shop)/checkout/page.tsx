@@ -698,7 +698,7 @@ export default function CheckoutPage() {
                     onCheckedChange={(checked) => setMarketingConsent(checked === true)}
                   />
                   <Label htmlFor="marketingConsent" className="cursor-pointer text-sm leading-snug text-muted-foreground">
-                    Искам да получавам имейли с промоции и новини от Egg Origin
+                    Дръжте ме в течение за всички промоции и нови продукти на Egg Origin
                   </Label>
                 </CardContent>
               </Card>
