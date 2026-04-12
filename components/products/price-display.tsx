@@ -20,7 +20,7 @@ export function PriceDisplay({
     <div>
       <div className={isLarge ? "flex items-center gap-1" : "flex flex-col"}>
         <span
-          className={`tracking-[0.01em] ${onSale ? "text-accent-price" : "text-foreground"} ${
+          className={`tabular-nums tracking-[0.01em] ${onSale ? "text-accent-price" : "text-foreground"} ${
             isLarge ? "text-2xl font-medium" : "text-sm font-semibold"
           }`}
         >
