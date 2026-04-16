@@ -867,6 +867,153 @@ describe("admin actions", () => {
     })
   })
 
+  describe("recordCodSettlement", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(recordCodSettlement("bad-id", {})).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects non-COD orders", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "card", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("наложен платеж")
+    })
+
+    it("rejects ППП ref over 100 chars", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { courierPppRef: "x".repeat(101) })
+      ).rejects.toThrow("ППП референцията е твърде дълга")
+    })
+
+    it("rejects settlement ref over 100 chars", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementRef: "x".repeat(101) })
+      ).rejects.toThrow("Референцията на превода е твърде дълга")
+    })
+
+    it("rejects non-positive settlement amount", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 0 })
+      ).rejects.toThrow("положително число")
+
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: -100 })
+      ).rejects.toThrow("положително число")
+    })
+
+    it("rejects non-integer settlement amount", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 49.50 })
+      ).rejects.toThrow("положително число")
+    })
+
+    it("records settlement successfully with all fields", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      const result = await recordCodSettlement(validOrderId, {
+        courierPppRef: "PPP-12345",
+        settlementRef: "BT-2026-04-001",
+        settlementAmount: 4850,
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paid_at: expect.any(String),
+          courier_ppp_ref: "PPP-12345",
+          settlement_ref: "BT-2026-04-001",
+          settlement_amount: 4850,
+        })
+      )
+    })
+
+    it("records settlement with only paid_at when no optional fields provided", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      const result = await recordCodSettlement(validOrderId, {})
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paid_at: expect.any(String),
+        })
+      )
+      // Should NOT include optional fields when not provided
+      const updateArg = (mockSupabase.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(updateArg).not.toHaveProperty("courier_ppp_ref")
+      expect(updateArg).not.toHaveProperty("settlement_ref")
+      expect(updateArg).not.toHaveProperty("settlement_amount")
+    })
+
+    it("throws when order not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: null,
+        error: { message: "not found" },
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("throws on database update error", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+      mockSupabase.update = vi.fn(() => mockThenableResult(null, { message: "DB error" }))
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 5000 })
+      ).rejects.toThrow("Грешка при записване на плащане")
+    })
+  })
+
   describe("updateOrderStatus — timestamps and side effects", () => {
     const validOrderId = validUUID
 

@@ -34,7 +34,9 @@
 - Price breakdown uses stored `shipping_fee` and `cod_fee` (not recalculated from constants)
 - Invoice section: issue invoice (with confirmation dialog), download PDF (invoice or proforma)
 - Invoice deadline: 5 days from payment (card: created_at, COD: delivered_at)
-- History timeline: chronological events sorted by date, with fallback for pre-timestamp orders
+- History timeline: chronological events sorted by date, includes "Плащане получено" event, with fallback for pre-timestamp orders
+- COD settlement section: shown for COD orders after shipping/delivery; admin records ППП ref, bank transfer ref, received amount; sets `paid_at`
+- Card payment section: shows paid_at confirmation date (set automatically by webhook)
 - Admin notes: editable text field, saved to `admin_notes` column
 - Actions: status transitions with validation, cancellation requires reason field
 

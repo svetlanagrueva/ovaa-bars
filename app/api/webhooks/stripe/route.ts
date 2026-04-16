@@ -73,9 +73,10 @@ export async function POST(request: Request) {
     const supabase = await createClient()
 
     // Atomically update only pending orders to avoid double-processing
+    const now = new Date().toISOString()
     const { data: order, error } = await supabase
       .from("orders")
-      .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+      .update({ status: "confirmed", confirmed_at: now, paid_at: now })
       .eq("id", orderId)
       .eq("status", "pending")
       .select()

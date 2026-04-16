@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, updateAdminNotes, generateShipment, getShipmentDefaults, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, updateAdminNotes, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -108,6 +108,11 @@ export default function AdminOrderDetailPage({
   const [adminNotes, setAdminNotes] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
   const [notesSaved, setNotesSaved] = useState(false)
+  const [settlementPppRef, setSettlementPppRef] = useState("")
+  const [settlementRef, setSettlementRef] = useState("")
+  const [settlementAmountInput, setSettlementAmountInput] = useState("")
+  const [settlementLoading, setSettlementLoading] = useState(false)
+  const [settlementSaved, setSettlementSaved] = useState(false)
 
   useEffect(() => {
     getOrder(id)
@@ -366,6 +371,125 @@ export default function AdminOrderDetailPage({
         </Card>
       </div>
 
+      {/* COD Payment / Settlement */}
+      {order.payment_method === "cod" && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Плащане (наложен платеж)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            {order.paid_at ? (
+              <div className="space-y-2">
+                <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
+                  Плащането е получено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </div>
+                {order.courier_ppp_ref && (
+                  <div><span className="text-muted-foreground">ППП референция:</span> <span className="font-mono">{order.courier_ppp_ref}</span></div>
+                )}
+                {order.settlement_ref && (
+                  <div><span className="text-muted-foreground">Банков превод:</span> <span className="font-mono">{order.settlement_ref}</span></div>
+                )}
+                {order.settlement_amount != null && (
+                  <div>
+                    <span className="text-muted-foreground">Получена сума:</span> <span className="font-medium">{formatPrice(order.settlement_amount)}</span>
+                    {order.settlement_amount !== order.total_amount && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        (комисия куриер: {formatPrice(order.total_amount - order.settlement_amount)})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : order.status === "delivered" || order.status === "shipped" ? (
+              <div className="space-y-3">
+                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                  Очаква се плащане от куриер
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">ППП референция</label>
+                    <Input
+                      placeholder="Номер на ППП"
+                      value={settlementPppRef}
+                      onChange={(e) => { setSettlementPppRef(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Банков превод (ref)</label>
+                    <Input
+                      placeholder="Референция на превод"
+                      value={settlementRef}
+                      onChange={(e) => { setSettlementRef(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder={(order.total_amount / 100).toFixed(2)}
+                      value={settlementAmountInput}
+                      onChange={(e) => { setSettlementAmountInput(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    disabled={settlementLoading}
+                    onClick={async () => {
+                      setSettlementLoading(true)
+                      setActionError("")
+                      try {
+                        const amountFloat = settlementAmountInput ? parseFloat(settlementAmountInput) : undefined
+                        const amountCents = amountFloat ? Math.round(amountFloat * 100) : undefined
+                        await recordCodSettlement(id, {
+                          courierPppRef: settlementPppRef.trim() || undefined,
+                          settlementRef: settlementRef.trim() || undefined,
+                          settlementAmount: amountCents,
+                        })
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                        setSettlementSaved(true)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка при записване на плащане")
+                      } finally {
+                        setSettlementLoading(false)
+                      }
+                    }}
+                  >
+                    {settlementLoading ? "Записване..." : "Запиши плащане"}
+                  </Button>
+                  {settlementSaved && <span className="text-xs text-muted-foreground">Записано</span>}
+                </div>
+              </div>
+            ) : (
+              <div className="text-muted-foreground">
+                Плащането ще бъде проследено след доставка
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Card Payment */}
+      {order.payment_method === "card" && order.paid_at && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Плащане (карта)</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm">
+            <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
+              Платено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* History */}
       <Card className="mt-6">
         <CardHeader>
@@ -382,6 +506,7 @@ export default function AdminOrderDetailPage({
                 { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
+                { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
               ]
                 .filter((e) => e.date)

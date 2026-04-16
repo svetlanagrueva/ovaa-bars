@@ -53,6 +53,12 @@ create table if not exists orders (
   speedy_office_name text,
   speedy_office_address text,
 
+  -- Payment tracking
+  paid_at timestamptz,              -- Card: set on Stripe webhook; COD: set when courier settlement received
+  courier_ppp_ref text,             -- COD: courier's postal money transfer (ППП) document reference
+  settlement_ref text,              -- COD: courier's bank transfer reference (batch payout)
+  settlement_amount integer,        -- COD: actual amount received after courier commission, in stotinki
+
   -- Admin
   admin_notes text,
 

@@ -674,9 +674,16 @@ export async function confirmOrder(orderId: string) {
     }
   }
 
+  const now = new Date().toISOString()
+  const updatePayload: Record<string, unknown> = { status: "confirmed", confirmed_at: now }
+  // Card payments are paid at confirmation; COD is paid later when courier settles
+  if (existingOrder.payment_method === "card") {
+    updatePayload.paid_at = now
+  }
+
   const { data: updatedOrder, error: updateError } = await supabase
     .from("orders")
-    .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq("id", orderId)
     .eq("status", "pending")
     .select()

@@ -185,6 +185,10 @@ export interface OrderDetail extends OrderSummary {
   admin_notes: string | null
   cancellation_reason: string | null
   invoice_egn: string | null
+  paid_at: string | null
+  courier_ppp_ref: string | null
+  settlement_ref: string | null
+  settlement_amount: number | null
 }
 
 interface OrderQueryParams {
@@ -765,6 +769,63 @@ export async function setInvoiceNumber(orderId: string, invoiceNumber: string): 
 
   if (!data || data.length === 0) {
     throw new Error("Поръчката не е намерена или вече има фактура")
+  }
+
+  return { success: true }
+}
+
+export async function recordCodSettlement(
+  orderId: string,
+  data: {
+    courierPppRef?: string
+    settlementRef?: string
+    settlementAmount?: number
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  if (data.courierPppRef && data.courierPppRef.length > 100) {
+    throw new Error("ППП референцията е твърде дълга")
+  }
+  if (data.settlementRef && data.settlementRef.length > 100) {
+    throw new Error("Референцията на превода е твърде дълга")
+  }
+  if (data.settlementAmount !== undefined) {
+    if (!Number.isInteger(data.settlementAmount) || data.settlementAmount <= 0) {
+      throw new Error("Получената сума трябва да е положително число")
+    }
+  }
+
+  const supabase = await createClient()
+
+  // Verify order exists and is COD
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, payment_method, status")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.payment_method !== "cod") throw new Error("Само за поръчки с наложен платеж")
+
+  const updateData: Record<string, unknown> = {
+    paid_at: new Date().toISOString(),
+  }
+  if (data.courierPppRef) updateData.courier_ppp_ref = data.courierPppRef.trim()
+  if (data.settlementRef) updateData.settlement_ref = data.settlementRef.trim()
+  if (data.settlementAmount !== undefined) updateData.settlement_amount = data.settlementAmount
+
+  const { error } = await supabase
+    .from("orders")
+    .update(updateData)
+    .eq("id", orderId)
+
+  if (error) {
+    console.error("Failed to record COD settlement:", error)
+    throw new Error("Грешка при записване на плащане")
   }
 
   return { success: true }
