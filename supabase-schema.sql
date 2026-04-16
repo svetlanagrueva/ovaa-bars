@@ -61,7 +61,7 @@ create table if not exists orders (
   settlement_amount integer,        -- COD: actual amount received after courier commission, in stotinki
 
   -- Admin
-  admin_notes text,
+  admin_notes jsonb not null default '[]',
 
   -- Cancellation
   cancellation_reason text,

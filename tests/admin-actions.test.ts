@@ -417,44 +417,79 @@ describe("admin actions", () => {
     })
   })
 
-  describe("updateAdminNotes", () => {
+  describe("addAdminNote", () => {
     const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
-      const { updateAdminNotes } = await import("@/app/actions/admin")
+      const { addAdminNote } = await import("@/app/actions/admin")
 
-      await expect(updateAdminNotes(validOrderId, "test")).rejects.toThrow("Unauthorized")
+      await expect(addAdminNote(validOrderId, "test")).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
-      const { updateAdminNotes } = await import("@/app/actions/admin")
+      const { addAdminNote } = await import("@/app/actions/admin")
 
-      await expect(updateAdminNotes("bad-id", "note")).rejects.toThrow("Invalid order ID")
+      await expect(addAdminNote("bad-id", "note")).rejects.toThrow("Invalid order ID")
     })
 
-    it("rejects notes over 5000 chars", async () => {
-      const { updateAdminNotes } = await import("@/app/actions/admin")
+    it("rejects empty note", async () => {
+      const { addAdminNote } = await import("@/app/actions/admin")
 
-      await expect(updateAdminNotes(validOrderId, "x".repeat(5001))).rejects.toThrow("Notes too long")
+      await expect(addAdminNote(validOrderId, "")).rejects.toThrow("Бележката е празна")
+      await expect(addAdminNote(validOrderId, "   ")).rejects.toThrow("Бележката е празна")
     })
 
-    it("updates notes successfully", async () => {
+    it("rejects note over 2000 chars", async () => {
+      const { addAdminNote } = await import("@/app/actions/admin")
+
+      await expect(addAdminNote(validOrderId, "x".repeat(2001))).rejects.toThrow("Бележката е твърде дълга")
+    })
+
+    it("appends note to existing notes", async () => {
+      const existingNotes = [{ text: "First note", created_at: "2026-04-15T10:00:00.000Z" }]
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { admin_notes: existingNotes },
+        error: null,
+      })
       mockSupabase.update = vi.fn(() => mockThenableResult(null))
 
-      const { updateAdminNotes } = await import("@/app/actions/admin")
-      const result = await updateAdminNotes(validOrderId, "Customer called")
+      const { addAdminNote } = await import("@/app/actions/admin")
+      const result = await addAdminNote(validOrderId, "Second note")
 
       expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith({
+        admin_notes: [
+          ...existingNotes,
+          expect.objectContaining({ text: "Second note", created_at: expect.any(String) }),
+        ],
+      })
     })
 
-    it("clears notes when empty string", async () => {
+    it("creates first note when admin_notes is empty array", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { admin_notes: [] },
+        error: null,
+      })
       mockSupabase.update = vi.fn(() => mockThenableResult(null))
 
-      const { updateAdminNotes } = await import("@/app/actions/admin")
-      const result = await updateAdminNotes(validOrderId, "")
+      const { addAdminNote } = await import("@/app/actions/admin")
+      const result = await addAdminNote(validOrderId, "First note")
 
       expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith({
+        admin_notes: [expect.objectContaining({ text: "First note" })],
+      })
+    })
+
+    it("throws when order not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: null,
+        error: { message: "not found" },
+      })
+
+      const { addAdminNote } = await import("@/app/actions/admin")
+      await expect(addAdminNote(validOrderId, "note")).rejects.toThrow("Поръчката не е намерена")
     })
   })
 

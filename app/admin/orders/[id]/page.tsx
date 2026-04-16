@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, updateAdminNotes, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -105,9 +105,8 @@ export default function AdminOrderDetailPage({
   const [shipmentOpen, setShipmentOpen] = useState(false)
   const [shipmentLoading, setShipmentLoading] = useState(false)
   const [shipmentSuccess, setShipmentSuccess] = useState<string | null>(null)
-  const [adminNotes, setAdminNotes] = useState("")
+  const [newNote, setNewNote] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
-  const [notesSaved, setNotesSaved] = useState(false)
   const [settlementPppRef, setSettlementPppRef] = useState("")
   const [settlementRef, setSettlementRef] = useState("")
   const [settlementAmountInput, setSettlementAmountInput] = useState("")
@@ -117,7 +116,7 @@ export default function AdminOrderDetailPage({
 
   useEffect(() => {
     getOrder(id)
-      .then((o) => { setOrder(o); setAdminNotes(o.admin_notes || "") })
+      .then((o) => setOrder(o))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [id])
@@ -461,6 +460,11 @@ export default function AdminOrderDetailPage({
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
+                ...order.admin_notes.map((note) => ({
+                  label: "Бележка",
+                  date: note.created_at,
+                  detail: note.text.length > 80 ? note.text.slice(0, 80) + "…" : note.text,
+                })),
               ]
                 .filter((e) => e.date)
                 .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
@@ -498,36 +502,58 @@ export default function AdminOrderDetailPage({
           <CardTitle className="text-base">Вътрешни бележки</CardTitle>
         </CardHeader>
         <CardContent>
-          <textarea
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            rows={3}
-            placeholder="Добави бележка..."
-            value={adminNotes}
-            onChange={(e) => { setAdminNotes(e.target.value); setNotesSaved(false) }}
-          />
-          <div className="mt-2 flex items-center gap-3">
+          <div className="flex gap-2">
+            <textarea
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              rows={2}
+              placeholder="Добави бележка..."
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && newNote.trim()) {
+                  e.preventDefault()
+                  document.getElementById("add-note-btn")?.click()
+                }
+              }}
+            />
             <Button
+              id="add-note-btn"
               variant="outline"
               size="sm"
-              disabled={notesSaving || adminNotes === (order.admin_notes || "")}
+              className="self-end"
+              disabled={notesSaving || !newNote.trim()}
               onClick={async () => {
                 setNotesSaving(true)
                 try {
-                  await updateAdminNotes(id, adminNotes)
+                  await addAdminNote(id, newNote)
                   const updated = await getOrder(id)
                   setOrder(updated)
-                  setNotesSaved(true)
+                  setNewNote("")
                 } catch {
-                  setActionError("Грешка при запазване на бележки")
+                  setActionError("Грешка при добавяне на бележка")
                 } finally {
                   setNotesSaving(false)
                 }
               }}
             >
-              {notesSaving ? "Запазване..." : "Запази"}
+              {notesSaving ? "..." : "Добави"}
             </Button>
-            {notesSaved && <span className="text-xs text-muted-foreground">Запазено</span>}
           </div>
+          {order.admin_notes.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {[...order.admin_notes].reverse().map((note, i) => (
+                <div key={i} className="rounded-md border border-border bg-secondary/50 px-3 py-2">
+                  <p className="text-sm">{note.text}</p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {new Date(note.created_at).toLocaleDateString("bg-BG", {
+                      day: "2-digit", month: "2-digit", year: "numeric",
+                      hour: "2-digit", minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

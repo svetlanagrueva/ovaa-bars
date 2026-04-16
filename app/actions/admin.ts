@@ -184,7 +184,7 @@ export interface OrderDetail extends OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   cancelled_at: string | null
-  admin_notes: string | null
+  admin_notes: Array<{ text: string; created_at: string }>
   cancellation_reason: string | null
   invoice_egn: string | null
   invoice_sent_at: string | null
@@ -735,22 +735,38 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
   return { trackingNumber }
 }
 
-export async function updateAdminNotes(orderId: string, notes: string) {
+export async function addAdminNote(orderId: string, note: string) {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
-  if (notes.length > 5000) throw new Error("Notes too long")
+
+  const trimmed = note.trim()
+  if (!trimmed) throw new Error("Бележката е празна")
+  if (trimmed.length > 2000) throw new Error("Бележката е твърде дълга")
 
   const supabase = await createClient()
+
+  // Fetch current notes
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("admin_notes")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+
+  const existingNotes = Array.isArray(order.admin_notes) ? order.admin_notes : []
+  const newNote = { text: trimmed, created_at: new Date().toISOString() }
+
   const { error } = await supabase
     .from("orders")
-    .update({ admin_notes: notes.trim() || null })
+    .update({ admin_notes: [...existingNotes, newNote] })
     .eq("id", orderId)
 
   if (error) {
-    console.error("Failed to update admin notes:", error)
-    throw new Error("Failed to update notes")
+    console.error("Failed to add admin note:", error)
+    throw new Error("Грешка при добавяне на бележка")
   }
 
   return { success: true }
