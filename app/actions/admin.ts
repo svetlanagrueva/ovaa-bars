@@ -72,6 +72,7 @@ export interface DashboardStats {
   month: { orders: number; revenue: number }
   pendingOrders: number
   invoicesAwaiting: number
+  awaitingSettlement: number
   recentOrders: Array<{
     id: string
     created_at: string
@@ -122,6 +123,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
+    awaitingSettlement: s.awaiting_settlement ?? 0,
     recentOrders: recentOrders || [],
   }
 }
@@ -182,9 +184,14 @@ export interface OrderDetail extends OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   cancelled_at: string | null
-  admin_notes: string | null
+  admin_notes: Array<{ text: string; created_at: string }>
   cancellation_reason: string | null
   invoice_egn: string | null
+  invoice_sent_at: string | null
+  paid_at: string | null
+  courier_ppp_ref: string | null
+  settlement_ref: string | null
+  settlement_amount: number | null
 }
 
 interface OrderQueryParams {
@@ -193,6 +200,7 @@ interface OrderQueryParams {
   dateFrom?: string
   dateTo?: string
   invoiceFilter?: string
+  paymentFilter?: string
 }
 
 const ORDERS_PAGE_SIZE = 100
@@ -241,6 +249,13 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
     query = query.not("invoice_number", "is", null)
   } else if (invoiceFilter === "pending") {
     query = query.eq("needs_invoice", true).is("invoice_number", null)
+  }
+
+  const paymentFilter = params?.paymentFilter
+  if (paymentFilter === "awaiting-settlement") {
+    query = query.eq("payment_method", "cod").eq("status", "delivered").is("paid_at", null)
+  } else if (paymentFilter === "settled") {
+    query = query.eq("payment_method", "cod").not("paid_at", "is", null)
   }
 
   return query
@@ -720,22 +735,38 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
   return { trackingNumber }
 }
 
-export async function updateAdminNotes(orderId: string, notes: string) {
+export async function addAdminNote(orderId: string, note: string) {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
-  if (notes.length > 5000) throw new Error("Notes too long")
+
+  const trimmed = note.trim()
+  if (!trimmed) throw new Error("Бележката е празна")
+  if (trimmed.length > 2000) throw new Error("Бележката е твърде дълга")
 
   const supabase = await createClient()
+
+  // Fetch current notes
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("admin_notes")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+
+  const existingNotes = Array.isArray(order.admin_notes) ? order.admin_notes : []
+  const newNote = { text: trimmed, created_at: new Date().toISOString() }
+
   const { error } = await supabase
     .from("orders")
-    .update({ admin_notes: notes.trim() || null })
+    .update({ admin_notes: [...existingNotes, newNote] })
     .eq("id", orderId)
 
   if (error) {
-    console.error("Failed to update admin notes:", error)
-    throw new Error("Failed to update notes")
+    console.error("Failed to add admin note:", error)
+    throw new Error("Грешка при добавяне на бележка")
   }
 
   return { success: true }
@@ -765,6 +796,120 @@ export async function setInvoiceNumber(orderId: string, invoiceNumber: string): 
 
   if (!data || data.length === 0) {
     throw new Error("Поръчката не е намерена или вече има фактура")
+  }
+
+  return { success: true }
+}
+
+export async function markInvoiceSent(orderId: string): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ invoice_sent_at: new Date().toISOString() })
+    .eq("id", orderId)
+    .not("invoice_number", "is", null)
+    .is("invoice_sent_at", null)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to mark invoice as sent:", error)
+    throw new Error("Грешка при записване")
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error("Поръчката няма фактура или вече е отбелязана като изпратена")
+  }
+
+  return { success: true }
+}
+
+export async function recordCodSettlement(
+  orderId: string,
+  data: {
+    courierPppRef?: string
+    settlementRef?: string
+    settlementAmount?: number
+    paidAt?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  if (data.courierPppRef && data.courierPppRef.length > 100) {
+    throw new Error("ППП референцията е твърде дълга")
+  }
+  if (data.settlementRef && data.settlementRef.length > 100) {
+    throw new Error("Референцията на превода е твърде дълга")
+  }
+  if (data.settlementAmount !== undefined) {
+    if (!Number.isInteger(data.settlementAmount) || data.settlementAmount <= 0) {
+      throw new Error("Получената сума трябва да е положително число")
+    }
+  }
+  if (data.paidAt) {
+    const parsed = new Date(data.paidAt)
+    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
+    if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
+  }
+
+  const supabase = await createClient()
+
+  // Verify order exists and is COD
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, payment_method, status, delivered_at")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.payment_method !== "cod") throw new Error("Само за поръчки с наложен платеж")
+  if (order.status !== "delivered" && order.status !== "shipped") {
+    throw new Error("Плащане може да се запише само за доставени поръчки")
+  }
+
+  let paidAtValue: string
+  if (data.paidAt) {
+    // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
+    // other events (creation, delivery) that happened earlier that day
+    const d = new Date(data.paidAt)
+    d.setUTCHours(23, 59, 59, 0)
+    // Settlement cannot be before delivery
+    if (order.delivered_at && d < new Date(order.delivered_at)) {
+      throw new Error("Датата на плащане не може да е преди доставката")
+    }
+    paidAtValue = d.toISOString()
+  } else {
+    paidAtValue = new Date().toISOString()
+  }
+
+  const updateData: Record<string, unknown> = {
+    paid_at: paidAtValue,
+  }
+  if (data.courierPppRef) updateData.courier_ppp_ref = data.courierPppRef.trim()
+  if (data.settlementRef) updateData.settlement_ref = data.settlementRef.trim()
+  if (data.settlementAmount !== undefined) updateData.settlement_amount = data.settlementAmount
+
+  const { data: updated, error } = await supabase
+    .from("orders")
+    .update(updateData)
+    .eq("id", orderId)
+    .is("paid_at", null)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to record COD settlement:", error)
+    throw new Error("Грешка при записване на плащане")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Плащането вече е записано за тази поръчка")
   }
 
   return { success: true }

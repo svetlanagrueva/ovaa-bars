@@ -62,9 +62,10 @@ function AdminOrdersPage() {
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
   const [invoiceFilter, setInvoiceFilter] = useState(searchParams.get("invoiceFilter") || "all")
+  const [paymentFilter, setPaymentFilter] = useState(searchParams.get("paymentFilter") || "all")
   const [csvLoading, setCsvLoading] = useState(false)
 
-  const filters = { status, search, dateFrom, dateTo, invoiceFilter }
+  const filters = { status, search, dateFrom, dateTo, invoiceFilter, paymentFilter }
 
   const fetchOrders = useCallback(async () => {
     setLoading(true)
@@ -78,7 +79,7 @@ function AdminOrdersPage() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, search, dateFrom, dateTo, invoiceFilter, page])
+  }, [status, search, dateFrom, dateTo, invoiceFilter, paymentFilter, page])
 
   useEffect(() => {
     const timeout = setTimeout(fetchOrders, search ? 300 : 0)
@@ -98,6 +99,7 @@ function AdminOrdersPage() {
     setDateTo("")
     setStatus("all")
     setInvoiceFilter("all")
+    setPaymentFilter("all")
     setPage(0)
   }
 
@@ -216,7 +218,20 @@ function AdminOrdersPage() {
             <option value="pending">Чака издаване</option>
           </select>
         </div>
-        {(search || dateFrom || dateTo || invoiceFilter !== "all") && (
+        <div>
+          <Label htmlFor="paymentFilter" className="text-sm text-muted-foreground">Плащане</Label>
+          <select
+            id="paymentFilter"
+            value={paymentFilter}
+            onChange={(e) => { setPaymentFilter(e.target.value); setPage(0) }}
+            className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+          >
+            <option value="all">Всички</option>
+            <option value="awaiting-settlement">Чака плащане от куриер</option>
+            <option value="settled">Получено от куриер</option>
+          </select>
+        </div>
+        {(search || dateFrom || dateTo || invoiceFilter !== "all" || paymentFilter !== "all") && (
           <Button variant="ghost" size="sm" onClick={clearFilters}>
             Изчисти
           </Button>

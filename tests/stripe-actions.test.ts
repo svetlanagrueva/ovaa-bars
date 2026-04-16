@@ -244,6 +244,47 @@ describe("confirmOrder", () => {
     expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith("cs_test_abc")
   })
 
+  it("sets paid_at when confirming card payment", async () => {
+    const pendingOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "pending",
+      payment_method: "card",
+      stripe_session_id: "cs_test_paid",
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: pendingOrder, error: null })
+
+    vi.mocked(stripe.checkout.sessions.retrieve).mockResolvedValueOnce({
+      payment_status: "paid",
+    } as never)
+
+    await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    expect(mockSupabase.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "confirmed",
+        confirmed_at: expect.any(String),
+        paid_at: expect.any(String),
+      })
+    )
+  })
+
+  it("does not set paid_at for COD orders in confirmOrder", async () => {
+    // COD orders come through as already confirmed, but test the branch
+    const pendingCodOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "pending",
+      payment_method: "cod",
+      stripe_session_id: null,
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: pendingCodOrder, error: null })
+
+    await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    const updateArg = mockSupabase.update.mock.calls[0][0]
+    expect(updateArg).not.toHaveProperty("paid_at")
+    expect(updateArg.status).toBe("confirmed")
+  })
+
   it("rejects card order when payment not verified", async () => {
     const pendingOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",

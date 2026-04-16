@@ -41,6 +41,7 @@ create table if not exists orders (
   invoice_address text,
   invoice_number text unique,
   invoice_date timestamptz,
+  invoice_sent_at timestamptz,
 
   -- Econt delivery (optional)
   econt_office_id integer,
@@ -53,8 +54,14 @@ create table if not exists orders (
   speedy_office_name text,
   speedy_office_address text,
 
+  -- Payment tracking
+  paid_at timestamptz,              -- Card: set on Stripe webhook; COD: set when courier settlement received
+  courier_ppp_ref text,             -- COD: courier's postal money transfer (ППП) document reference
+  settlement_ref text,              -- COD: courier's bank transfer reference (batch payout)
+  settlement_amount integer,        -- COD: actual amount received after courier commission, in stotinki
+
   -- Admin
-  admin_notes text,
+  admin_notes jsonb not null default '[]',
 
   -- Cancellation
   cancellation_reason text,
@@ -115,7 +122,8 @@ begin
     'month_orders', coalesce(count(*), 0),
     'month_revenue', coalesce(sum(total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0)), 0),
     'pending_orders', (select count(*) from orders where status = 'pending'),
-    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled')
+    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled'),
+    'awaiting_settlement', (select count(*) from orders where payment_method = 'cod' and delivered_at is not null and paid_at is null and status = 'delivered')
   ) into result
   from orders
   where created_at >= p_month_start and status != 'cancelled';

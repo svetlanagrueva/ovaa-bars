@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, updateAdminNotes, generateShipment, getShipmentDefaults, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -105,13 +105,18 @@ export default function AdminOrderDetailPage({
   const [shipmentOpen, setShipmentOpen] = useState(false)
   const [shipmentLoading, setShipmentLoading] = useState(false)
   const [shipmentSuccess, setShipmentSuccess] = useState<string | null>(null)
-  const [adminNotes, setAdminNotes] = useState("")
+  const [newNote, setNewNote] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
-  const [notesSaved, setNotesSaved] = useState(false)
+  const [settlementPppRef, setSettlementPppRef] = useState("")
+  const [settlementRef, setSettlementRef] = useState("")
+  const [settlementAmountInput, setSettlementAmountInput] = useState("")
+  const [settlementPaidAt, setSettlementPaidAt] = useState("")
+  const [settlementLoading, setSettlementLoading] = useState(false)
+  const [settlementSaved, setSettlementSaved] = useState(false)
 
   useEffect(() => {
     getOrder(id)
-      .then((o) => { setOrder(o); setAdminNotes(o.admin_notes || "") })
+      .then((o) => setOrder(o))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [id])
@@ -329,8 +334,34 @@ export default function AdminOrderDetailPage({
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
             {order.invoice_number ? (
-              <div className="pt-2">
-                <span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span>
+              <div className="space-y-2 pt-2">
+                <div><span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span></div>
+                {order.invoice_sent_at ? (
+                  <div className="text-xs text-muted-foreground">
+                    Изпратена на клиента на {new Date(order.invoice_sent_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={actionLoading}
+                    onClick={async () => {
+                      setActionError("")
+                      setActionLoading(true)
+                      try {
+                        await markInvoiceSent(id)
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка")
+                      } finally {
+                        setActionLoading(false)
+                      }
+                    }}
+                  >
+                    Отбележи като изпратена на клиента
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="flex gap-2 pt-2">
@@ -366,6 +397,50 @@ export default function AdminOrderDetailPage({
         </Card>
       </div>
 
+      {/* COD Payment status (when already settled) */}
+      {order.payment_method === "cod" && order.paid_at && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Плащане (наложен платеж)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
+              Плащането е получено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+            {order.courier_ppp_ref && (
+              <div><span className="text-muted-foreground">ППП референция:</span> <span className="font-mono">{order.courier_ppp_ref}</span></div>
+            )}
+            {order.settlement_ref && (
+              <div><span className="text-muted-foreground">Банков превод:</span> <span className="font-mono">{order.settlement_ref}</span></div>
+            )}
+            {order.settlement_amount != null && (
+              <div>
+                <span className="text-muted-foreground">Получена сума:</span> <span className="font-medium">{formatPrice(order.settlement_amount)}</span>
+                {order.settlement_amount !== order.total_amount && (
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    (комисия куриер: {formatPrice(order.total_amount - order.settlement_amount)})
+                  </span>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Card Payment */}
+      {order.payment_method === "card" && order.paid_at && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Плащане (карта)</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm">
+            <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
+              Платено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* History */}
       <Card className="mt-6">
         <CardHeader>
@@ -380,9 +455,16 @@ export default function AdminOrderDetailPage({
                 { label: "Поръчка създадена", date: order.created_at },
                 { label: "Потвърдена", date: order.confirmed_at || confirmedFallback },
                 { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
+                { label: "Фактура изпратена", date: order.invoice_sent_at },
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
+                { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
+                ...order.admin_notes.map((note) => ({
+                  label: "Бележка",
+                  date: note.created_at,
+                  detail: note.text.length > 80 ? note.text.slice(0, 80) + "…" : note.text,
+                })),
               ]
                 .filter((e) => e.date)
                 .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
@@ -420,36 +502,58 @@ export default function AdminOrderDetailPage({
           <CardTitle className="text-base">Вътрешни бележки</CardTitle>
         </CardHeader>
         <CardContent>
-          <textarea
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            rows={3}
-            placeholder="Добави бележка..."
-            value={adminNotes}
-            onChange={(e) => { setAdminNotes(e.target.value); setNotesSaved(false) }}
-          />
-          <div className="mt-2 flex items-center gap-3">
+          <div className="flex gap-2">
+            <textarea
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              rows={2}
+              placeholder="Добави бележка..."
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && newNote.trim()) {
+                  e.preventDefault()
+                  document.getElementById("add-note-btn")?.click()
+                }
+              }}
+            />
             <Button
+              id="add-note-btn"
               variant="outline"
               size="sm"
-              disabled={notesSaving || adminNotes === (order.admin_notes || "")}
+              className="self-end"
+              disabled={notesSaving || !newNote.trim()}
               onClick={async () => {
                 setNotesSaving(true)
                 try {
-                  await updateAdminNotes(id, adminNotes)
+                  await addAdminNote(id, newNote)
                   const updated = await getOrder(id)
                   setOrder(updated)
-                  setNotesSaved(true)
+                  setNewNote("")
                 } catch {
-                  setActionError("Грешка при запазване на бележки")
+                  setActionError("Грешка при добавяне на бележка")
                 } finally {
                   setNotesSaving(false)
                 }
               }}
             >
-              {notesSaving ? "Запазване..." : "Запази"}
+              {notesSaving ? "..." : "Добави"}
             </Button>
-            {notesSaved && <span className="text-xs text-muted-foreground">Запазено</span>}
           </div>
+          {order.admin_notes.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {[...order.admin_notes].reverse().map((note, i) => (
+                <div key={i} className="rounded-md border border-border bg-secondary/50 px-3 py-2">
+                  <p className="text-sm">{note.text}</p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {new Date(note.created_at).toLocaleDateString("bg-BG", {
+                      day: "2-digit", month: "2-digit", year: "numeric",
+                      hour: "2-digit", minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -687,7 +791,92 @@ export default function AdminOrderDetailPage({
           )}
 
           {order.status === "delivered" && (
-            <p className="text-sm text-muted-foreground">Няма налични действия за тази поръчка.</p>
+            order.payment_method === "cod" && !order.paid_at ? (
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Плащане (наложен платеж)</p>
+                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                  Очаква се плащане от куриер
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане</label>
+                    <Input
+                      type="date"
+                      value={settlementPaidAt}
+                      min={order.delivered_at ? new Date(order.delivered_at).toISOString().slice(0, 10) : undefined}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Дата на банковия превод от куриера. Ако е празно, ще се запише днешна дата.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder={(order.total_amount / 100).toFixed(2)}
+                      value={settlementAmountInput}
+                      onChange={(e) => { setSettlementAmountInput(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">ППП референция</label>
+                    <Input
+                      placeholder="Номер на ППП"
+                      value={settlementPppRef}
+                      onChange={(e) => { setSettlementPppRef(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Банков превод (ref)</label>
+                    <Input
+                      placeholder="Референция на превод"
+                      value={settlementRef}
+                      onChange={(e) => { setSettlementRef(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    disabled={settlementLoading}
+                    onClick={async () => {
+                      setSettlementLoading(true)
+                      setActionError("")
+                      try {
+                        const amountFloat = settlementAmountInput ? parseFloat(settlementAmountInput) : undefined
+                        const amountCents = amountFloat ? Math.round(amountFloat * 100) : undefined
+                        await recordCodSettlement(id, {
+                          courierPppRef: settlementPppRef.trim() || undefined,
+                          settlementRef: settlementRef.trim() || undefined,
+                          settlementAmount: amountCents,
+                          paidAt: settlementPaidAt || undefined,
+                        })
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                        setSettlementSaved(true)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка при записване на плащане")
+                      } finally {
+                        setSettlementLoading(false)
+                      }
+                    }}
+                  >
+                    {settlementLoading ? "Записване..." : "Запиши плащане"}
+                  </Button>
+                  {settlementSaved && <span className="text-xs text-muted-foreground">Записано</span>}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Няма налични действия за тази поръчка.</p>
+            )
           )}
 
           {order.status === "cancelled" && (

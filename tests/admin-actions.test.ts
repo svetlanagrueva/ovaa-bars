@@ -375,6 +375,7 @@ describe("admin actions", () => {
         week_orders: 10, week_revenue: 20000,
         month_orders: 25, month_revenue: 50000,
         pending_orders: 2, invoices_awaiting: 1,
+        awaiting_settlement: 4,
       }
       mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: mockRpcResult, error: null }))
       const recentOrders = [{ id: "order-1" }, { id: "order-2" }]
@@ -388,7 +389,24 @@ describe("admin actions", () => {
       expect(result.month).toEqual({ orders: 25, revenue: 50000 })
       expect(result.pendingOrders).toBe(2)
       expect(result.invoicesAwaiting).toBe(1)
+      expect(result.awaitingSettlement).toBe(4)
       expect(result.recentOrders).toEqual(recentOrders)
+    })
+
+    it("defaults awaitingSettlement to 0 when not in RPC result", async () => {
+      const mockRpcResult = {
+        today_orders: 0, today_revenue: 0,
+        week_orders: 0, week_revenue: 0,
+        month_orders: 0, month_revenue: 0,
+        pending_orders: 0, invoices_awaiting: 0,
+      }
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: mockRpcResult, error: null }))
+      mockSupabase.limit = vi.fn(() => mockThenableResult([]))
+
+      const { getDashboardStats } = await import("@/app/actions/admin")
+      const result = await getDashboardStats()
+
+      expect(result.awaitingSettlement).toBe(0)
     })
 
     it("throws on RPC error", async () => {
@@ -399,44 +417,79 @@ describe("admin actions", () => {
     })
   })
 
-  describe("updateAdminNotes", () => {
+  describe("addAdminNote", () => {
     const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
-      const { updateAdminNotes } = await import("@/app/actions/admin")
+      const { addAdminNote } = await import("@/app/actions/admin")
 
-      await expect(updateAdminNotes(validOrderId, "test")).rejects.toThrow("Unauthorized")
+      await expect(addAdminNote(validOrderId, "test")).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
-      const { updateAdminNotes } = await import("@/app/actions/admin")
+      const { addAdminNote } = await import("@/app/actions/admin")
 
-      await expect(updateAdminNotes("bad-id", "note")).rejects.toThrow("Invalid order ID")
+      await expect(addAdminNote("bad-id", "note")).rejects.toThrow("Invalid order ID")
     })
 
-    it("rejects notes over 5000 chars", async () => {
-      const { updateAdminNotes } = await import("@/app/actions/admin")
+    it("rejects empty note", async () => {
+      const { addAdminNote } = await import("@/app/actions/admin")
 
-      await expect(updateAdminNotes(validOrderId, "x".repeat(5001))).rejects.toThrow("Notes too long")
+      await expect(addAdminNote(validOrderId, "")).rejects.toThrow("Бележката е празна")
+      await expect(addAdminNote(validOrderId, "   ")).rejects.toThrow("Бележката е празна")
     })
 
-    it("updates notes successfully", async () => {
+    it("rejects note over 2000 chars", async () => {
+      const { addAdminNote } = await import("@/app/actions/admin")
+
+      await expect(addAdminNote(validOrderId, "x".repeat(2001))).rejects.toThrow("Бележката е твърде дълга")
+    })
+
+    it("appends note to existing notes", async () => {
+      const existingNotes = [{ text: "First note", created_at: "2026-04-15T10:00:00.000Z" }]
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { admin_notes: existingNotes },
+        error: null,
+      })
       mockSupabase.update = vi.fn(() => mockThenableResult(null))
 
-      const { updateAdminNotes } = await import("@/app/actions/admin")
-      const result = await updateAdminNotes(validOrderId, "Customer called")
+      const { addAdminNote } = await import("@/app/actions/admin")
+      const result = await addAdminNote(validOrderId, "Second note")
 
       expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith({
+        admin_notes: [
+          ...existingNotes,
+          expect.objectContaining({ text: "Second note", created_at: expect.any(String) }),
+        ],
+      })
     })
 
-    it("clears notes when empty string", async () => {
+    it("creates first note when admin_notes is empty array", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { admin_notes: [] },
+        error: null,
+      })
       mockSupabase.update = vi.fn(() => mockThenableResult(null))
 
-      const { updateAdminNotes } = await import("@/app/actions/admin")
-      const result = await updateAdminNotes(validOrderId, "")
+      const { addAdminNote } = await import("@/app/actions/admin")
+      const result = await addAdminNote(validOrderId, "First note")
 
       expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith({
+        admin_notes: [expect.objectContaining({ text: "First note" })],
+      })
+    })
+
+    it("throws when order not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: null,
+        error: { message: "not found" },
+      })
+
+      const { addAdminNote } = await import("@/app/actions/admin")
+      await expect(addAdminNote(validOrderId, "note")).rejects.toThrow("Поръчката не е намерена")
     })
   })
 
@@ -864,6 +917,291 @@ describe("admin actions", () => {
 
       const { deactivatePromoCode } = await import("@/app/actions/admin")
       await expect(deactivatePromoCode(validId)).rejects.toThrow("Промо кодът вече е деактивиран")
+    })
+  })
+
+  describe("markInvoiceSent", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+
+      await expect(markInvoiceSent(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+
+      await expect(markInvoiceSent("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("marks invoice as sent successfully", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        not: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validOrderId }], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+      const result = await markInvoiceSent(validOrderId)
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({ invoice_sent_at: expect.any(String) })
+      )
+    })
+
+    it("throws when order has no invoice or already sent", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        not: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+      await expect(markInvoiceSent(validOrderId)).rejects.toThrow("няма фактура или вече е отбелязана")
+    })
+  })
+
+  describe("recordCodSettlement", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(recordCodSettlement("bad-id", {})).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects non-COD orders", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "card", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("наложен платеж")
+    })
+
+    it("rejects settlement for non-delivered orders", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "confirmed" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("доставени поръчки")
+    })
+
+    it("rejects ППП ref over 100 chars", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { courierPppRef: "x".repeat(101) })
+      ).rejects.toThrow("ППП референцията е твърде дълга")
+    })
+
+    it("rejects settlement ref over 100 chars", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementRef: "x".repeat(101) })
+      ).rejects.toThrow("Референцията на превода е твърде дълга")
+    })
+
+    it("rejects non-positive settlement amount", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 0 })
+      ).rejects.toThrow("положително число")
+
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: -100 })
+      ).rejects.toThrow("положително число")
+    })
+
+    it("rejects non-integer settlement amount", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 49.50 })
+      ).rejects.toThrow("положително число")
+    })
+
+    it("records settlement successfully with all fields", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      const result = await recordCodSettlement(validOrderId, {
+        courierPppRef: "PPP-12345",
+        settlementRef: "BT-2026-04-001",
+        settlementAmount: 4850,
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paid_at: expect.any(String),
+          courier_ppp_ref: "PPP-12345",
+          settlement_ref: "BT-2026-04-001",
+          settlement_amount: 4850,
+        })
+      )
+    })
+
+    it("records settlement with only paid_at when no optional fields provided", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      const result = await recordCodSettlement(validOrderId, {})
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paid_at: expect.any(String),
+        })
+      )
+      // Should NOT include optional fields when not provided
+      const updateArg = (mockSupabase.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(updateArg).not.toHaveProperty("courier_ppp_ref")
+      expect(updateArg).not.toHaveProperty("settlement_ref")
+      expect(updateArg).not.toHaveProperty("settlement_amount")
+    })
+
+    it("throws when order not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: null,
+        error: { message: "not found" },
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("rejects future paid_at date", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { paidAt: "2099-01-01" })
+      ).rejects.toThrow("не може да е в бъдещето")
+    })
+
+    it("rejects invalid paid_at date", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { paidAt: "not-a-date" })
+      ).rejects.toThrow("Невалидна дата на плащане")
+    })
+
+    it("uses provided paid_at date at end of day UTC", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await recordCodSettlement(validOrderId, { paidAt: "2026-04-10" })
+
+      const updateArg = (mockSupabase.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(updateArg.paid_at).toBe("2026-04-10T23:59:59.000Z")
+    })
+
+    it("rejects paid_at before delivery date", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered", delivered_at: "2026-04-15T10:00:00.000Z" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-14" })
+      ).rejects.toThrow("преди доставката")
+    })
+
+    it("rejects when settlement already recorded (idempotency guard)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+      // Update returns empty array — paid_at IS NULL guard didn't match (already paid)
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 5000 })
+      ).rejects.toThrow("Плащането вече е записано")
+    })
+
+    it("throws on database update error", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: null, error: { message: "DB error" } })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 5000 })
+      ).rejects.toThrow("Грешка при записване на плащане")
     })
   })
 

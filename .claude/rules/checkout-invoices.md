@@ -30,6 +30,21 @@
 - Cart cleared on success page (NOT in checkout — prevents empty-cart redirect race condition)
 - `confirmOrder` on success page handles both card and COD (returns early for already-confirmed COD)
 
+## Payment Lifecycle & Settlement
+- `paid_at` tracks when the seller actually received money
+- Card: `paid_at` set automatically on Stripe webhook (`checkout.session.completed`) and success page fallback
+- COD: `paid_at` set manually by admin when courier settlement is recorded
+- COD settlement fields: `courier_ppp_ref` (ППП document), `settlement_ref` (bank transfer ref), `settlement_amount` (actual amount after courier commission)
+- Receivable tracking: `delivered_at IS NOT NULL AND paid_at IS NULL` = open receivable from courier
+- Server action: `recordCodSettlement(orderId, { courierPppRef, settlementRef, settlementAmount, paidAt })`
+  - Validates: order must be COD, status must be delivered or shipped, `paidAt` cannot be before delivery or in future
+  - Idempotency: `.is("paid_at", null)` prevents double-recording
+  - Date picker value stored at 23:59:59 UTC; defaults to `new Date()` if omitted
+- Server action: `markInvoiceSent(orderId)` — sets `invoice_sent_at`, guards on invoice_number existing and not already sent
+- Neither card (Stripe) nor COD (ППП) requires a касов бон — both are non-cash per Наредба Н-18 Чл. 3
+- Business is not VAT registered — invoices only issued on customer request (`needs_invoice`)
+- Pre-launch НАП requirement: file Чл. 52м e-shop registration (administrative, not code)
+
 ## Bulgarian Tax Compliance
 - Invoice must be issued within 5 days of tax event
 - Card payments: tax event = payment date (created_at)
