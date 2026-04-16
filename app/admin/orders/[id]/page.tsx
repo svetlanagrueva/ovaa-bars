@@ -398,120 +398,30 @@ export default function AdminOrderDetailPage({
         </Card>
       </div>
 
-      {/* COD Payment / Settlement */}
-      {order.payment_method === "cod" && (
+      {/* COD Payment status (when already settled) */}
+      {order.payment_method === "cod" && order.paid_at && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="text-base">Плащане (наложен платеж)</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            {order.paid_at ? (
-              <div className="space-y-2">
-                <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
-                  Плащането е получено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                </div>
-                {order.courier_ppp_ref && (
-                  <div><span className="text-muted-foreground">ППП референция:</span> <span className="font-mono">{order.courier_ppp_ref}</span></div>
+          <CardContent className="space-y-2 text-sm">
+            <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
+              Плащането е получено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+            {order.courier_ppp_ref && (
+              <div><span className="text-muted-foreground">ППП референция:</span> <span className="font-mono">{order.courier_ppp_ref}</span></div>
+            )}
+            {order.settlement_ref && (
+              <div><span className="text-muted-foreground">Банков превод:</span> <span className="font-mono">{order.settlement_ref}</span></div>
+            )}
+            {order.settlement_amount != null && (
+              <div>
+                <span className="text-muted-foreground">Получена сума:</span> <span className="font-medium">{formatPrice(order.settlement_amount)}</span>
+                {order.settlement_amount !== order.total_amount && (
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    (комисия куриер: {formatPrice(order.total_amount - order.settlement_amount)})
+                  </span>
                 )}
-                {order.settlement_ref && (
-                  <div><span className="text-muted-foreground">Банков превод:</span> <span className="font-mono">{order.settlement_ref}</span></div>
-                )}
-                {order.settlement_amount != null && (
-                  <div>
-                    <span className="text-muted-foreground">Получена сума:</span> <span className="font-medium">{formatPrice(order.settlement_amount)}</span>
-                    {order.settlement_amount !== order.total_amount && (
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        (комисия куриер: {formatPrice(order.total_amount - order.settlement_amount)})
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : order.status === "delivered" || order.status === "shipped" ? (
-              <div className="space-y-3">
-                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
-                  Очаква се плащане от куриер
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане</label>
-                    <Input
-                      type="date"
-                      value={settlementPaidAt}
-                      min={order.delivered_at ? new Date(order.delivered_at).toISOString().slice(0, 10) : undefined}
-                      max={new Date().toISOString().slice(0, 10)}
-                      onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
-                      className="h-8"
-                    />
-                    <p className="mt-1 text-[10px] text-muted-foreground">Дата на банковия превод от куриера. Ако е празно, ще се запише днешна дата.</p>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      placeholder={(order.total_amount / 100).toFixed(2)}
-                      value={settlementAmountInput}
-                      onChange={(e) => { setSettlementAmountInput(e.target.value); setSettlementSaved(false) }}
-                      className="h-8"
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">ППП референция</label>
-                    <Input
-                      placeholder="Номер на ППП"
-                      value={settlementPppRef}
-                      onChange={(e) => { setSettlementPppRef(e.target.value); setSettlementSaved(false) }}
-                      className="h-8"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Банков превод (ref)</label>
-                    <Input
-                      placeholder="Референция на превод"
-                      value={settlementRef}
-                      onChange={(e) => { setSettlementRef(e.target.value); setSettlementSaved(false) }}
-                      className="h-8"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Button
-                    size="sm"
-                    disabled={settlementLoading}
-                    onClick={async () => {
-                      setSettlementLoading(true)
-                      setActionError("")
-                      try {
-                        const amountFloat = settlementAmountInput ? parseFloat(settlementAmountInput) : undefined
-                        const amountCents = amountFloat ? Math.round(amountFloat * 100) : undefined
-                        await recordCodSettlement(id, {
-                          courierPppRef: settlementPppRef.trim() || undefined,
-                          settlementRef: settlementRef.trim() || undefined,
-                          settlementAmount: amountCents,
-                          paidAt: settlementPaidAt || undefined,
-                        })
-                        const updated = await getOrder(id)
-                        setOrder(updated)
-                        setSettlementSaved(true)
-                      } catch (err) {
-                        setActionError(err instanceof Error ? err.message : "Грешка при записване на плащане")
-                      } finally {
-                        setSettlementLoading(false)
-                      }
-                    }}
-                  >
-                    {settlementLoading ? "Записване..." : "Запиши плащане"}
-                  </Button>
-                  {settlementSaved && <span className="text-xs text-muted-foreground">Записано</span>}
-                </div>
-              </div>
-            ) : (
-              <div className="text-muted-foreground">
-                Плащането ще бъде проследено след доставка
               </div>
             )}
           </CardContent>
@@ -855,7 +765,92 @@ export default function AdminOrderDetailPage({
           )}
 
           {order.status === "delivered" && (
-            <p className="text-sm text-muted-foreground">Няма налични действия за тази поръчка.</p>
+            order.payment_method === "cod" && !order.paid_at ? (
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Плащане (наложен платеж)</p>
+                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                  Очаква се плащане от куриер
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане</label>
+                    <Input
+                      type="date"
+                      value={settlementPaidAt}
+                      min={order.delivered_at ? new Date(order.delivered_at).toISOString().slice(0, 10) : undefined}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Дата на банковия превод от куриера. Ако е празно, ще се запише днешна дата.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder={(order.total_amount / 100).toFixed(2)}
+                      value={settlementAmountInput}
+                      onChange={(e) => { setSettlementAmountInput(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">ППП референция</label>
+                    <Input
+                      placeholder="Номер на ППП"
+                      value={settlementPppRef}
+                      onChange={(e) => { setSettlementPppRef(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Банков превод (ref)</label>
+                    <Input
+                      placeholder="Референция на превод"
+                      value={settlementRef}
+                      onChange={(e) => { setSettlementRef(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    disabled={settlementLoading}
+                    onClick={async () => {
+                      setSettlementLoading(true)
+                      setActionError("")
+                      try {
+                        const amountFloat = settlementAmountInput ? parseFloat(settlementAmountInput) : undefined
+                        const amountCents = amountFloat ? Math.round(amountFloat * 100) : undefined
+                        await recordCodSettlement(id, {
+                          courierPppRef: settlementPppRef.trim() || undefined,
+                          settlementRef: settlementRef.trim() || undefined,
+                          settlementAmount: amountCents,
+                          paidAt: settlementPaidAt || undefined,
+                        })
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                        setSettlementSaved(true)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка при записване на плащане")
+                      } finally {
+                        setSettlementLoading(false)
+                      }
+                    }}
+                  >
+                    {settlementLoading ? "Записване..." : "Запиши плащане"}
+                  </Button>
+                  {settlementSaved && <span className="text-xs text-muted-foreground">Записано</span>}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Няма налични действия за тази поръчка.</p>
+            )
           )}
 
           {order.status === "cancelled" && (
