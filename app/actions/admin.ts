@@ -818,6 +818,7 @@ export async function recordCodSettlement(
     courierPppRef?: string
     settlementRef?: string
     settlementAmount?: number
+    paidAt?: string
   },
 ): Promise<{ success: true }> {
   await requireAdmin()
@@ -836,6 +837,11 @@ export async function recordCodSettlement(
       throw new Error("Получената сума трябва да е положително число")
     }
   }
+  if (data.paidAt) {
+    const parsed = new Date(data.paidAt)
+    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
+    if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
+  }
 
   const supabase = await createClient()
 
@@ -850,7 +856,7 @@ export async function recordCodSettlement(
   if (order.payment_method !== "cod") throw new Error("Само за поръчки с наложен платеж")
 
   const updateData: Record<string, unknown> = {
-    paid_at: new Date().toISOString(),
+    paid_at: data.paidAt ? new Date(data.paidAt).toISOString() : new Date().toISOString(),
   }
   if (data.courierPppRef) updateData.courier_ppp_ref = data.courierPppRef.trim()
   if (data.settlementRef) updateData.settlement_ref = data.settlementRef.trim()

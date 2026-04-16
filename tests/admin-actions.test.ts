@@ -1072,6 +1072,38 @@ describe("admin actions", () => {
       await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Поръчката не е намерена")
     })
 
+    it("rejects future paid_at date", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { paidAt: "2099-01-01" })
+      ).rejects.toThrow("не може да е в бъдещето")
+    })
+
+    it("rejects invalid paid_at date", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { paidAt: "not-a-date" })
+      ).rejects.toThrow("Невалидна дата на плащане")
+    })
+
+    it("uses provided paid_at date instead of now", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await recordCodSettlement(validOrderId, { paidAt: "2026-04-10" })
+
+      const updateArg = (mockSupabase.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(updateArg.paid_at).toContain("2026-04-10")
+    })
+
     it("rejects when settlement already recorded (idempotency guard)", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, payment_method: "cod", status: "delivered" },

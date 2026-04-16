@@ -111,6 +111,7 @@ export default function AdminOrderDetailPage({
   const [settlementPppRef, setSettlementPppRef] = useState("")
   const [settlementRef, setSettlementRef] = useState("")
   const [settlementAmountInput, setSettlementAmountInput] = useState("")
+  const [settlementPaidAt, setSettlementPaidAt] = useState("")
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
 
@@ -431,7 +432,32 @@ export default function AdminOrderDetailPage({
                 <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
                   Очаква се плащане от куриер
                 </div>
-                <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане</label>
+                    <Input
+                      type="date"
+                      value={settlementPaidAt}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Дата на банковия превод от куриера. Ако е празно, ще се запише днешна дата.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder={(order.total_amount / 100).toFixed(2)}
+                      value={settlementAmountInput}
+                      onChange={(e) => { setSettlementAmountInput(e.target.value); setSettlementSaved(false) }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">ППП референция</label>
                     <Input
@@ -450,18 +476,6 @@ export default function AdminOrderDetailPage({
                       className="h-8"
                     />
                   </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      placeholder={(order.total_amount / 100).toFixed(2)}
-                      value={settlementAmountInput}
-                      onChange={(e) => { setSettlementAmountInput(e.target.value); setSettlementSaved(false) }}
-                      className="h-8"
-                    />
-                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <Button
@@ -477,6 +491,7 @@ export default function AdminOrderDetailPage({
                           courierPppRef: settlementPppRef.trim() || undefined,
                           settlementRef: settlementRef.trim() || undefined,
                           settlementAmount: amountCents,
+                          paidAt: settlementPaidAt || undefined,
                         })
                         const updated = await getOrder(id)
                         setOrder(updated)
