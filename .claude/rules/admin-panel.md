@@ -80,7 +80,8 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 - Seller physical address in all email footers (CAN-SPAM / GDPR)
 - Hidden preheader text for inbox preview on all templates
 - UTM parameters on all clickable links (`utm_source=email&utm_campaign=<name>&utm_content=<label>`)
-- `sendOrderConfirmationEmail()` in stripe.ts is the single unified sender for both card and COD orders
+- `sendOrderConfirmationEmail()` in `lib/email-sender.ts` is the single unified sender for both card and COD orders (extracted from stripe.ts, used by both webhook and server actions)
+- `notifyAdminNewOrder()` in `lib/email-sender.ts` — admin notification for new orders (both card and COD)
 - Transactional emails have NO unsubscribe link — they are mandatory
 
 ## Marketing Email Cron (`app/api/cron/marketing-emails/route.ts`)

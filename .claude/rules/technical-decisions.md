@@ -18,10 +18,13 @@
 ## Stripe
 - Webhook secret (`STRIPE_WEBHOOK_SECRET`) needed for local testing via `stripe listen`
 - Test card: 4242 4242 4242 4242
-- Handled webhook events: `checkout.session.completed` (confirm order, send emails) and `checkout.session.expired` (restore inventory atomically)
+- Handled webhook events: `checkout.session.completed` (confirm order, fetch receipt URL, send emails via unified sender) and `checkout.session.expired` (restore inventory atomically)
+- Webhook fetches receipt URL via `stripe.paymentIntents.retrieve` with `expand: ['latest_charge']` — graceful degradation if fetch fails
+- Webhook validates `amount_received` against `total_amount` and logs mismatch (no-throw guard)
+- `stripe_receipt_url` is a Stripe payment receipt, NOT a Bulgarian legal document — label as "Разписка за картово плащане (Stripe)", never as фактура/касов бон
 
 ## Testing
-- 330 tests, 14 test files
+- 337 tests, 15 test files
 - Mock setup: `vi.clearAllMocks()` clears history but not implementations — must manually reset mocks like `update`, `rpc`, `single`, `range`, `order`, `limit` in `beforeEach`
 - `revalidateTag` must be mocked via `vi.mock("next/cache", ...)`
 

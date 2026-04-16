@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
-import { formatPrice } from "@/lib/products"
-import { getDeliveryLabel } from "@/lib/delivery"
-import { Resend } from "resend"
+import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
 import type Stripe from "stripe"
 
 export async function POST(request: Request) {
@@ -72,11 +70,49 @@ export async function POST(request: Request) {
 
     const supabase = await createClient()
 
+    // Fetch Stripe receipt URL from PaymentIntent → Charge
+    let receiptUrl: string | null = null
+    let paymentIntentId: string | null = null
+    if (session.payment_intent) {
+      paymentIntentId = session.payment_intent as string
+      try {
+        const paymentIntent = await stripe.paymentIntents.retrieve(
+          paymentIntentId,
+          { expand: ["latest_charge"] }
+        )
+        receiptUrl = (paymentIntent.latest_charge as Stripe.Charge)?.receipt_url ?? null
+
+        // Amount validation guard — log if Stripe charged a different amount
+        const amountReceived = paymentIntent.amount_received
+        // amount_received is available after fetching; compare with order total below
+        if (amountReceived) {
+          const { data: orderCheck } = await supabase
+            .from("orders")
+            .select("total_amount")
+            .eq("id", orderId)
+            .single()
+          if (orderCheck && amountReceived !== orderCheck.total_amount) {
+            console.error(`AMOUNT MISMATCH: order=${orderId} expected=${orderCheck.total_amount} stripe_received=${amountReceived}`)
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to retrieve PaymentIntent for order ${orderId}:`, err)
+      }
+    }
+
     // Atomically update only pending orders to avoid double-processing
     const now = new Date().toISOString()
+    const updateData: Record<string, unknown> = {
+      status: "confirmed",
+      confirmed_at: now,
+      paid_at: now,
+    }
+    if (paymentIntentId) updateData.stripe_payment_intent_id = paymentIntentId
+    if (receiptUrl) updateData.stripe_receipt_url = receiptUrl
+
     const { data: order, error } = await supabase
       .from("orders")
-      .update({ status: "confirmed", confirmed_at: now, paid_at: now })
+      .update(updateData)
       .eq("id", orderId)
       .eq("status", "pending")
       .select()
@@ -87,84 +123,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ received: true })
     }
 
-    // Notify admin
-    if (process.env.RESEND_API_KEY && process.env.ADMIN_EMAIL) {
-      const adminResend = new Resend(process.env.RESEND_API_KEY)
-      const adminItems = (order.items as Array<{ productName: string; quantity: number; priceInCents: number }>)
-        .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-        .join("\n")
-
-      adminResend.emails.send({
-        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
-        to: process.env.ADMIN_EMAIL,
-        subject: `Нова поръчка #${order.id.slice(0, 8)} — ${formatPrice(order.total_amount)}`,
-        text: `
-Нова поръчка!
-
-Поръчка: #${order.id.slice(0, 8)}
-Клиент: ${order.first_name} ${order.last_name}
-Имейл: ${order.email}
-Телефон: ${order.phone}
-Град: ${order.city}
-Плащане: Карта
-
-Продукти:
-${adminItems}
-
-Обща сума: ${formatPrice(order.total_amount)}
-
-Виж в админ панела:
-${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
-        `.trim(),
-      }).catch((err) => {
-        console.error(`Failed to send admin notification for order ${orderId}:`, err)
-      })
-    }
-
-    // Send confirmation email
-    if (process.env.RESEND_API_KEY) {
-      const resend = new Resend(process.env.RESEND_API_KEY)
-      const orderItems = order.items as Array<{
-        productName: string
-        quantity: number
-        priceInCents: number
-      }>
-
-      const itemsList = orderItems
-        .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-        .join("\n")
-
-      const deliveryLabel = getDeliveryLabel(order.logistics_partner)
-      const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
-      const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
-
-      resend.emails.send({
-        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
-        to: order.email,
-        subject: `Поръчка #${order.id.slice(0, 8)} - Потвърждение`,
-        text: `
-Здравейте ${order.first_name},
-
-Благодарим Ви за поръчката!
-
-Детайли на поръчката:
-${itemsList}
-
-Обща сума: ${formatPrice(order.total_amount)}
-
-Доставка: ${deliveryLabel}${econtOfficeLine}${speedyOfficeLine}
-Град: ${order.city}
-${order.address ? `Адрес: ${order.address}` : ""}
-
-Ще получите известие, когато поръчката Ви бъде изпратена.
-
-Поздрави,
-Екипът на Egg Origin
-        `.trim(),
-      }).catch((err) => {
-        console.error(`Failed to send confirmation email for order ${orderId}:`, err)
-      })
-    }
+    notifyAdminNewOrder(order, "card")
+    sendOrderConfirmationEmail(order)
   }
 
   return NextResponse.json({ received: true })

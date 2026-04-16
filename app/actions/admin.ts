@@ -174,6 +174,9 @@ export interface OrderDetail extends OrderSummary {
   speedy_office_name: string | null
   speedy_office_address: string | null
   stripe_session_id: string | null
+  stripe_payment_intent_id: string | null
+  stripe_receipt_url: string | null
+  order_confirmation_sent_at: string | null
   invoice_number: string | null
   invoice_date: string | null
   promo_code: string | null
