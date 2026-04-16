@@ -1072,12 +1072,42 @@ describe("admin actions", () => {
       await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Поръчката не е намерена")
     })
 
+    it("rejects when settlement already recorded (idempotency guard)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "delivered" },
+        error: null,
+      })
+      // Update returns empty array — paid_at IS NULL guard didn't match (already paid)
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        recordCodSettlement(validOrderId, { settlementAmount: 5000 })
+      ).rejects.toThrow("Плащането вече е записано")
+    })
+
     it("throws on database update error", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, payment_method: "cod", status: "delivered" },
         error: null,
       })
-      mockSupabase.update = vi.fn(() => mockThenableResult(null, { message: "DB error" }))
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: null, error: { message: "DB error" } })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(

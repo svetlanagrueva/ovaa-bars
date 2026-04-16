@@ -856,14 +856,20 @@ export async function recordCodSettlement(
   if (data.settlementRef) updateData.settlement_ref = data.settlementRef.trim()
   if (data.settlementAmount !== undefined) updateData.settlement_amount = data.settlementAmount
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("orders")
     .update(updateData)
     .eq("id", orderId)
+    .is("paid_at", null)
+    .select("id")
 
   if (error) {
     console.error("Failed to record COD settlement:", error)
     throw new Error("Грешка при записване на плащане")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Плащането вече е записано за тази поръчка")
   }
 
   return { success: true }
