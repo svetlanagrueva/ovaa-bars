@@ -375,6 +375,7 @@ describe("admin actions", () => {
         week_orders: 10, week_revenue: 20000,
         month_orders: 25, month_revenue: 50000,
         pending_orders: 2, invoices_awaiting: 1,
+        awaiting_settlement: 4,
       }
       mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: mockRpcResult, error: null }))
       const recentOrders = [{ id: "order-1" }, { id: "order-2" }]
@@ -388,7 +389,24 @@ describe("admin actions", () => {
       expect(result.month).toEqual({ orders: 25, revenue: 50000 })
       expect(result.pendingOrders).toBe(2)
       expect(result.invoicesAwaiting).toBe(1)
+      expect(result.awaitingSettlement).toBe(4)
       expect(result.recentOrders).toEqual(recentOrders)
+    })
+
+    it("defaults awaitingSettlement to 0 when not in RPC result", async () => {
+      const mockRpcResult = {
+        today_orders: 0, today_revenue: 0,
+        week_orders: 0, week_revenue: 0,
+        month_orders: 0, month_revenue: 0,
+        pending_orders: 0, invoices_awaiting: 0,
+      }
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: mockRpcResult, error: null }))
+      mockSupabase.limit = vi.fn(() => mockThenableResult([]))
+
+      const { getDashboardStats } = await import("@/app/actions/admin")
+      const result = await getDashboardStats()
+
+      expect(result.awaitingSettlement).toBe(0)
     })
 
     it("throws on RPC error", async () => {

@@ -72,6 +72,7 @@ export interface DashboardStats {
   month: { orders: number; revenue: number }
   pendingOrders: number
   invoicesAwaiting: number
+  awaitingSettlement: number
   recentOrders: Array<{
     id: string
     created_at: string
@@ -122,6 +123,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
+    awaitingSettlement: s.awaiting_settlement ?? 0,
     recentOrders: recentOrders || [],
   }
 }
@@ -198,6 +200,7 @@ interface OrderQueryParams {
   dateFrom?: string
   dateTo?: string
   invoiceFilter?: string
+  paymentFilter?: string
 }
 
 const ORDERS_PAGE_SIZE = 100
@@ -246,6 +249,13 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
     query = query.not("invoice_number", "is", null)
   } else if (invoiceFilter === "pending") {
     query = query.eq("needs_invoice", true).is("invoice_number", null)
+  }
+
+  const paymentFilter = params?.paymentFilter
+  if (paymentFilter === "awaiting-settlement") {
+    query = query.eq("payment_method", "cod").eq("status", "delivered").is("paid_at", null)
+  } else if (paymentFilter === "settled") {
+    query = query.eq("payment_method", "cod").not("paid_at", "is", null)
   }
 
   return query

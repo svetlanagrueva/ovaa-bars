@@ -122,7 +122,8 @@ begin
     'month_orders', coalesce(count(*), 0),
     'month_revenue', coalesce(sum(total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0)), 0),
     'pending_orders', (select count(*) from orders where status = 'pending'),
-    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled')
+    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled'),
+    'awaiting_settlement', (select count(*) from orders where payment_method = 'cod' and delivered_at is not null and paid_at is null and status = 'delivered')
   ) into result
   from orders
   where created_at >= p_month_start and status != 'cancelled';

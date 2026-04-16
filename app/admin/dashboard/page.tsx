@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Package, FileText } from "lucide-react"
+import { Package, FileText, Banknote } from "lucide-react"
 import { getDashboardStats, type DashboardStats } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -66,20 +66,37 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold mb-6">Табло</h1>
 
       {/* Action items */}
-      {stats.invoicesAwaiting > 0 && (
-        <div className="mb-6">
-          <Link href="/admin/orders?invoiceFilter=pending" className="block">
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">
-              <div className="flex items-center gap-3">
-                <FileText className="h-5 w-5 text-amber-700" />
-                <div>
-                  <p className="text-sm font-medium text-amber-900">
-                    {stats.invoicesAwaiting} {stats.invoicesAwaiting === 1 ? "фактура чака" : "фактури чакат"} издаване
-                  </p>
+      {(stats.invoicesAwaiting > 0 || stats.awaitingSettlement > 0) && (
+        <div className="mb-6 space-y-3">
+          {stats.awaitingSettlement > 0 && (
+            <Link href="/admin/orders?status=delivered&paymentFilter=awaiting-settlement" className="block">
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">
+                <div className="flex items-center gap-3">
+                  <Banknote className="h-5 w-5 text-amber-700" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">
+                      {stats.awaitingSettlement} {stats.awaitingSettlement === 1 ? "поръчка чака" : "поръчки чакат"} плащане от куриер
+                    </p>
+                    <p className="text-xs text-amber-700">Доставени с наложен платеж, неполучено плащане</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </Link>
+            </Link>
+          )}
+          {stats.invoicesAwaiting > 0 && (
+            <Link href="/admin/orders?invoiceFilter=pending" className="block">
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-5 w-5 text-amber-700" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">
+                      {stats.invoicesAwaiting} {stats.invoicesAwaiting === 1 ? "фактура чака" : "фактури чакат"} издаване
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </Link>
+          )}
         </div>
       )}
 
