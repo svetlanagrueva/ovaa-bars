@@ -438,6 +438,7 @@ export default function AdminOrderDetailPage({
                     <Input
                       type="date"
                       value={settlementPaidAt}
+                      min={order.delivered_at ? new Date(order.delivered_at).toISOString().slice(0, 10) : undefined}
                       max={new Date().toISOString().slice(0, 10)}
                       onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
                       className="h-8"

@@ -848,15 +848,30 @@ export async function recordCodSettlement(
   // Verify order exists and is COD
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, payment_method, status")
+    .select("id, payment_method, status, delivered_at")
     .eq("id", orderId)
     .single()
 
   if (fetchError || !order) throw new Error("Поръчката не е намерена")
   if (order.payment_method !== "cod") throw new Error("Само за поръчки с наложен платеж")
 
+  let paidAtValue: string
+  if (data.paidAt) {
+    // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
+    // other events (creation, delivery) that happened earlier that day
+    const d = new Date(data.paidAt)
+    d.setUTCHours(23, 59, 59, 0)
+    // Settlement cannot be before delivery
+    if (order.delivered_at && d < new Date(order.delivered_at)) {
+      throw new Error("Датата на плащане не може да е преди доставката")
+    }
+    paidAtValue = d.toISOString()
+  } else {
+    paidAtValue = new Date().toISOString()
+  }
+
   const updateData: Record<string, unknown> = {
-    paid_at: data.paidAt ? new Date(data.paidAt).toISOString() : new Date().toISOString(),
+    paid_at: paidAtValue,
   }
   if (data.courierPppRef) updateData.courier_ppp_ref = data.courierPppRef.trim()
   if (data.settlementRef) updateData.settlement_ref = data.settlementRef.trim()
