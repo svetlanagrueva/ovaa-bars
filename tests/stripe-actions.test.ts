@@ -8,6 +8,12 @@ vi.mock("@/lib/stripe", () => ({
     checkout: {
       sessions: { create: vi.fn(), retrieve: vi.fn() },
     },
+    paymentIntents: {
+      retrieve: vi.fn(() => Promise.resolve({
+        latest_charge: { receipt_url: "https://pay.stripe.com/receipts/test_receipt" },
+        amount_received: 5140,
+      })),
+    },
     coupons: { del: vi.fn(() => Promise.resolve()) },
   },
 }))
@@ -244,7 +250,7 @@ describe("confirmOrder", () => {
     expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith("cs_test_abc")
   })
 
-  it("sets paid_at when confirming card payment", async () => {
+  it("sets paid_at, receipt URL, and payment_intent_id when confirming card payment", async () => {
     const pendingOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       status: "pending",
@@ -255,6 +261,12 @@ describe("confirmOrder", () => {
 
     vi.mocked(stripe.checkout.sessions.retrieve).mockResolvedValueOnce({
       payment_status: "paid",
+      payment_intent: "pi_test_123",
+    } as never)
+
+    vi.mocked(stripe.paymentIntents.retrieve).mockResolvedValueOnce({
+      latest_charge: { receipt_url: "https://pay.stripe.com/receipts/test" },
+      amount_received: 5140,
     } as never)
 
     await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -264,8 +276,46 @@ describe("confirmOrder", () => {
         status: "confirmed",
         confirmed_at: expect.any(String),
         paid_at: expect.any(String),
+        stripe_payment_intent_id: "pi_test_123",
+        stripe_receipt_url: "https://pay.stripe.com/receipts/test",
       })
     )
+    expect(stripe.paymentIntents.retrieve).toHaveBeenCalledWith(
+      "pi_test_123",
+      { expand: ["latest_charge"] }
+    )
+  })
+
+  it("still confirms order when PaymentIntent retrieval fails", async () => {
+    const pendingOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "pending",
+      payment_method: "card",
+      stripe_session_id: "cs_test_fallback",
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: pendingOrder, error: null })
+
+    vi.mocked(stripe.checkout.sessions.retrieve).mockResolvedValueOnce({
+      payment_status: "paid",
+      payment_intent: "pi_test_fail",
+    } as never)
+
+    vi.mocked(stripe.paymentIntents.retrieve).mockRejectedValueOnce(new Error("Stripe API error"))
+
+    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    expect(result.status).toBe("confirmed")
+    // Order should still be confirmed with paid_at, just without receipt URL
+    expect(mockSupabase.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "confirmed",
+        paid_at: expect.any(String),
+        stripe_payment_intent_id: "pi_test_fail",
+      })
+    )
+    // receipt URL should NOT be in the update (fetch failed)
+    const updateArg = mockSupabase.update.mock.calls[0][0]
+    expect(updateArg).not.toHaveProperty("stripe_receipt_url")
   })
 
   it("does not set paid_at for COD orders in confirmOrder", async () => {

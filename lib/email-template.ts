@@ -22,6 +22,7 @@ interface OrderEmailData {
   totalAmount: number
   paymentMethod: "card" | "cod"
   date: string
+  stripeReceiptUrl?: string | null
 }
 
 interface ShippingEmailData {
@@ -327,6 +328,12 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
           </td>
         </tr>
       </table>
+      ${data.stripeReceiptUrl ? `
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse; margin-top: 20px;">
+        <tr><td style="font-family: ${FONT_STACK}; text-align: right;">
+          <a href="${escapeHtml(data.stripeReceiptUrl)}" style="color: #999; font-size: 13px; text-decoration: underline;">Разписка за картово плащане (Stripe)</a>
+        </td></tr>
+      </table>` : ""}
     `)}`
 
   const html = emailShell({
@@ -354,7 +361,7 @@ ${itemsPlainText(data.items)}
 Обща сума: ${formatPrice(data.totalAmount)}
 Платено днес: ${formatPrice(paidToday)}
 За плащане при доставка: ${formatPrice(toBePaid)}
-
+${data.stripeReceiptUrl ? `\nРазписка за картово плащане (Stripe): ${data.stripeReceiptUrl}` : ""}
 Ще получите известие от куриера, когато покупките Ви са на път към Вас.
 
 Поздрави,

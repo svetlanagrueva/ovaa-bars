@@ -5,10 +5,10 @@ import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { getProductsWithSales } from "@/lib/sales"
-import { Resend } from "resend"
 import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
-import { buildOrderConfirmationEmail } from "@/lib/email-template"
+import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
+import type Stripe from "stripe"
 
 interface CartItem {
   productId: string
@@ -663,7 +663,9 @@ export async function confirmOrder(orderId: string) {
     return { status: "confirmed" as const }
   }
 
-  // For card payments, verify the Stripe session before confirming
+  // For card payments, verify the Stripe session and fetch receipt URL
+  let receiptUrl: string | null = null
+  let paymentIntentId: string | null = null
   if (existingOrder.payment_method === "card") {
     if (!existingOrder.stripe_session_id) {
       throw new Error("Unable to confirm order")
@@ -672,6 +674,20 @@ export async function confirmOrder(orderId: string) {
     if (session.payment_status !== "paid") {
       throw new Error("Unable to confirm order")
     }
+
+    // Fetch receipt URL from PaymentIntent → Charge
+    if (session.payment_intent) {
+      paymentIntentId = session.payment_intent as string
+      try {
+        const paymentIntent = await stripe.paymentIntents.retrieve(
+          paymentIntentId,
+          { expand: ["latest_charge"] }
+        )
+        receiptUrl = (paymentIntent.latest_charge as Stripe.Charge)?.receipt_url ?? null
+      } catch (err) {
+        console.error(`Failed to retrieve PaymentIntent for order ${orderId}:`, err)
+      }
+    }
   }
 
   const now = new Date().toISOString()
@@ -679,6 +695,8 @@ export async function confirmOrder(orderId: string) {
   // Card payments are paid at confirmation; COD is paid later when courier settles
   if (existingOrder.payment_method === "card") {
     updatePayload.paid_at = now
+    if (paymentIntentId) updatePayload.stripe_payment_intent_id = paymentIntentId
+    if (receiptUrl) updatePayload.stripe_receipt_url = receiptUrl
   }
 
   const { data: updatedOrder, error: updateError } = await supabase
@@ -816,83 +834,4 @@ export async function createCODOrder(data: CODOrderData) {
 
 // Non-blocking email helpers
 
-function notifyAdminNewOrder(order: Record<string, unknown>, paymentMethod: string) {
-  if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
-
-  const resend = new Resend(process.env.RESEND_API_KEY)
-  const orderItems = order.items as Array<{ productName: string; quantity: number; priceInCents: number }>
-  const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-    .join("\n")
-
-  resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
-    to: process.env.ADMIN_EMAIL,
-    subject: `Нова поръчка #${(order.id as string).slice(0, 8)} — ${formatPrice(order.total_amount as number)}`,
-    text: `
-Нова поръчка!
-
-Поръчка: #${(order.id as string).slice(0, 8)}
-Клиент: ${order.first_name} ${order.last_name}
-Имейл: ${order.email}
-Телефон: ${order.phone}
-Град: ${order.city}
-Плащане: ${paymentMethod === "card" ? "Карта" : "Наложен платеж"}
-
-Продукти:
-${itemsList}
-
-Обща сума: ${formatPrice(order.total_amount as number)}
-
-Виж в админ панела:
-${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
-    `.trim(),
-  }).catch((err) => {
-    console.error(`Failed to send admin notification for order ${order.id}:`, err)
-  })
-}
-
-function sendOrderConfirmationEmail(order: Record<string, unknown>) {
-  if (!process.env.RESEND_API_KEY) return
-
-  try {
-    const resend = new Resend(process.env.RESEND_API_KEY)
-    const orderItems = order.items as Array<{
-      productId: string
-      productName: string
-      quantity: number
-      priceInCents: number
-    }>
-
-    const subtotal = orderItems.reduce(
-      (sum, item) => sum + item.priceInCents * item.quantity,
-      0
-    )
-
-    const { html, text } = buildOrderConfirmationEmail({
-      orderId: order.id as string,
-      firstName: order.first_name as string,
-      items: orderItems,
-      subtotal,
-      shippingFee: (order.shipping_fee as number) || 0,
-      codFee: (order.cod_fee as number) || 0,
-      discountAmount: (order.discount_amount as number) || 0,
-      promoCode: (order.promo_code as string) || null,
-      totalAmount: order.total_amount as number,
-      paymentMethod: order.payment_method as "card" | "cod",
-      date: (order.created_at as string) || new Date().toISOString(),
-    })
-
-    resend.emails.send({
-      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
-      to: order.email as string,
-      subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
-      html,
-      text,
-    }).catch((err) => {
-      console.error(`Failed to send confirmation email for order ${order.id}:`, err)
-    })
-  } catch (err) {
-    console.error(`Failed to build confirmation email for order ${order.id}:`, err)
-  }
-}
+// sendOrderConfirmationEmail and notifyAdminNewOrder are imported from lib/email-sender.ts

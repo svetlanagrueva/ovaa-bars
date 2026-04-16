@@ -33,6 +33,9 @@
 ## Payment Lifecycle & Settlement
 - `paid_at` tracks when the seller actually received money
 - Card: `paid_at` set automatically on Stripe webhook (`checkout.session.completed`) and success page fallback
+- Card: `stripe_receipt_url` fetched from PaymentIntent → Charge, included in confirmation email as "Разписка за картово плащане (Stripe)"
+- Card: `stripe_payment_intent_id` stored for Stripe payout reconciliation
+- `order_confirmation_sent_at` set after confirmation email is successfully sent
 - COD: `paid_at` set manually by admin when courier settlement is recorded
 - COD settlement fields: `courier_ppp_ref` (ППП document), `settlement_ref` (bank transfer ref), `settlement_amount` (actual amount after courier commission)
 - Receivable tracking: `delivered_at IS NOT NULL AND paid_at IS NULL` = open receivable from courier
