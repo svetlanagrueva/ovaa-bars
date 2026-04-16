@@ -41,6 +41,7 @@ create table if not exists orders (
   invoice_address text,
   invoice_number text unique,
   invoice_date timestamptz,
+  invoice_sent_at timestamptz,
 
   -- Econt delivery (optional)
   econt_office_id integer,

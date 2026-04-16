@@ -185,6 +185,7 @@ export interface OrderDetail extends OrderSummary {
   admin_notes: string | null
   cancellation_reason: string | null
   invoice_egn: string | null
+  invoice_sent_at: string | null
   paid_at: string | null
   courier_ppp_ref: string | null
   settlement_ref: string | null
@@ -769,6 +770,33 @@ export async function setInvoiceNumber(orderId: string, invoiceNumber: string): 
 
   if (!data || data.length === 0) {
     throw new Error("Поръчката не е намерена или вече има фактура")
+  }
+
+  return { success: true }
+}
+
+export async function markInvoiceSent(orderId: string): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ invoice_sent_at: new Date().toISOString() })
+    .eq("id", orderId)
+    .not("invoice_number", "is", null)
+    .is("invoice_sent_at", null)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to mark invoice as sent:", error)
+    throw new Error("Грешка при записване")
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error("Поръчката няма фактура или вече е отбелязана като изпратена")
   }
 
   return { success: true }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, updateAdminNotes, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, updateAdminNotes, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -334,8 +334,34 @@ export default function AdminOrderDetailPage({
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
             {order.invoice_number ? (
-              <div className="pt-2">
-                <span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span>
+              <div className="space-y-2 pt-2">
+                <div><span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span></div>
+                {order.invoice_sent_at ? (
+                  <div className="text-xs text-muted-foreground">
+                    Изпратена на клиента на {new Date(order.invoice_sent_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={actionLoading}
+                    onClick={async () => {
+                      setActionError("")
+                      setActionLoading(true)
+                      try {
+                        await markInvoiceSent(id)
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка")
+                      } finally {
+                        setActionLoading(false)
+                      }
+                    }}
+                  >
+                    Отбележи като изпратена на клиента
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="flex gap-2 pt-2">
@@ -504,6 +530,7 @@ export default function AdminOrderDetailPage({
                 { label: "Поръчка създадена", date: order.created_at },
                 { label: "Потвърдена", date: order.confirmed_at || confirmedFallback },
                 { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
+                { label: "Фактура изпратена", date: order.invoice_sent_at },
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },

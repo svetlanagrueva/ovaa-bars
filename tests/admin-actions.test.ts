@@ -867,6 +867,60 @@ describe("admin actions", () => {
     })
   })
 
+  describe("markInvoiceSent", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+
+      await expect(markInvoiceSent(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+
+      await expect(markInvoiceSent("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("marks invoice as sent successfully", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        not: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validOrderId }], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+      const result = await markInvoiceSent(validOrderId)
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({ invoice_sent_at: expect.any(String) })
+      )
+    })
+
+    it("throws when order has no invoice or already sent", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        not: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { markInvoiceSent } = await import("@/app/actions/admin")
+      await expect(markInvoiceSent(validOrderId)).rejects.toThrow("няма фактура или вече е отбелязана")
+    })
+  })
+
   describe("recordCodSettlement", () => {
     const validOrderId = validUUID
 

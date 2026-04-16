@@ -14,6 +14,7 @@
 - `courier_ppp_ref` text — COD only: courier's ППП (postal money transfer) document reference
 - `settlement_ref` text — COD only: courier's bank transfer reference (batch payout, multiple orders may share)
 - `settlement_amount` integer — COD only: actual amount received in stotinki after courier commission
+- `invoice_sent_at` timestamptz — when admin confirmed the invoice was sent to the customer
 
 ## Inventory Tables
 - `inventory_log` — append-only movement log; `quantity` always positive (`CHECK quantity > 0`); `type` in (`batch_in`, `reserve`, `restore`); has `before_quantity`, `after_quantity`, `batch_id`, `expiry_date`, `order_id`
@@ -56,6 +57,7 @@ ALTER TABLE orders ADD COLUMN paid_at timestamptz;
 ALTER TABLE orders ADD COLUMN courier_ppp_ref text;
 ALTER TABLE orders ADD COLUMN settlement_ref text;
 ALTER TABLE orders ADD COLUMN settlement_amount integer;
+ALTER TABLE orders ADD COLUMN invoice_sent_at timestamptz;
 ```
 Plus the `issue_invoice_number`, `dashboard_stats`, and `claim_marketing_emails` functions, and the indexes.
 
