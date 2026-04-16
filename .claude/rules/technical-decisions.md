@@ -21,7 +21,7 @@
 - Handled webhook events: `checkout.session.completed` (confirm order, send emails) and `checkout.session.expired` (restore inventory atomically)
 
 ## Testing
-- 296 tests, 13 test files
+- 330 tests, 14 test files
 - Mock setup: `vi.clearAllMocks()` clears history but not implementations — must manually reset mocks like `update`, `rpc`, `single`, `range`, `order`, `limit` in `beforeEach`
 - `revalidateTag` must be mocked via `vi.mock("next/cache", ...)`
 
@@ -38,6 +38,9 @@
 - Email case sensitivity: all unsubscribe checks use `lower()` in SQL, API stores lowercase
 - Marketing email concurrency: `FOR UPDATE SKIP LOCKED` in Postgres, `claimed_at` for stale detection (not `created_at`)
 - `getBaseUrl()` shared via `lib/constants.ts` — single source of truth for absolute URLs
+- `recordCodSettlement` idempotency: `.is("paid_at", null)` prevents double-recording; validates order is COD + delivered/shipped; `paidAt` date cannot be before delivery or in future
+- `markInvoiceSent` idempotency: `.is("invoice_sent_at", null)` + `.not("invoice_number", "is", null)` guards
+- `addAdminNote` append-only: fetches existing JSONB array, appends new `{text, created_at}` entry; max 2000 chars per note
 
 ## Contact Form
 - Fields: Име (name), Фамилия (lastName), Имейл (email), Съобщение (message) — no subject field

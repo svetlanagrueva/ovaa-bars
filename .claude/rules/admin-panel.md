@@ -19,13 +19,14 @@
 ## Dashboard
 - Revenue stats via Postgres RPC function `dashboard_stats` (SQL aggregation, not in-memory)
 - Shows product revenue only (excludes shipping_fee and cod_fee)
-- Action items: pending orders, invoices awaiting issuance
+- Action items: pending orders, invoices awaiting issuance, COD orders awaiting courier settlement
+- Awaiting settlement links to `/admin/orders?status=delivered&paymentFilter=awaiting-settlement`
 - Last 10 orders with links
 
 ## Orders
 - Pagination: 100 per page, with total count
-- Filters: status tabs, text search (ID/name/email), date range, invoice filter (all/requested/issued/pending)
-- URL params supported: `?status=pending`, `?invoiceFilter=pending` (for dashboard links)
+- Filters: status tabs, text search (ID/name/email), date range, invoice filter (all/requested/issued/pending), payment filter (all/awaiting-settlement/settled)
+- URL params supported: `?status=pending`, `?invoiceFilter=pending`, `?paymentFilter=awaiting-settlement` (for dashboard links)
 - CSV export fetches ALL matching results via `getAllOrders` (batches of 1000)
 - CSV columns: ID, date, name, email, phone, city, products revenue, promo discount, shipping fee, COD fee, total, payment, delivery, status, invoice #, invoice date
 
@@ -34,11 +35,13 @@
 - Price breakdown uses stored `shipping_fee` and `cod_fee` (not recalculated from constants)
 - Invoice section: issue invoice (with confirmation dialog), download PDF (invoice or proforma)
 - Invoice deadline: 5 days from payment (card: created_at, COD: delivered_at)
-- History timeline: chronological events sorted by date, includes "Плащане получено" event, with fallback for pre-timestamp orders
-- COD settlement section: shown for COD orders after shipping/delivery; admin records ППП ref, bank transfer ref, received amount; sets `paid_at`
+- History timeline: chronological events sorted by date, includes "Плащане получено", "Фактура изпратена", and "Бележка" events, with fallback for pre-timestamp orders
+- COD settlement: form in Действия card for delivered unpaid COD orders (date picker, amount, ППП ref, bank ref); green status card shown after settlement recorded
+- COD settlement date picker: `min` set to delivery date, `max` set to today; server validates date is not before delivery or in the future; date stored at 23:59:59 UTC to sort after same-day events
 - Card payment section: shows paid_at confirmation date (set automatically by webhook)
-- Admin notes: editable text field, saved to `admin_notes` column
+- Admin notes: append-only JSONB array of `{text, created_at}` entries; notes shown in reverse-chronological list + appear in timeline; `addAdminNote` server action appends, never overwrites
 - Actions: status transitions with validation, cancellation requires reason field
+- Invoice sent tracking: "Отбележи като изпратена на клиента" button appears after invoice number is saved; sets `invoice_sent_at`
 
 ## Invoice Management
 - Invoices are generated externally via Microinvest Invoice Pro
