@@ -854,6 +854,9 @@ export async function recordCodSettlement(
 
   if (fetchError || !order) throw new Error("Поръчката не е намерена")
   if (order.payment_method !== "cod") throw new Error("Само за поръчки с наложен платеж")
+  if (order.status !== "delivered" && order.status !== "shipped") {
+    throw new Error("Плащане може да се запише само за доставени поръчки")
+  }
 
   let paidAtValue: string
   if (data.paidAt) {

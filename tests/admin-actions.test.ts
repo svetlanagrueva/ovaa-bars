@@ -965,6 +965,16 @@ describe("admin actions", () => {
       await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("наложен платеж")
     })
 
+    it("rejects settlement for non-delivered orders", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "confirmed" },
+        error: null,
+      })
+
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("доставени поръчки")
+    })
+
     it("rejects ППП ref over 100 chars", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
