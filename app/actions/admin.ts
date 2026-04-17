@@ -687,6 +687,12 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
         recipientName: form.recipientName.trim(),
         recipientPhone: form.recipientPhone.trim(),
         officeId: deliveryType === "office" ? Number(form.recipientOfficeId) || undefined : undefined,
+        address: deliveryType === "address" ? {
+          siteName: form.recipientCity.trim(),
+          postCode: form.recipientPostalCode.trim(),
+          streetName: form.recipientAddress.trim(),
+          streetNo: "",
+        } : undefined,
         weight: form.weight,
         contents: form.contents,
         codAmount,

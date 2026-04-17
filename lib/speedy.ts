@@ -76,7 +76,7 @@ export interface SpeedyShipmentParams {
   recipientPhone: string
   recipientEmail?: string
   officeId?: number
-  address?: { siteId: number; streetName: string; streetNo: string }
+  address?: { siteId?: number; siteName?: string; postCode?: string; streetName: string; streetNo: string }
   weight: number
   contents: string
   codAmount?: number
@@ -99,12 +99,15 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
   if (params.officeId) {
     recipient.pickupOfficeId = params.officeId
   } else if (params.address) {
-    recipient.address = {
+    const addr: Record<string, unknown> = {
       countryId: 100,
-      siteId: params.address.siteId,
       streetName: params.address.streetName,
       streetNo: params.address.streetNo,
     }
+    if (params.address.siteId) addr.siteId = params.address.siteId
+    if (params.address.siteName) addr.siteName = params.address.siteName
+    if (params.address.postCode) addr.postCode = params.address.postCode
+    recipient.address = addr
   }
 
   const service: Record<string, unknown> = {
