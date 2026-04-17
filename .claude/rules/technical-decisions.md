@@ -50,9 +50,23 @@
 - Email subject auto-generated as `${name} ${lastName} - запитване`
 - Server action: `sendContactMessage()` in `app/actions/contact.ts`
 
+## Delivery Methods
+- Exactly 3 valid options, enforced in `VALID_DELIVERY_METHODS` (stripe.ts) and checkout UI: `econt-office`, `speedy-office`, `speedy-address`
+- `econt-address` is deliberately excluded — not a supported delivery option
+- `logistics_partner` is unconstrained text in Postgres; validation is application-layer only (stripe.ts)
+- Admin shipment generation routes on string matching: `startsWith("speedy")` → Speedy API, else → Econt API; `endsWith("-office")` → office delivery, else → address delivery
+- Speedy address delivery uses `siteName` + `postCode` (not numeric `siteId`) to identify the delivery site
+
+## Courier API — ППП (Postal Money Transfer) Configuration
+- COD shipments must be configured as ППП (пощенски паричен превод), not generic cash-on-delivery
+- **Speedy**: `processingType: "POSTAL_MONEY_TRANSFER"` (not `"CASH"`)
+- **Econt**: `moneyTransferReqAmount` / `moneyTransferReqCurrency` (not `cdAmount` / `cdType`)
+- The касов бон exemption under Наредба Н-18 Чл. 3 depends on the payment being ППП — generic COD values may not qualify
+- Contract verification with both couriers is still needed to confirm these API values map to ППП in their systems
+
 ## Checkout — City Field
 - City field is only shown for address delivery or when office picker fails to load
-- Server-side validation: city is only required for address deliveries (`speedy-address` / `econt-address`)
+- Server-side validation: city is only required for address deliveries (`speedy-address`)
 - Office pickers expose `onError` callback to parent; checkout tracks `officePickerError` state
 
 ## Checkout — Phone Validation

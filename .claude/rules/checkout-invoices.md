@@ -45,6 +45,7 @@
   - Date picker value stored at 23:59:59 UTC; defaults to `new Date()` if omitted
 - Server action: `markInvoiceSent(orderId)` — sets `invoice_sent_at`, guards on invoice_number existing and not already sent
 - Neither card (Stripe) nor COD (ППП) requires a касов бон — both are non-cash per Наредба Н-18 Чл. 3
+- COD courier APIs are explicitly configured for ППП (see `technical-decisions.md` → Courier API section for field values)
 - Business is not VAT registered — invoices only issued on customer request (`needs_invoice`)
 - Pre-launch НАП requirement: file Чл. 52м e-shop registration (administrative, not code)
 
