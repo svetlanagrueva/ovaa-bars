@@ -161,3 +161,93 @@ describe("Speedy client – getOffices", () => {
     await expect(getOffices()).rejects.toThrow("Network error")
   })
 })
+
+describe("Speedy client – createShipment", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubEnv("SPEEDY_API_URL", "https://api.speedy.bg/v1")
+    vi.stubEnv("SPEEDY_USERNAME", "test-user")
+    vi.stubEnv("SPEEDY_PASSWORD", "test-pass")
+    vi.stubEnv("SELLER_PHONE", "+359888123456")
+    vi.stubEnv("SELLER_COMPANY_NAME", "Test Company")
+    vi.stubEnv("SELLER_EMAIL", "test@example.com")
+  })
+
+  const speedyShipmentResponse = {
+    ok: true,
+    json: () => Promise.resolve({ id: 12345, parcels: [{ id: "SPD999" }] }),
+    text: () => Promise.resolve(""),
+  }
+
+  async function loadCreateShipment() {
+    const mod = await import("@/lib/speedy")
+    return mod.createShipment
+  }
+
+  it("uses POSTAL_MONEY_TRANSFER processingType for COD shipments", async () => {
+    mockFetch.mockResolvedValueOnce(speedyShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeId: 100,
+      weight: 1.5,
+      contents: "Протеинови барове",
+      codAmount: 50,
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.service.additionalServices.cod.processingType).toBe("POSTAL_MONEY_TRANSFER")
+    expect(body.service.additionalServices.cod.amount).toBe(50)
+  })
+
+  it("does not include COD services for non-COD shipments", async () => {
+    mockFetch.mockResolvedValueOnce(speedyShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeId: 100,
+      weight: 1.5,
+      contents: "Протеинови барове",
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.service.additionalServices).toBeUndefined()
+  })
+
+  it("sets recipient as payer for COD shipments", async () => {
+    mockFetch.mockResolvedValueOnce(speedyShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeId: 100,
+      weight: 1.5,
+      contents: "Протеинови барове",
+      codAmount: 50,
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.payment.courierServicePayer).toBe("RECIPIENT")
+  })
+
+  it("sets sender as payer for non-COD shipments", async () => {
+    mockFetch.mockResolvedValueOnce(speedyShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeId: 100,
+      weight: 1.5,
+      contents: "Протеинови барове",
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.payment.courierServicePayer).toBe("SENDER")
+  })
+})
