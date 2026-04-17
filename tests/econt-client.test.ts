@@ -137,3 +137,81 @@ describe("Econt client – getOffices", () => {
     await expect(getOffices()).rejects.toThrow("Network error")
   })
 })
+
+describe("Econt client – createShipment", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubEnv("ECONT_API_URL", "https://demo.econt.com/ee/services/")
+    vi.stubEnv("ECONT_USERNAME", "test-user")
+    vi.stubEnv("ECONT_PASSWORD", "test-pass")
+    vi.stubEnv("SELLER_COMPANY_NAME", "Test Company")
+    vi.stubEnv("SELLER_PHONE", "+359888123456")
+    vi.stubEnv("SELLER_EMAIL", "test@example.com")
+    vi.stubEnv("SELLER_MOL", "Test MOL")
+    vi.stubEnv("SELLER_CITY", "София")
+    vi.stubEnv("SELLER_POSTAL_CODE", "1000")
+    vi.stubEnv("SELLER_ADDRESS", "ул. Тестова 1")
+  })
+
+  const econtShipmentResponse = {
+    ok: true,
+    json: () => Promise.resolve({ label: { shipmentNumber: "ECONT999", pdfURL: null } }),
+  }
+
+  async function loadCreateShipment() {
+    const mod = await import("@/lib/econt")
+    return mod.createShipment
+  }
+
+  it("uses moneyTransferReqAmount for COD shipments (ППП)", async () => {
+    mockFetch.mockResolvedValueOnce(econtShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeCode: "1056",
+      weight: 1.5,
+      contents: "Протеинови барове",
+      codAmount: 50,
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.label.services.moneyTransferReqAmount).toBe(50)
+    expect(body.label.services.moneyTransferReqCurrency).toBe("EUR")
+  })
+
+  it("does not use cdAmount/cdType for COD shipments", async () => {
+    mockFetch.mockResolvedValueOnce(econtShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeCode: "1056",
+      weight: 1.5,
+      contents: "Протеинови барове",
+      codAmount: 50,
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.label.services.cdAmount).toBeUndefined()
+    expect(body.label.services.cdType).toBeUndefined()
+  })
+
+  it("does not include services for non-COD shipments", async () => {
+    mockFetch.mockResolvedValueOnce(econtShipmentResponse)
+
+    const createShipment = await loadCreateShipment()
+    await createShipment({
+      recipientName: "Ivan Petrov",
+      recipientPhone: "+359888000000",
+      officeCode: "1056",
+      weight: 1.5,
+      contents: "Протеинови барове",
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.label.services).toBeUndefined()
+  })
+})

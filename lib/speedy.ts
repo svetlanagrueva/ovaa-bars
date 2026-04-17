@@ -116,7 +116,7 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
     service.additionalServices = {
       cod: {
         amount: params.codAmount,
-        processingType: "CASH",
+        processingType: "POSTAL_MONEY_TRANSFER",
       },
     }
   }

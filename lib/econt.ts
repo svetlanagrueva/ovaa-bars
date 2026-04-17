@@ -159,9 +159,8 @@ export async function createShipment(params: EcontShipmentParams): Promise<Econt
 
   if (params.codAmount && params.codAmount > 0) {
     label.services = {
-      cdAmount: params.codAmount,
-      cdType: "get",
-      cdCurrency: "EUR",
+      moneyTransferReqAmount: params.codAmount,
+      moneyTransferReqCurrency: "EUR",
     }
   }
 
