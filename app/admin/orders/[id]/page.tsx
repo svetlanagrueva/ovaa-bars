@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef, useCallback, use } from "react"
+import { useEffect, useState, use } from "react"
 import Link from "next/link"
 import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
@@ -9,66 +9,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-
-// Office code → name lookup component (fetches office list once, looks up on code change)
-function OfficeCodeInput({ shipmentForm, setShipmentForm, courier }: {
-  shipmentForm: ShipmentFormData
-  setShipmentForm: (fn: ShipmentFormData | ((prev: ShipmentFormData | null) => ShipmentFormData | null)) => void
-  courier: string
-}) {
-  const officesRef = useRef<Array<Record<string, unknown>> | null>(null)
-  const isSpeedy = courier === "speedy"
-
-  const loadOffices = useCallback(async () => {
-    if (officesRef.current) return officesRef.current
-    try {
-      const endpoint = isSpeedy ? "/api/speedy/offices" : "/api/econt/offices"
-      const res = await fetch(endpoint)
-      if (!res.ok) return []
-      const data = await res.json()
-      const offices = data.offices || data
-      officesRef.current = offices
-      return offices
-    } catch {
-      return []
-    }
-  }, [isSpeedy])
-
-  const lookupOfficeName = useCallback(async (code: string) => {
-    const offices = await loadOffices()
-    const match = offices.find((o: Record<string, unknown>) =>
-      isSpeedy ? String(o.id) === code : String(o.code) === code
-    )
-    setShipmentForm((prev) => prev ? { ...prev, recipientOfficeName: match?.name as string || "" } : prev)
-  }, [loadOffices, isSpeedy, setShipmentForm])
-
-  return (
-    <div className="grid gap-2 sm:grid-cols-3">
-      <div>
-        <label className="mb-1 block text-xs text-muted-foreground">Офис {isSpeedy ? "ID" : "код"}</label>
-        <Input
-          value={isSpeedy ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
-          onChange={(e) => {
-            const val = e.target.value
-            if (isSpeedy) {
-              setShipmentForm({ ...shipmentForm, recipientOfficeId: val })
-            } else {
-              setShipmentForm({ ...shipmentForm, recipientOfficeCode: val })
-            }
-          }}
-          onBlur={(e) => {
-            const val = e.target.value.trim()
-            if (val) lookupOfficeName(val)
-          }}
-        />
-      </div>
-      <div className="sm:col-span-2">
-        <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
-        <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
-      </div>
-    </div>
-  )
-}
+import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
+import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Чакаща",
@@ -105,6 +47,8 @@ export default function AdminOrderDetailPage({
   const [shipmentOpen, setShipmentOpen] = useState(false)
   const [shipmentLoading, setShipmentLoading] = useState(false)
   const [shipmentSuccess, setShipmentSuccess] = useState<string | null>(null)
+  const [selectedOfficeNumericId, setSelectedOfficeNumericId] = useState<number | null>(null)
+  const [officePickerError, setOfficePickerError] = useState(false)
   const [newNote, setNewNote] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
   const [settlementPppRef, setSettlementPppRef] = useState("")
@@ -580,6 +524,10 @@ export default function AdminOrderDetailPage({
                           const { form, display } = await getShipmentDefaults(id)
                           setShipmentForm(form)
                           setShipmentDisplay(display)
+                          setSelectedOfficeNumericId(
+                            display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
+                          )
+                          setOfficePickerError(false)
                           setShipmentOpen(true)
                         } catch (err) {
                           setActionError(err instanceof Error ? err.message : "Грешка")
@@ -594,7 +542,7 @@ export default function AdminOrderDetailPage({
                         <h3 className="text-sm font-semibold">
                           Товарителница — {shipmentDisplay?.courier === "speedy" ? "Speedy" : "Еконт"} ({shipmentDisplay?.deliveryType === "office" ? "до офис" : "до адрес"})
                         </h3>
-                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setShipmentOpen(false)}>Затвори</button>
+                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false) }}>Затвори</button>
                       </div>
 
                       {/* Sender */}
@@ -647,7 +595,48 @@ export default function AdminOrderDetailPage({
                           </div>
                         </div>
                         {shipmentDisplay?.deliveryType === "office" ? (
-                          <OfficeCodeInput shipmentForm={shipmentForm} setShipmentForm={setShipmentForm} courier={shipmentDisplay?.courier || ""} />
+                          <div className="space-y-3">
+                            {shipmentDisplay?.courier === "speedy" ? (
+                              <SpeedyOfficePicker
+                                selectedOfficeId={selectedOfficeNumericId}
+                                onSelect={(office: SpeedyOfficeOption) => {
+                                  setSelectedOfficeNumericId(office.id)
+                                  setShipmentForm({ ...shipmentForm, recipientOfficeId: String(office.id), recipientOfficeName: office.name })
+                                }}
+                                onError={setOfficePickerError}
+                              />
+                            ) : (
+                              <EcontOfficePicker
+                                selectedOfficeId={selectedOfficeNumericId}
+                                onSelect={(office: EcontOfficeOption) => {
+                                  setSelectedOfficeNumericId(office.id)
+                                  setShipmentForm({ ...shipmentForm, recipientOfficeCode: office.code, recipientOfficeName: office.name })
+                                }}
+                                onError={setOfficePickerError}
+                              />
+                            )}
+                            {officePickerError && (
+                              <p className="text-sm text-red-600">
+                                Офисите не могат да бъдат заредени. Използвайте ръчно въвеждане на товарителница.
+                              </p>
+                            )}
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">
+                                  Офис {shipmentDisplay?.courier === "speedy" ? "ID" : "код"}
+                                </label>
+                                <Input
+                                  value={shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
+                                  disabled
+                                  className="bg-secondary"
+                                />
+                              </div>
+                              <div className="sm:col-span-2">
+                                <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+                                <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
+                              </div>
+                            </div>
+                          </div>
                         ) : (
                           <div className="grid gap-2 sm:grid-cols-3">
                             <div>
@@ -689,7 +678,7 @@ export default function AdminOrderDetailPage({
 
                       <div className="flex gap-2 pt-2">
                         <Button
-                          disabled={shipmentLoading}
+                          disabled={shipmentLoading || officePickerError}
                           onClick={async () => {
                             setShipmentLoading(true)
                             setActionError("")
@@ -697,6 +686,8 @@ export default function AdminOrderDetailPage({
                               const { trackingNumber: tn } = await generateShipment(id, shipmentForm)
                               setTrackingNumber(tn)
                               setShipmentOpen(false)
+                              setSelectedOfficeNumericId(null)
+                              setOfficePickerError(false)
                               const updated = await getOrder(id)
                               setOrder(updated)
                               setShipmentSuccess(tn)
@@ -709,7 +700,7 @@ export default function AdminOrderDetailPage({
                         >
                           {shipmentLoading ? "Генериране..." : "Изпрати към куриера"}
                         </Button>
-                        <Button variant="ghost" onClick={() => setShipmentOpen(false)}>Отказ</Button>
+                        <Button variant="ghost" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false) }}>Отказ</Button>
                       </div>
                     </div>
                   )}
