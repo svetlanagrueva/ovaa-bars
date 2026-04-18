@@ -18,6 +18,9 @@
 - `stripe_payment_intent_id` text — Stripe PaymentIntent ID for card payments (reconciliation key for Stripe payouts)
 - `stripe_receipt_url` text — Stripe-hosted payment receipt URL (card payments only, not a legal invoice)
 - `order_confirmation_sent_at` timestamptz — when confirmation email was successfully sent to customer
+- `delivery_email_sent_at` timestamptz — when delivery confirmation email was successfully sent
+- `delivery_email_last_error` text — last error message from failed delivery email attempt (observability)
+- `delivery_status_checked_at` timestamptz — last successful courier API poll for delivery status (cron cursor)
 
 ## Inventory Tables
 - `inventory_log` — append-only movement log; `quantity` always positive (`CHECK quantity > 0`); `type` in (`batch_in`, `reserve`, `restore`); has `before_quantity`, `after_quantity`, `batch_id`, `expiry_date`, `order_id`
@@ -28,6 +31,7 @@
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements stock; raises exception if insufficient
 - `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session)
 - `claim_marketing_emails(p_now, p_limit)` — find candidates + insert pending + reclaim stale + claim work, all in one call. Uses `FOR UPDATE SKIP LOCKED` for concurrency. Filters unsubscribes via `NOT EXISTS` with `lower()`.
+- `confirm_delivery(p_order_id, p_delivered_at)` — atomically marks order as delivered WHERE `status = 'shipped'`, returns updated row. Idempotent — no-op if order is not shipped.
 
 ## Marketing Email Tables
 - `email_unsubscribes` — `email text PRIMARY KEY`, RLS deny-all. Keyed by lowercase email.
@@ -42,6 +46,7 @@
 - `idx_orders_needs_invoice` — partial index WHERE needs_invoice = true AND invoice_number IS NULL
 - `idx_orders_delivered_at` — partial index on delivered_at WHERE NOT NULL (marketing cron)
 - `idx_marketing_email_log_claimable` — partial index on status WHERE IN ('pending', 'failed')
+- `idx_orders_tracking_number_unique` — unique partial index on tracking_number WHERE NOT NULL AND != '__generating__'
 
 ## ALTER TABLE statements for existing databases
 When updating an existing database, run these in Supabase SQL Editor:
@@ -64,8 +69,11 @@ ALTER TABLE orders ADD COLUMN invoice_sent_at timestamptz;
 ALTER TABLE orders ADD COLUMN stripe_payment_intent_id text;
 ALTER TABLE orders ADD COLUMN stripe_receipt_url text;
 ALTER TABLE orders ADD COLUMN order_confirmation_sent_at timestamptz;
+ALTER TABLE orders ADD COLUMN delivery_email_sent_at timestamptz;
+ALTER TABLE orders ADD COLUMN delivery_email_last_error text;
+ALTER TABLE orders ADD COLUMN delivery_status_checked_at timestamptz;
 ```
-Plus the `issue_invoice_number`, `dashboard_stats`, and `claim_marketing_emails` functions, and the indexes.
+Plus the `issue_invoice_number`, `dashboard_stats`, `claim_marketing_emails`, and `confirm_delivery` functions, the indexes, and the unique tracking number index.
 
 ## Status constraint — includes `expired` for abandoned checkout sessions
 Valid values: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`

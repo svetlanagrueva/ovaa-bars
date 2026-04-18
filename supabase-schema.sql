@@ -66,6 +66,13 @@ create table if not exists orders (
   -- Admin
   admin_notes jsonb not null default '[]',
 
+  -- Delivery email tracking
+  delivery_email_sent_at timestamptz,
+  delivery_email_last_error text,
+
+  -- Delivery status polling cursor
+  delivery_status_checked_at timestamptz,
+
   -- Cancellation
   cancellation_reason text,
 
@@ -101,6 +108,10 @@ create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
 
 create index if not exists idx_orders_status on orders (status);
+
+-- Tracking number uniqueness (non-null, excludes __generating__ placeholder)
+create unique index if not exists idx_orders_tracking_number_unique
+  on orders (tracking_number) where tracking_number is not null and tracking_number != '__generating__';
 create index if not exists idx_orders_created_at on orders (created_at desc);
 create index if not exists idx_orders_needs_invoice on orders (needs_invoice)
   where needs_invoice = true and invoice_number is null;
@@ -336,6 +347,17 @@ begin
   return (select quantity from inventory_current where sku = p_sku);
 end;
 $$;
+
+-- ─── confirm_delivery RPC ────────────────────────────────────────────────────
+-- Atomically mark an order as delivered. Returns the updated row or empty set.
+-- Guard on status = 'shipped' makes this idempotent.
+create or replace function confirm_delivery(p_order_id uuid, p_delivered_at timestamptz)
+returns setof orders as $$
+  update orders
+  set status = 'delivered', delivered_at = p_delivered_at
+  where id = p_order_id and status = 'shipped'
+  returning *;
+$$ language sql;
 
 -- ─── Seed data ────────────────────────────────────────────────────────────────
 -- Uncomment and update quantities + batch details to reflect actual stock

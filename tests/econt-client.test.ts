@@ -215,3 +215,116 @@ describe("Econt client – createShipment", () => {
     expect(body.label.services).toBeUndefined()
   })
 })
+
+describe("Econt client – getShipmentStatus", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubEnv("ECONT_API_URL", "https://demo.econt.com/ee/services/")
+    vi.stubEnv("ECONT_USERNAME", "test-user")
+    vi.stubEnv("ECONT_PASSWORD", "test-pass")
+  })
+
+  async function loadGetShipmentStatus() {
+    const mod = await import("@/lib/econt")
+    return mod.getShipmentStatus
+  }
+
+  it("sends POST to ShipmentStatusService with tracking number", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ shipmentStatuses: [{}] }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    await getShipmentStatus("ECONT123")
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("ShipmentStatusService.getShipmentStatuses.json"),
+      expect.objectContaining({ method: "POST" })
+    )
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.shipmentNumbers).toEqual(["ECONT123"])
+  })
+
+  it("returns delivered: true when deliveryTime is set", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        shipmentStatuses: [{
+          deliveryTime: "2026-04-16T14:30:00",
+          shortDeliveryStatusEn: "Delivered",
+        }],
+      }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("ECONT123")
+
+    expect(result.delivered).toBe(true)
+    expect(result.deliveredAt).toBe("2026-04-16T14:30:00")
+    expect(result.rawStatus).toBe("Delivered")
+    expect(result.source).toBe("econt")
+  })
+
+  it("returns delivered: true when shortDeliveryStatusEn is Delivered even without deliveryTime", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        shipmentStatuses: [{
+          deliveryTime: null,
+          shortDeliveryStatusEn: "Delivered",
+        }],
+      }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("ECONT123")
+
+    expect(result.delivered).toBe(true)
+    expect(result.deliveredAt).toBeUndefined()
+    expect(result.source).toBe("econt")
+  })
+
+  it("returns delivered: false when not delivered", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        shipmentStatuses: [{
+          deliveryTime: null,
+          shortDeliveryStatusEn: "In Transit",
+        }],
+      }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("ECONT123")
+
+    expect(result.delivered).toBe(false)
+    expect(result.deliveredAt).toBeUndefined()
+    expect(result.source).toBe("econt")
+  })
+
+  it("returns delivered: false when no status data", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ shipmentStatuses: [] }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("ECONT123")
+
+    expect(result.delivered).toBe(false)
+    expect(result.source).toBe("econt")
+  })
+
+  it("throws on API error", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve("Internal Server Error"),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    await expect(getShipmentStatus("ECONT123")).rejects.toThrow("Econt tracking API error: 500")
+  })
+})

@@ -211,3 +211,49 @@ export async function createShipment(params: EcontShipmentParams): Promise<Econt
 
   throw new Error("Econt: No shipment number returned")
 }
+
+export async function getShipmentStatus(trackingNumber: string): Promise<import("@/lib/speedy").CourierShipmentStatus> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  let res: Response
+  try {
+    res = await fetch(
+      `${ECONT_API_URL}Shipments/ShipmentStatusService.getShipmentStatuses.json`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ shipmentNumbers: [trackingNumber] }),
+        signal: controller.signal,
+      }
+    )
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Econt tracking API timeout")
+    }
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`Econt tracking API error: ${res.status} ${text}`)
+  }
+
+  const data = await res.json()
+  const status = data.shipmentStatuses?.[0]
+
+  if (!status) {
+    return { delivered: false, source: "econt" }
+  }
+
+  const delivered = !!status.deliveryTime || status.shortDeliveryStatusEn === "Delivered"
+
+  return {
+    delivered,
+    deliveredAt: delivered ? (status.deliveryTime || undefined) : undefined,
+    rawStatus: status.shortDeliveryStatusEn,
+    source: "econt",
+  }
+}

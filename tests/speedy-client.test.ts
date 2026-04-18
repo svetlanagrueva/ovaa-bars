@@ -251,3 +251,101 @@ describe("Speedy client – createShipment", () => {
     expect(body.payment.courierServicePayer).toBe("SENDER")
   })
 })
+
+describe("Speedy client – getShipmentStatus", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubEnv("SPEEDY_API_URL", "https://api.speedy.bg/v1")
+    vi.stubEnv("SPEEDY_USERNAME", "test-user")
+    vi.stubEnv("SPEEDY_PASSWORD", "test-pass")
+  })
+
+  async function loadGetShipmentStatus() {
+    const mod = await import("@/lib/speedy")
+    return mod.getShipmentStatus
+  }
+
+  it("sends POST to /shipment/track with tracking number", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ parcels: [{ operations: [] }] }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    await getShipmentStatus("SPD123")
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/shipment/track"),
+      expect.objectContaining({ method: "POST" })
+    )
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.parcels).toEqual([{ id: "SPD123" }])
+    expect(body.userName).toBe("test-user")
+  })
+
+  it("returns delivered: true for operation code -14", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        parcels: [{
+          operations: [
+            { operationCode: 1, operationDescription: "Приета", dateTime: "2026-04-15T10:00:00" },
+            { operationCode: -14, operationDescription: "Доставена", dateTime: "2026-04-16T14:30:00" },
+          ],
+        }],
+      }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("SPD123")
+
+    expect(result.delivered).toBe(true)
+    expect(result.deliveredAt).toBe("2026-04-16T14:30:00")
+    expect(result.rawEventCode).toBe(-14)
+    expect(result.source).toBe("speedy")
+  })
+
+  it("returns delivered: false for non-delivery operation code", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        parcels: [{
+          operations: [
+            { operationCode: 1, operationDescription: "Приета", dateTime: "2026-04-15T10:00:00" },
+          ],
+        }],
+      }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("SPD123")
+
+    expect(result.delivered).toBe(false)
+    expect(result.deliveredAt).toBeUndefined()
+    expect(result.source).toBe("speedy")
+  })
+
+  it("returns delivered: false when no operations", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ parcels: [{ operations: [] }] }),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    const result = await getShipmentStatus("SPD123")
+
+    expect(result.delivered).toBe(false)
+    expect(result.source).toBe("speedy")
+  })
+
+  it("throws on API error", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve("Internal Server Error"),
+    })
+
+    const getShipmentStatus = await loadGetShipmentStatus()
+    await expect(getShipmentStatus("SPD123")).rejects.toThrow("Speedy tracking API error: 500")
+  })
+})

@@ -1,6 +1,6 @@
 import { Resend } from "resend"
 import { formatPrice } from "@/lib/products"
-import { buildOrderConfirmationEmail } from "@/lib/email-template"
+import { buildOrderConfirmationEmail, buildDeliveryEmail } from "@/lib/email-template"
 import { createClient } from "@/lib/supabase/server"
 
 /**
@@ -65,6 +65,66 @@ export function sendOrderConfirmationEmail(order: Record<string, unknown>) {
     })
   } catch (err) {
     console.error(`Failed to build confirmation email for order ${order.id}:`, err)
+  }
+}
+
+/**
+ * Send delivery confirmation email to the customer.
+ * Fire-and-forget — logs errors but never throws.
+ * Records delivery_email_sent_at on success, delivery_email_last_error on failure.
+ */
+export function sendDeliveryEmail(order: Record<string, unknown>) {
+  if (!process.env.RESEND_API_KEY) return
+  if (order.delivery_email_sent_at) return
+
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const orderItems = order.items as Array<{
+      productId: string
+      productName: string
+      quantity: number
+      priceInCents: number
+    }>
+
+    const { html, text } = buildDeliveryEmail({
+      orderId: order.id as string,
+      firstName: order.first_name as string,
+      items: orderItems,
+    })
+
+    resend.emails.send({
+      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+      to: order.email as string,
+      subject: `Поръчка #${(order.id as string).slice(0, 8)} - Доставена`,
+      html,
+      text,
+    }).then(async () => {
+      try {
+        const supabase = await createClient()
+        const { error: tsError } = await supabase
+          .from("orders")
+          .update({ delivery_email_sent_at: new Date().toISOString(), delivery_email_last_error: null })
+          .eq("id", order.id as string)
+        if (tsError) {
+          console.error(`Failed to record delivery email timestamp for order ${order.id}:`, tsError)
+        }
+      } catch (err) {
+        console.error(`Failed to record delivery email timestamp for order ${order.id}:`, err)
+      }
+    }).catch(async (err) => {
+      console.error(`Failed to send delivery email for order ${order.id}:`, err)
+      try {
+        const supabase = await createClient()
+        await supabase
+          .from("orders")
+          .update({ delivery_email_last_error: String(err) })
+          .eq("id", order.id as string)
+      } catch (dbErr) {
+        console.error(`Failed to record delivery email error for order ${order.id}:`, dbErr)
+      }
+    })
+  } catch (err) {
+    console.error(`Failed to build delivery email for order ${order.id}:`, err)
   }
 }
 

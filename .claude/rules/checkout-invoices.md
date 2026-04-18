@@ -49,6 +49,14 @@
 - Business is not VAT registered — invoices only issued on customer request (`needs_invoice`)
 - Pre-launch НАП requirement: file Чл. 52м e-shop registration (administrative, not code)
 
+## Delivery Confirmation
+- All delivery paths converge on `confirmDeliveryForOrder()` in `lib/delivery-confirmation.ts`
+- `confirm_delivery` RPC atomically sets `status = 'delivered'` + `delivered_at`, guarded by `status = 'shipped'`
+- Delivery email sent via `sendDeliveryEmail()` — fire-and-forget, records `delivery_email_sent_at` on success, `delivery_email_last_error` on failure
+- Cron (`/api/cron/delivery-checks`) polls courier APIs every 2 hours as primary detection path
+- Admin manual "mark as delivered" also uses the shared path — no duplicate side-effect logic
+- Duplicate delivery emails are accepted as harmless; `delivery_email_sent_at` early-return prevents most avoidable duplicates
+
 ## Bulgarian Tax Compliance
 - Invoice must be issued within 5 days of tax event
 - Card payments: tax event = payment date (created_at)
