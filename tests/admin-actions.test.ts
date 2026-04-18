@@ -23,6 +23,13 @@ vi.mock("@/lib/econt", () => ({
   createShipment: (params: any) => mockEcontCreateShipment(params),
 }))
 
+// Mock delivery confirmation (imported by admin actions for delivered status)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockConfirmDeliveryForOrder: any = vi.fn(() => Promise.resolve({ confirmed: true }))
+vi.mock("@/lib/delivery-confirmation", () => ({
+  confirmDeliveryForOrder: (a: string, b: string, c: string) => mockConfirmDeliveryForOrder(a, b, c),
+}))
+
 // Mock Supabase
 const mockSupabase = createSupabaseMock()
 
@@ -1230,7 +1237,7 @@ describe("admin actions", () => {
       )
     })
 
-    it("sets delivered_at when marking as delivered", async () => {
+    it("delegates to confirmDeliveryForOrder when marking as delivered", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: {
           id: validOrderId, status: "shipped",
@@ -1238,16 +1245,32 @@ describe("admin actions", () => {
         },
         error: null,
       })
+      mockConfirmDeliveryForOrder.mockResolvedValueOnce({ confirmed: true })
 
       const { updateOrderStatus } = await import("@/app/actions/admin")
       await updateOrderStatus(validOrderId, "delivered")
 
-      expect(mockSupabase.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "delivered",
-          delivered_at: expect.any(String),
-        })
+      expect(mockConfirmDeliveryForOrder).toHaveBeenCalledWith(
+        validOrderId,
+        expect.any(String),
+        "admin"
       )
+    })
+
+    it("throws when confirmDeliveryForOrder returns not confirmed", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId, status: "shipped",
+          payment_method: "card", needs_invoice: false,
+        },
+        error: null,
+      })
+      mockConfirmDeliveryForOrder.mockResolvedValueOnce({ confirmed: false })
+
+      const { updateOrderStatus } = await import("@/app/actions/admin")
+      await expect(
+        updateOrderStatus(validOrderId, "delivered")
+      ).rejects.toThrow("Order status was changed by another request")
     })
 
     it("sets cancelled_at and reason when cancelling", async () => {

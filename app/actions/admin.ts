@@ -11,6 +11,7 @@ import { createHmac, timingSafeEqual } from "crypto"
 import { headers } from "next/headers"
 import { createShipment as createSpeedyShipment } from "@/lib/speedy"
 import { createShipment as createEcontShipment } from "@/lib/econt"
+import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -496,6 +497,16 @@ export async function updateOrderStatus(
     throw new Error(`Cannot transition from "${order.status}" to "${newStatus}"`)
   }
 
+  // Early return for delivered — use shared confirmation path for consistent side effects
+  if (newStatus === "delivered") {
+    const { confirmed } = await confirmDeliveryForOrder(orderId, new Date().toISOString(), "admin")
+    if (!confirmed) {
+      throw new Error("Order status was changed by another request. Please refresh and try again.")
+    }
+    revalidateTag("orders", "max")
+    return { success: true }
+  }
+
   // Build update payload
   const now = new Date().toISOString()
   const updateData: Record<string, unknown> = { status: newStatus }
@@ -505,9 +516,6 @@ export async function updateOrderStatus(
   if (newStatus === "shipped") {
     updateData.shipped_at = now
     if (trackingNumber) updateData.tracking_number = trackingNumber.trim()
-  }
-  if (newStatus === "delivered") {
-    updateData.delivered_at = now
   }
   if (newStatus === "cancelled") {
     updateData.cancelled_at = now

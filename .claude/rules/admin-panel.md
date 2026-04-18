@@ -68,7 +68,7 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 |---|---|---|---|
 | Order Confirmation | `buildOrderConfirmationEmail()` | Transactional | On order submit — **wired up** |
 | Shipping Notification | `buildShippingEmail()` | Transactional | When admin marks shipped — template ready, not wired |
-| Delivery Confirmation | `buildDeliveryEmail()` | Transactional | When admin marks delivered — template ready, not wired |
+| Delivery Confirmation | `buildDeliveryEmail()` | Transactional | On delivery — **wired via `confirmDeliveryForOrder()` + cron** |
 | Review Request | `buildReviewRequestEmail()` | Marketing | 3 days after delivery — **wired via cron** |
 | Cross-sell | `buildCrossSellEmail()` | Marketing | 10 days after delivery — **wired via cron** |
 | Abandoned Cart | `buildAbandonedCartEmail()` | Marketing | Template ready, not wired to cron |
@@ -81,8 +81,28 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 - Hidden preheader text for inbox preview on all templates
 - UTM parameters on all clickable links (`utm_source=email&utm_campaign=<name>&utm_content=<label>`)
 - `sendOrderConfirmationEmail()` in `lib/email-sender.ts` is the single unified sender for both card and COD orders (extracted from stripe.ts, used by both webhook and server actions)
+- `sendDeliveryEmail()` in `lib/email-sender.ts` — delivery confirmation, fire-and-forget with retry via `delivery_email_sent_at` marker. Early returns if already sent.
 - `notifyAdminNewOrder()` in `lib/email-sender.ts` — admin notification for new orders (both card and COD)
 - Transactional emails have NO unsubscribe link — they are mandatory
+
+## Automatic Delivery Confirmation (`lib/delivery-confirmation.ts`)
+- All delivery paths (admin manual, cron polling, future webhooks) converge on `confirmDeliveryForOrder(orderId, deliveredAt, source)`
+- Uses `confirm_delivery` RPC — atomic update WHERE `status = 'shipped'`, returns updated row. Idempotent.
+- `confirmDeliveryByTrackingNumber()` is a **resolver only** — looks up order by tracking number (up to 2 rows for ambiguity detection), delegates to `confirmDeliveryForOrder()`. No state mutation.
+- Admin `updateOrderStatus("delivered")` is an early-return branch that calls `confirmDeliveryForOrder(orderId, now, "admin")`
+
+## Delivery Check Cron (`app/api/cron/delivery-checks/route.ts`)
+- Daily at 18:00 UTC (~21:00 EET) via `vercel.json` (`0 18 * * *`) — Vercel Hobby tier limits crons to once daily
+- Auth: `CRON_SECRET` verified with `timingSafeEqual` (same as marketing cron)
+- Queries shipped orders with tracking numbers, cursor-based: `ORDER BY delivery_status_checked_at ASC NULLS FIRST`, max 20 per run
+- Only checks orders shipped > 2 hours ago (no premature polling)
+- Explicit courier routing: `SPEEDY_PARTNERS` / `ECONT_PARTNERS` arrays, unknown values logged and skipped
+- `delivery_status_checked_at` advanced only on **successful** courier API response — API errors leave order near front for retry
+- Speedy tracking: `POST /shipment/track`, operation code `-14` = delivered
+- Econt tracking: `POST /ShipmentStatusService.getShipmentStatuses.json`, `deliveryTime` non-null or `shortDeliveryStatusEn === "Delivered"`
+- Missing courier delivery timestamp: falls back to `new Date().toISOString()`, logs `deliveredAtSource: "courier" | "inferred"`
+- Email retry pass: re-attempts delivery email for orders where `delivered_at IS NOT NULL AND delivery_email_sent_at IS NULL`, ordered `delivered_at ASC`, limit 10
+- Returns `{ checked, delivered, emailRetries, failed }`
 
 ## Marketing Email Cron (`app/api/cron/marketing-emails/route.ts`)
 - Daily cron at 07:00 UTC (~10:00 EET) via `vercel.json`

@@ -82,6 +82,14 @@ export interface SpeedyShipmentParams {
   codAmount?: number
 }
 
+export interface CourierShipmentStatus {
+  delivered: boolean
+  deliveredAt?: string
+  rawStatus?: string
+  rawEventCode?: string | number
+  source: "speedy" | "econt"
+}
+
 export interface SpeedyShipmentResult {
   shipmentId: string
   trackingNumber: string
@@ -181,5 +189,63 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
     shipmentId: String(data.id),
     trackingNumber: String(data.parcels?.[0]?.id || data.id),
     deliveryDeadline: data.deliveryDeadline,
+  }
+}
+
+const SPEEDY_DELIVERED_OPERATION = -14
+
+export async function getShipmentStatus(trackingNumber: string): Promise<CourierShipmentStatus> {
+  const body = {
+    userName: SPEEDY_USERNAME,
+    password: SPEEDY_PASSWORD,
+    language: "BG",
+    parcels: [{ id: trackingNumber }],
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  let res: Response
+  try {
+    res = await fetch(`${SPEEDY_API_URL}/shipment/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Speedy tracking API timeout")
+    }
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`Speedy tracking API error: ${res.status} ${text}`)
+  }
+
+  const data = await res.json()
+
+  if (data.error) {
+    throw new Error(`Speedy tracking: ${data.error.message || JSON.stringify(data.error)}`)
+  }
+
+  const operations = data.parcels?.[0]?.operations
+  if (!operations || operations.length === 0) {
+    return { delivered: false, source: "speedy" }
+  }
+
+  const lastOp = operations[operations.length - 1]
+  const delivered = lastOp.operationCode === SPEEDY_DELIVERED_OPERATION
+
+  return {
+    delivered,
+    deliveredAt: delivered ? lastOp.dateTime : undefined,
+    rawStatus: lastOp.operationDescription,
+    rawEventCode: lastOp.operationCode,
+    source: "speedy",
   }
 }

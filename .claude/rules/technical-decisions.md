@@ -23,8 +23,14 @@
 - Webhook validates `amount_received` against `total_amount` and logs mismatch (no-throw guard)
 - `stripe_receipt_url` is a Stripe payment receipt, NOT a Bulgarian legal document — label as "Разписка за картово плащане (Stripe)", never as фактура/касов бон
 
+## Courier Tracking APIs
+- Speedy: `POST /shipment/track` — accepts `parcels: [{ id: trackingNumber }]`, returns `operations` array with `operationCode` and `dateTime`. Code `-14` = Delivered.
+- Econt: `POST /ShipmentStatusService.getShipmentStatuses.json` — accepts `shipmentNumbers: [trackingNumber]`, returns `shipmentStatuses` with `deliveryTime`, `shortDeliveryStatusEn`. Non-null `deliveryTime` or `shortDeliveryStatusEn === "Delivered"` means delivered.
+- Both return `CourierShipmentStatus { delivered, deliveredAt?, rawStatus?, rawEventCode?, source }` for uniform consumption
+- Courier webhooks for delivery notification are **not yet implemented** (Phase 2) — pending confirmation of event format, auth model, and retry semantics from both couriers
+
 ## Testing
-- 337 tests, 15 test files
+- 362 tests, 16 test files
 - Mock setup: `vi.clearAllMocks()` clears history but not implementations — must manually reset mocks like `update`, `rpc`, `single`, `range`, `order`, `limit` in `beforeEach`
 - `revalidateTag` must be mocked via `vi.mock("next/cache", ...)`
 
@@ -56,6 +62,7 @@
 - `logistics_partner` is unconstrained text in Postgres; validation is application-layer only (stripe.ts)
 - Admin shipment generation routes on string matching: `startsWith("speedy")` → Speedy API, else → Econt API; `endsWith("-office")` → office delivery, else → address delivery
 - Speedy address delivery uses `siteName` + `postCode` (not numeric `siteId`) to identify the delivery site
+- `tracking_number` has a unique partial index (excludes null and `__generating__` placeholder)
 
 ## Courier API — ППП (Postal Money Transfer) Configuration
 - COD shipments must be configured as ППП (пощенски паричен превод), not generic cash-on-delivery
