@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/delivery-checks",
-      "schedule": "0 */2 * * *"
+      "schedule": "0 18 * * *"
     }
   ]
 }

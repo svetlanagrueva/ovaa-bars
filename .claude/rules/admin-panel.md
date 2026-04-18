@@ -92,7 +92,7 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 - Admin `updateOrderStatus("delivered")` is an early-return branch that calls `confirmDeliveryForOrder(orderId, now, "admin")`
 
 ## Delivery Check Cron (`app/api/cron/delivery-checks/route.ts`)
-- Every 2 hours via `vercel.json` (`0 */2 * * *`)
+- Daily at 18:00 UTC (~21:00 EET) via `vercel.json` (`0 18 * * *`) — Vercel Hobby tier limits crons to once daily
 - Auth: `CRON_SECRET` verified with `timingSafeEqual` (same as marketing cron)
 - Queries shipped orders with tracking numbers, cursor-based: `ORDER BY delivery_status_checked_at ASC NULLS FIRST`, max 20 per run
 - Only checks orders shipped > 2 hours ago (no premature polling)
