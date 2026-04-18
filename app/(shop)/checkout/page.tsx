@@ -713,6 +713,13 @@ export default function CheckoutPage() {
                       Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>
                     </label>
                   </div>
+                  <p className="pl-9 text-xs leading-relaxed text-muted-foreground">
+                    При упражняване на правото на отказ разходите за връщане на стоката са за
+                    сметка на купувача, освен ако стоката е дефектна, сгрешена или повредена.{" "}
+                    <a href="/returns" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">
+                      Право на отказ и връщане
+                    </a>
+                  </p>
                   <div className="flex items-start space-x-3">
                     <Checkbox
                       id="marketingConsent"
