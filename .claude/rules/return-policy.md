@@ -55,7 +55,8 @@ The EU Online Dispute Resolution platform (ec.europa.eu/consumers/odr) was shut 
 ## Operational Prerequisites (Must Be Ready Before Pages Go Live)
 - Withdrawal notice handling via info@eggorigin.com
 - COD refunds by IBAN (manual bank transfer)
-- 14-day refund clock tracking
-- Complaints register (регистър на рекламациите) with date and reference numbers
+- ~~14-day refund clock tracking~~ — DONE: informational countdown in admin order detail
+- ~~Complaints register~~ — DONE: `complaints` table with auto-generated refs, defect description, customer demand (ZZP Art. 127)
 - Fiscal handling: bank transfer refunds don't trigger storno; cash refunds would need storno process (НАП)
-- Future: `refunded_at`, `refund_amount`, `refund_reason` columns + admin UI for tracking
+- ~~Refund tracking~~ — DONE: `refunded_at`, `refund_amount`, `refund_reason`, `refund_method`, `credit_note_ref` + admin UI
+- ~~Inventory expansion~~ — DONE: `recordStockMovement()` for B2B, samples, damage, returns, adjustments with document linkage

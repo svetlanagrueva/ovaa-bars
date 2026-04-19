@@ -1654,4 +1654,512 @@ describe("admin actions", () => {
       await expect(generateShipment(validUUID, validForm)).rejects.toThrow("не можа да бъде запазена")
     })
   })
+
+  describe("recordStockMovement", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 5,
+          referenceType: "invoice",
+          referenceId: "INV-001",
+        }),
+      ).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid SKU", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "INVALID-SKU",
+          type: "wholesale_out",
+          quantity: 5,
+          referenceType: "invoice",
+          referenceId: "INV-001",
+        }),
+      ).rejects.toThrow("Невалиден SKU")
+    })
+
+    it("rejects non-positive quantity", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 0,
+          referenceType: "invoice",
+          referenceId: "INV-001",
+        }),
+      ).rejects.toThrow("цяло число между 1 и 100 000")
+    })
+
+    it("rejects non-integer quantity", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 2.5,
+          referenceType: "invoice",
+          referenceId: "INV-001",
+        }),
+      ).rejects.toThrow("цяло число между 1 и 100 000")
+    })
+
+    it("rejects type ↔ referenceType mismatch", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 5,
+          referenceType: "internal",
+          referenceId: "PROT-001",
+        }),
+      ).rejects.toThrow('Невалиден тип референция "internal" за движение "wholesale_out"')
+    })
+
+    it("rejects empty referenceId", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 5,
+          referenceType: "invoice",
+          referenceId: "   ",
+        }),
+      ).rejects.toThrow("Референцията е задължителна")
+    })
+
+    it("requires notes for adjustment_loss", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "adjustment_loss",
+          quantity: 2,
+          referenceType: "internal",
+          referenceId: "COUNT-001",
+        }),
+      ).rejects.toThrow("Бележката е задължителна")
+    })
+
+    it("requires notes for damaged", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "damaged",
+          quantity: 1,
+          referenceType: "internal",
+          referenceId: "DMG-001",
+        }),
+      ).rejects.toThrow("Бележката е задължителна")
+    })
+
+    it("rejects batchId for non-return_in types", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 5,
+          referenceType: "invoice",
+          referenceId: "INV-001",
+          batchId: "BATCH-001",
+        }),
+      ).rejects.toThrow("Номер на партида е допустим само за връщане")
+    })
+
+    it("records wholesale_out successfully", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      const result = await recordStockMovement({
+        sku: "EGO-DC-12",
+        type: "wholesale_out",
+        quantity: 10,
+        referenceType: "invoice",
+        referenceId: "INV-2026-001",
+        notes: "B2B delivery to gym",
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sku: "EGO-DC-12",
+          type: "wholesale_out",
+          quantity: 10,
+          reference_type: "invoice",
+          reference_id: "INV-2026-001",
+          created_by: "admin",
+        }),
+      )
+    })
+
+    it("records return_in with batchId and orderId", async () => {
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      const result = await recordStockMovement({
+        sku: "EGO-DC-12",
+        type: "return_in",
+        quantity: 1,
+        referenceType: "return",
+        referenceId: "RET-001",
+        batchId: "BATCH-003",
+        orderId: validUUID,
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "return_in",
+          batch_id: "BATCH-003",
+          order_id: validUUID,
+          reference_type: "return",
+        }),
+      )
+    })
+  })
+
+  describe("recordRefund", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { recordRefund } = await import("@/app/actions/admin")
+
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Customer withdrawal",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+
+      await expect(
+        recordRefund("bad-id", {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("Невалиден формат на поръчка")
+    })
+
+    it("rejects non-positive refund amount", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 0,
+          refundReason: "Test",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("положително цяло число")
+    })
+
+    it("rejects empty refund reason", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "  ",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("Причината за възстановяване е задължителна")
+    })
+
+    it("rejects invalid refund method", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "cash" as any,
+        }),
+      ).rejects.toThrow("Невалиден метод на възстановяване")
+    })
+
+    it("rejects when order not paid", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, paid_at: null, total_amount: 5000 },
+        error: null,
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("неплатена поръчка")
+    })
+
+    it("rejects refund amount exceeding total", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false },
+        error: null,
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 6000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("не може да надвишава")
+    })
+
+    it("requires creditNoteRef when invoice was issued", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: true, invoice_number: "INV-001" },
+        error: null,
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Customer withdrawal",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("кредитно известие")
+    })
+
+    it("records refund successfully", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false },
+        error: null,
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      const result = await recordRefund(validOrderId, {
+        refundAmount: 5000,
+        refundReason: "14-day withdrawal",
+        refundMethod: "stripe",
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          refund_amount: 5000,
+          refund_reason: "14-day withdrawal",
+          refund_method: "stripe",
+          refunded_at: expect.any(String),
+        }),
+      )
+    })
+
+    it("rejects when already refunded (idempotency)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false },
+        error: null,
+      })
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("Възстановяването вече е записано")
+    })
+
+    it("rejects future refundedAt date", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          refundedAt: "2099-01-01",
+        }),
+      ).rejects.toThrow("не може да е в бъдещето")
+    })
+  })
+
+  describe("recordComplaint", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { recordComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        recordComplaint(validOrderId, {
+          defectDescription: "Damaged packaging",
+          customerDemand: "refund",
+        }),
+      ).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { recordComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        recordComplaint("bad-id", {
+          defectDescription: "Damaged packaging",
+          customerDemand: "refund",
+        }),
+      ).rejects.toThrow("Невалиден формат на поръчка")
+    })
+
+    it("rejects empty defect description", async () => {
+      const { recordComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        recordComplaint(validOrderId, {
+          defectDescription: "  ",
+          customerDemand: "refund",
+        }),
+      ).rejects.toThrow("Описанието на несъответствието е задължително")
+    })
+
+    it("rejects defect description over 2000 chars", async () => {
+      const { recordComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        recordComplaint(validOrderId, {
+          defectDescription: "x".repeat(2001),
+          customerDemand: "refund",
+        }),
+      ).rejects.toThrow("Описанието е твърде дълго")
+    })
+
+    it("rejects invalid customer demand", async () => {
+      const { recordComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        recordComplaint(validOrderId, {
+          defectDescription: "Broken seal",
+          customerDemand: "free_stuff" as any,
+        }),
+      ).rejects.toThrow("Невалидна претенция на потребителя")
+    })
+
+    it("records complaint with auto-generated ref", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId },
+        error: null,
+      })
+      // Mock RPC for sequence (will fail, triggering fallback)
+      mockSupabase.rpc.mockResolvedValueOnce({ data: null, error: { message: "function not found" } })
+
+      const { recordComplaint } = await import("@/app/actions/admin")
+      const result = await recordComplaint(validOrderId, {
+        defectDescription: "Product arrived damaged",
+        customerDemand: "replacement",
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.complaintRef).toMatch(/^RCL-\d{4}-\d{4,}$/)
+      expect(mockSupabase.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          order_id: validOrderId,
+          defect_description: "Product arrived damaged",
+          customer_demand: "replacement",
+          status: "open",
+          created_by: "admin",
+        }),
+      )
+    })
+  })
+
+  describe("resolveComplaint", () => {
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { resolveComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        resolveComplaint(1, { status: "resolved", resolution: "Replaced product" }),
+      ).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid complaint ID", async () => {
+      const { resolveComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        resolveComplaint(0, { status: "resolved", resolution: "Test" }),
+      ).rejects.toThrow("Невалиден идентификатор")
+    })
+
+    it("rejects empty resolution", async () => {
+      const { resolveComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        resolveComplaint(1, { status: "resolved", resolution: "  " }),
+      ).rejects.toThrow("Решението е задължително")
+    })
+
+    it("rejects invalid status", async () => {
+      const { resolveComplaint } = await import("@/app/actions/admin")
+
+      await expect(
+        resolveComplaint(1, { status: "closed" as any, resolution: "Test" }),
+      ).rejects.toThrow("Невалиден статус")
+    })
+
+    it("resolves complaint successfully", async () => {
+      const { resolveComplaint } = await import("@/app/actions/admin")
+      const result = await resolveComplaint(1, {
+        status: "resolved",
+        resolution: "Product replaced, customer satisfied",
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "resolved",
+          resolution: "Product replaced, customer satisfied",
+          resolved_at: expect.any(String),
+        }),
+      )
+    })
+
+    it("rejects when complaint already resolved", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain)
+
+      const { resolveComplaint } = await import("@/app/actions/admin")
+      await expect(
+        resolveComplaint(1, { status: "resolved", resolution: "Test" }),
+      ).rejects.toThrow("вече е приключена")
+    })
+  })
 })
