@@ -14,6 +14,10 @@ export function MetaPixel() {
   const [consent, setConsent] = useState(false)
   const pathname = usePathname()
   const initializedRef = useRef(false)
+  // Tracks the last pathname that produced a PageView so the pathname effect
+  // doesn't double-fire after onReady's bootstrap PageView, and so a consent
+  // re-grant on the same path doesn't duplicate the event.
+  const lastFiredPathRef = useRef<string | null>(null)
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -34,12 +38,17 @@ export function MetaPixel() {
     setMetaPixelDisabled(!consent)
   }, [consent])
 
-  // Fire PageView on every pathname value — the only PageView source.
+  // PageView on client navigation. The *first* PageView after init is fired
+  // from onReady below — this effect only fires on *subsequent* pathname
+  // changes. Guarded by initializedRef so we never race ahead of the loader.
   // intentional: query changes (filters, UTM, variants) do not refire PageView.
   useEffect(() => {
     if (!consent) return
+    if (!initializedRef.current) return
     if (!isMetaPixelEnabled()) return
+    if (lastFiredPathRef.current === pathname) return
     window.fbq!("track", "PageView")
+    lastFiredPathRef.current = pathname
   }, [consent, pathname])
 
   const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID
@@ -47,11 +56,16 @@ export function MetaPixel() {
   if (!consent) return null
 
   const onReady = () => {
+    // Guard against React re-mounts (consent toggled off→on): fbq stays global,
+    // so re-running init would register the pixel twice.
     if (initializedRef.current) return
     initializedRef.current = true
-    // Loader + init only. No bootstrap PageView — the pathname effect above
-    // is the sole source so initial load does not double-fire.
+    // Canonical Meta bootstrap: init + PageView together, after the loader
+    // snippet has installed the fbq queueing shim. This is the first PageView;
+    // the pathname effect above skips runs where lastFiredPathRef matches.
     window.fbq!("init", pixelId)
+    window.fbq!("track", "PageView")
+    lastFiredPathRef.current = pathname
   }
 
   return (

@@ -35,6 +35,7 @@ The floating Cookie icon (bottom-left, `fixed bottom-16 left-4`) reopens the ban
 - **No `<noscript>` fallback** — bypasses client-side consent model, deliberately omitted
 - **No bootstrap PageView** — loader calls `fbq('init', id)` only. A single `usePathname` effect is the sole PageView source. This avoids double-fire on first load.
 - Pathname-only PageView keying is intentional — query-string changes (filters, UTM, variants) do not refire PageView. Comment in component documents this.
+- **Revisit when any of these ship**: collection pages with filter/sort in the URL (`/products?filter=...`), pagination via query param, product variants encoded in query, or any campaign-landing pages where UTM-only changes should count as a new view. Change the effect dep from `pathname` to `pathname + searchParams` and update the last-fired-path ref to track the full key.
 - Mounted in `app/(shop)/layout.tsx` alongside `<ConditionalAnalytics />`. `(shop)` is the intentional tracking boundary; admin is outside.
 
 ### Consent lifecycle
@@ -77,8 +78,10 @@ Deterministic input — do not drift without updating every call site:
 
 Changes to the hash input invalidate existing sessionStorage markers and can cause either missed or duplicate `InitiateCheckout` events.
 
-### Purchase — at-most-once by design
-`trackPurchase()` writes the `localStorage` marker **before** calling `fbq`. This is intentional and marked with a `DO NOT MOVE` comment referencing the plan. Tradeoff: a blocked/failed `fbq` call will not retry for that order in that browser. Phase 2 Conversions API (CAPI) provides the authoritative server-side `Purchase` with the same `eventID`, so client retries are not needed.
+### Purchase — at-most-once by design with bounded retry
+`trackPurchase()` writes the `localStorage` marker **before** calling `fbq`, but only after gating on `isMetaPixelEnabled()`. This prevents burning the at-most-once marker on a no-op (e.g., fbq shim not yet injected, disabled flag set). If fbq isn't ready, the helper polls every 100ms for up to 5 seconds — this handles the narrow race where the success-page effect runs before the layout's `<Script>` has injected the shim. After the retry window, the event is dropped for this browser. Phase 2 CAPI provides the authoritative server-side `Purchase` with the same `eventID` for adblocker / permanent-drop cases.
+
+The `DO NOT MOVE` comment on the `localStorage.setItem` call enforces the marker-before-send ordering. Never move it below the `track()` call — that would make the semantics at-least-once and allow duplicates on transient errors.
 
 ### `confirmOrder` return shape
 Extended to return `{ status, totalCents, items }` so the success page can populate Purchase with currency/value/contents. `items` is an `OrderTrackingItem[]` with `sku` (resolved from static `PRODUCTS` list via `productId`), `quantity`, `priceInCents`. SKU is NOT stored on the `orders.items` JSONB — resolving from `PRODUCTS` keeps the schema stable.

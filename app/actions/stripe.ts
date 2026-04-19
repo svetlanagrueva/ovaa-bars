@@ -660,14 +660,21 @@ interface OrderItemsRow {
 
 function toTrackingItems(raw: unknown): OrderTrackingItem[] {
   if (!Array.isArray(raw)) return []
-  return raw.flatMap((entry: OrderItemsRow) => {
+  return raw.map((entry: OrderItemsRow) => {
     const product = PRODUCTS.find((p) => p.id === entry.productId)
-    if (!product) return []
-    return [{
-      sku: product.sku,
+    if (!product) {
+      // Fall back to productId as the pixel sku so value/contents stay
+      // consistent (value is derived from totalCents, contents must match).
+      // Log so a discontinued/renamed product shows up in observability.
+      console.warn(
+        `[confirmOrder] Unknown productId on order items: ${entry.productId}; falling back to productId as pixel sku`,
+      )
+    }
+    return {
+      sku: product?.sku ?? entry.productId,
       quantity: entry.quantity,
       priceInCents: entry.priceInCents,
-    }]
+    }
   })
 }
 

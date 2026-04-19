@@ -184,3 +184,68 @@ describe("meta-pixel event helpers (enabled)", () => {
     expect(fbq).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("trackPurchase — fbq-not-ready race handling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    sessionStorage.clear()
+    localStorage.clear()
+    delete (window as unknown as { fbq?: unknown }).fbq
+    setMetaPixelDisabled(false)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    delete (window as unknown as { fbq?: unknown }).fbq
+  })
+
+  it("does NOT write the marker when fbq is missing (preserves retry)", () => {
+    const orderId = "00000000-0000-0000-0000-000000000002"
+    trackPurchase({
+      orderId,
+      totalCents: 2570,
+      items: [{ sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 }],
+    })
+    // Purely a no-op: no marker, no fbq call. A future retry can still fire.
+    expect(localStorage.getItem("eo-purchase-fired:" + orderId)).toBeNull()
+  })
+
+  it("retries and fires once fbq becomes available", () => {
+    const orderId = "00000000-0000-0000-0000-000000000003"
+    trackPurchase({
+      orderId,
+      totalCents: 2570,
+      items: [{ sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 }],
+    })
+
+    // Simulate the layout's <Script> injecting the fbq shim mid-flight.
+    const fbq = vi.fn()
+    ;(window as unknown as { fbq?: typeof fbq }).fbq = fbq
+
+    // Advance past one poll tick (100ms).
+    vi.advanceTimersByTime(200)
+
+    expect(fbq).toHaveBeenCalledWith(
+      "track",
+      "Purchase",
+      expect.objectContaining({ value: 25.7 }),
+      { eventID: "purchase-" + orderId },
+    )
+    expect(localStorage.getItem("eo-purchase-fired:" + orderId)).toBe("1")
+  })
+
+  it("gives up after the retry window without writing the marker", () => {
+    const orderId = "00000000-0000-0000-0000-000000000004"
+    trackPurchase({
+      orderId,
+      totalCents: 2570,
+      items: [{ sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 }],
+    })
+
+    // 50 × 100ms + buffer = past the retry window.
+    vi.advanceTimersByTime(10_000)
+
+    // Nothing fired; no marker burned — Phase 2 CAPI is the authority.
+    expect(localStorage.getItem("eo-purchase-fired:" + orderId)).toBeNull()
+  })
+})

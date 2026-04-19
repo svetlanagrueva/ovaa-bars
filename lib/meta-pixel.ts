@@ -139,6 +139,11 @@ export function trackInitiateCheckout(items: PixelLineItem[]) {
 
 const PURCHASE_MARKER_PREFIX = "eo-purchase-fired:"
 
+// Retry window for the narrow race where the success-page effect fires
+// before the layout's <Script> has injected the fbq shim. 50 × 100ms = 5s.
+const PURCHASE_RETRY_ATTEMPTS = 50
+const PURCHASE_RETRY_INTERVAL_MS = 100
+
 export function trackPurchase(params: {
   orderId: string
   totalCents: number
@@ -146,28 +151,50 @@ export function trackPurchase(params: {
 }) {
   if (typeof window === "undefined") return
 
+  const payload = {
+    content_ids: params.items.map((i) => i.sku),
+    content_type: "product",
+    contents: toContents(params.items),
+    currency: "EUR",
+    value: centsToEur(params.totalCents),
+    num_items: params.items.reduce((sum, i) => sum + i.quantity, 0),
+  }
+  const eventID = "purchase-" + params.orderId
   const markerKey = PURCHASE_MARKER_PREFIX + params.orderId
-  try {
-    if (localStorage.getItem(markerKey)) return
-    // DO NOT MOVE — at-most-once by design (plan v3 §5).
-    // Writing the marker before fbq means a blocked/failed fbq call will not
-    // retry for this order in this browser. That is intentional: Phase 2 CAPI
-    // provides the authoritative server-side Purchase with the same eventID.
-    localStorage.setItem(markerKey, "1")
-  } catch {
-    // If localStorage is unavailable we accept the risk of a duplicate rather than miss the event.
+
+  // Attempt to fire. Returns true when work is done (fired or already-fired)
+  // so the caller can stop retrying. Returns false when fbq isn't ready yet.
+  const fire = (): boolean => {
+    // Gate the marker write on pixel readiness. If fbq isn't available
+    // (consent not granted, disabled flag set, or shim not yet injected),
+    // do NOT burn the at-most-once marker on a no-op.
+    if (!isMetaPixelEnabled()) return false
+
+    try {
+      if (localStorage.getItem(markerKey)) return true
+      // DO NOT MOVE — at-most-once by design (plan v3 §5).
+      // Writing the marker before fbq means a blocked/failed fbq call will not
+      // retry for this order in this browser. The isMetaPixelEnabled() guard
+      // above ensures we don't mark on a pure no-op. Phase 2 CAPI provides the
+      // authoritative server-side Purchase with the same eventID if the client
+      // event is still lost (e.g. connect.facebook.net blocked by adblocker).
+      localStorage.setItem(markerKey, "1")
+    } catch {
+      // localStorage can throw in privacy modes — accept possible duplicate
+      // rather than miss the event.
+    }
+
+    track("Purchase", payload, { eventID })
+    return true
   }
 
-  track(
-    "Purchase",
-    {
-      content_ids: params.items.map((i) => i.sku),
-      content_type: "product",
-      contents: toContents(params.items),
-      currency: "EUR",
-      value: centsToEur(params.totalCents),
-      num_items: params.items.reduce((sum, i) => sum + i.quantity, 0),
-    },
-    { eventID: "purchase-" + params.orderId },
-  )
+  if (fire()) return
+
+  let attempts = 0
+  const interval = setInterval(() => {
+    attempts++
+    if (fire() || attempts >= PURCHASE_RETRY_ATTEMPTS) {
+      clearInterval(interval)
+    }
+  }, PURCHASE_RETRY_INTERVAL_MS)
 }
