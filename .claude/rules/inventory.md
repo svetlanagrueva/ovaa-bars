@@ -6,12 +6,54 @@ Two-table design:
 - `inventory_current` — trigger-maintained running total. One row per SKU. Never write to this directly.
 
 ## Log entry types (`type` column)
+
+### Existing (automated by the app)
 - `batch_in` — admin adds stock; stores `batch_id`, `expiry_date`, optional `notes`
 - `reserve` — stock decremented at checkout; stores `order_id`
 - `restore` — stock returned on cancellation or expired Stripe session; stores `order_id`
 
+### Planned (manual admin actions)
+- `wholesale_out` — B2B shipment
+- `sample_out` — marketing samples, giveaways
+- `damaged` — write-off (opened returns, expired goods, physical damage)
+- `return_in` — customer return restocked (unopened, sellable condition only)
+- `adjustment_gain` — reconciliation: physical count > system count
+- `adjustment_loss` — reconciliation: physical count < system count
+
+### Return handling — not all returns go back to stock
+- Unopened, sellable → `return_in` (increments inventory)
+- Opened → `damaged` (does NOT increment — written off)
+- Expired → `damaged` (does NOT increment)
+- Lost package → no inventory movement at all (refund only, no stock change)
+- Damaged stock must NEVER go back to sellable inventory
+
+## Document linkage (НАП audit requirement)
+Every inventory movement must be traceable to a justifying document. The `notes` field is not sufficient — structured references are required.
+
+Planned columns on `inventory_log`:
+- `reference_type` — `'order'` | `'invoice'` | `'return'` | `'internal'` — what document justifies this movement
+- `reference_id` — the ID of the justifying document (order UUID, invoice number, return ref, internal protocol number)
+- `created_by` — who recorded this movement (even if it's always the same admin for now, accountability is a legal requirement)
+
+Without document linkage, the log is "notes" not an audit trail.
+
+## Adjustment safety
+`adjustment_gain` and `adjustment_loss` are the biggest audit risk (can hide theft, loss, bad accounting). They require:
+- Mandatory note explaining the discrepancy
+- Mandatory reason
+- Should follow a physical stock count (reconciliation)
+
+A "stock count" flow should capture: `counted_quantity`, `count_date`, then generate adjustment entries for any differences.
+
 ## Key constraints
 - `quantity` is always **positive** (`CHECK quantity > 0`) — the `type` encodes the direction. Seed data and inserts must use ≥ 1.
+
+## Refund ≠ Return (important distinction)
+Refund tracking (refunded_at, refund_amount on orders table) and inventory tracking (inventory_log) are separate concerns:
+- Returned item, sellable → refund YES + return_in (stock increments)
+- Returned item, damaged → refund YES + damaged (stock does NOT increment)
+- Lost package → refund YES + no inventory movement
+- These must not be coupled blindly — the admin decides independently whether to refund and whether to restock
 
 ## Postgres Functions
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements; **raises exception** if insufficient stock
