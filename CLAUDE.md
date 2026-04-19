@@ -66,4 +66,4 @@ Zustand cart store (`lib/store/cart.ts`) with localStorage persistence. Syncs pr
 
 ## Detailed rules
 
-The `.claude/rules/` directory has 8 topic-specific rule files covering: database schema, admin panel, checkout/invoices, inventory, branding, design system, environment variables, and technical decisions. These are auto-loaded and contain column-level DB documentation, UI patterns, security fixes, and compliance notes.
+The `.claude/rules/` directory has 9 topic-specific rule files covering: database schema, admin panel, checkout/invoices, inventory, branding, design system, environment variables, technical decisions, and analytics/tracking. These are auto-loaded and contain column-level DB documentation, UI patterns, security fixes, and compliance notes.
