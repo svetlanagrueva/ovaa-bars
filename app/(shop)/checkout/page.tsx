@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText, HelpCircle, ShieldCheck } from "lucide-react"
@@ -20,6 +20,7 @@ import { isOnSale } from "@/lib/products"
 import { DeliveryInfo } from "@/components/delivery/delivery-info"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
+import { cartHash, trackInitiateCheckout, type PixelLineItem } from "@/lib/meta-pixel"
 
 interface CustomerInfo {
   firstName: string
@@ -112,6 +113,29 @@ export default function CheckoutPage() {
     const cartItems = items.map((item) => ({ productId: item.product.id, quantity: item.quantity }))
     checkCartInventory(cartItems).then(setStockWarnings).catch(() => {})
   }, [mounted, items])
+
+  // Fire InitiateCheckout once per distinct cart contents per tab session.
+  // Helper uses a sessionStorage marker keyed on cart hash — refreshes and
+  // back/forward on the same cart do not re-fire; edits produce a new event.
+  // Depend on the cart hash (a stable string) rather than the items array
+  // (reference changes on every Zustand mutation) so the effect only runs
+  // when cart contents actually change.
+  const pixelCartItems: PixelLineItem[] = useMemo(
+    () =>
+      items.map((item) => ({
+        sku: item.product.sku,
+        quantity: item.quantity,
+        unitPriceCents: item.product.priceInCents,
+      })),
+    [items],
+  )
+  const pixelCartFingerprint = useMemo(() => cartHash(pixelCartItems), [pixelCartItems])
+
+  useEffect(() => {
+    if (!mounted || pixelCartItems.length === 0) return
+    trackInitiateCheckout(pixelCartItems)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, pixelCartFingerprint])
 
   const totalPrice = getTotalPrice()
   const shippingPrice = calculateShippingPrice(totalPrice, deliveryMethod)

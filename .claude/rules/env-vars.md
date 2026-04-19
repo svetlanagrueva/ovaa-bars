@@ -20,6 +20,7 @@
 - `ADMIN_EMAIL` — admin notification email for new orders
 - `NEXT_PUBLIC_APP_URL` — defaults to http://localhost:3000
 - `NEXT_PUBLIC_GA_MEASUREMENT_ID` — Google Analytics measurement ID
+- `NEXT_PUBLIC_META_PIXEL_ID` — Meta (Facebook) Pixel ID, numeric string. Gated on marketing cookie consent; component validates format and renders nothing on mismatch
 - `SPEEDY_USERNAME`, `SPEEDY_PASSWORD`, `SPEEDY_API_URL` — Speedy courier API
 - `ECONT_USERNAME`, `ECONT_PASSWORD`, `ECONT_API_URL` — Econt courier API
 

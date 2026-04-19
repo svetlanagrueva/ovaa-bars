@@ -12,16 +12,19 @@ const COOKIE_CONSENT_KEY = "egg-origin-cookie-consent"
 export interface CookiePreferences {
   essential: true // always on
   analytics: boolean
+  marketing: boolean
 }
 
 const DEFAULT_PREFERENCES: CookiePreferences = {
   essential: true,
   analytics: false,
+  marketing: false,
 }
 
 const ALL_ACCEPTED: CookiePreferences = {
   essential: true,
   analytics: true,
+  marketing: true,
 }
 
 /** Read stored preferences. Returns null if user hasn't chosen yet. */
@@ -30,13 +33,14 @@ export function getCookiePreferences(): CookiePreferences | null {
   const raw = localStorage.getItem(COOKIE_CONSENT_KEY)
   if (!raw) return null
 
-  // Backwards compat: old format stored "accepted" / "rejected"
-  if (raw === "accepted") return ALL_ACCEPTED
-  if (raw === "rejected") return DEFAULT_PREFERENCES
-
   try {
     const parsed = JSON.parse(raw)
-    return { essential: true, analytics: !!parsed.analytics }
+    if (!parsed || typeof parsed !== "object") return null
+    return {
+      essential: true,
+      analytics: !!parsed.analytics,
+      marketing: !!parsed.marketing,
+    }
   } catch {
     return null
   }
@@ -59,12 +63,14 @@ export function CookieConsentBanner() {
   const [hasStored, setHasStored] = useState(false)
   const [showBanner, setShowBanner] = useState(false)
   const [analyticsChecked, setAnalyticsChecked] = useState(false)
+  const [marketingChecked, setMarketingChecked] = useState(false)
 
   useEffect(() => {
     const stored = getCookiePreferences()
     if (stored) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnalyticsChecked(stored.analytics)
+      setMarketingChecked(stored.marketing)
       setHasStored(true)
     }
     setLoaded(true)
@@ -80,6 +86,7 @@ export function CookieConsentBanner() {
   const save = useCallback((prefs: CookiePreferences) => {
     savePreferences(prefs)
     setAnalyticsChecked(prefs.analytics)
+    setMarketingChecked(prefs.marketing)
     setHasStored(true)
     setShowBanner(false)
   }, [])
@@ -87,8 +94,8 @@ export function CookieConsentBanner() {
   const acceptAll = useCallback(() => save(ALL_ACCEPTED), [save])
   const rejectOptional = useCallback(() => save(DEFAULT_PREFERENCES), [save])
   const saveSelected = useCallback(
-    () => save({ essential: true, analytics: analyticsChecked }),
-    [save, analyticsChecked],
+    () => save({ essential: true, analytics: analyticsChecked, marketing: marketingChecked }),
+    [save, analyticsChecked, marketingChecked],
   )
 
   if (!loaded) return null
@@ -120,7 +127,7 @@ export function CookieConsentBanner() {
           .
         </p>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           {/* Essential — always on */}
           <div className="flex items-start gap-3 rounded-lg border border-border p-3">
             <Checkbox id="ck-essential" checked disabled className="mt-0.5" />
@@ -134,7 +141,7 @@ export function CookieConsentBanner() {
             </div>
           </div>
 
-          {/* Analytics — optional (covers Google Analytics + Microsoft Clarity) */}
+          {/* Analytics — optional (aggregate site usage statistics) */}
           <div className="flex items-start gap-3 rounded-lg border border-border p-3">
             <Checkbox
               id="ck-analytics"
@@ -147,7 +154,25 @@ export function CookieConsentBanner() {
                 Анализ
               </Label>
               <p className="text-xs text-muted-foreground">
-                Тези бисквитки ни помагат да разберем как взаимодействате със сайта. Използваме тези данни, за да идентифицираме области, които да подобрим.
+                Помагат ни да разберем как се използва сайтът (агрегирана статистика), за да идентифицираме области за подобрение.
+              </p>
+            </div>
+          </div>
+
+          {/* Marketing — optional (advertising / remarketing, shares data with Meta) */}
+          <div className="flex items-start gap-3 rounded-lg border border-border p-3">
+            <Checkbox
+              id="ck-marketing"
+              checked={marketingChecked}
+              onCheckedChange={(checked) => setMarketingChecked(checked === true)}
+              className="mt-0.5"
+            />
+            <div>
+              <Label htmlFor="ck-marketing" className="cursor-pointer font-medium text-foreground">
+                Маркетинг
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Позволяват ни да Ви показваме реклами във Facebook и Instagram и да измерваме тяхната ефективност. Споделят данни с Meta.
               </p>
             </div>
           </div>
