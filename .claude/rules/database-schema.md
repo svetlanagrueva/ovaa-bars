@@ -13,7 +13,7 @@
 - `paid_at` timestamptz — Card: set on webhook/success page confirmation; COD: set when admin records courier settlement
 - `courier_ppp_ref` text — COD only: courier's ППП (postal money transfer) document reference
 - `settlement_ref` text — COD only: courier's bank transfer reference (batch payout, multiple orders may share)
-- `settlement_amount` integer — COD only: actual amount received in stotinki after courier commission
+- `settlement_amount` integer — COD only: actual amount received in cents after courier commission
 - `invoice_sent_at` timestamptz — when admin confirmed the invoice was sent to the customer
 - `stripe_payment_intent_id` text — Stripe PaymentIntent ID for card payments (reconciliation key for Stripe payouts)
 - `stripe_receipt_url` text — Stripe-hosted payment receipt URL (card payments only, not a legal invoice)
@@ -21,10 +21,18 @@
 - `delivery_email_sent_at` timestamptz — when delivery confirmation email was successfully sent
 - `delivery_email_last_error` text — last error message from failed delivery email attempt (observability)
 - `delivery_status_checked_at` timestamptz — last successful courier API poll for delivery status (cron cursor)
+- `refunded_at` timestamptz — when refund was recorded by admin. Idempotency guard. Semantics: money has been sent.
+- `refund_amount` integer CHECK (> 0) — amount refunded in cents. May differ from total_amount (partial refund).
+- `refund_reason` text — free text reason for refund
+- `refund_method` text CHECK ('stripe', 'bank_transfer') — how refund was issued
+- `credit_note_ref` text — кредитно известие reference. Required when invoice was issued for the order.
 
 ## Inventory Tables
-- `inventory_log` — append-only movement log; `quantity` always positive (`CHECK quantity > 0`); `type` in (`batch_in`, `reserve`, `restore`); has `before_quantity`, `after_quantity`, `batch_id`, `expiry_date`, `order_id`
+- `inventory_log` — append-only movement log; `quantity` always positive (`CHECK quantity > 0`); `type` in (`batch_in`, `order_out`, `cancellation`, `wholesale_out`, `sample_out`, `damaged`, `return_in`, `adjustment_gain`, `adjustment_loss`); has `before_quantity`, `after_quantity`, `batch_id`, `expiry_date`, `order_id`, `reference_type`, `reference_id`, `created_by`, `location_id`
 - `inventory_current` — trigger-maintained running total, one row per SKU; never write directly
+
+## Complaints Table
+- `complaints` — formal complaints register (ЗЗП чл. 127). Multiple per order. `complaint_ref` UNIQUE auto-generated via DB sequence (`complaint_ref_seq`) as `RCL-YYYY-NNNN`. Has `defect_description` (required), `customer_demand` ('refund'/'replacement'/'repair'/'discount'), `status` ('open'/'resolved'/'rejected'), `resolution`, `resolved_at`, `created_by`. No `complaint_ref` pointer on orders table — query complaints table directly.
 
 ## Postgres Functions
 - `dashboard_stats(p_today_start, p_week_start, p_month_start)` — returns JSON with aggregated stats (SQL-level, not in-memory), includes `awaiting_settlement` count for COD orders delivered but not yet paid
@@ -72,8 +80,24 @@ ALTER TABLE orders ADD COLUMN order_confirmation_sent_at timestamptz;
 ALTER TABLE orders ADD COLUMN delivery_email_sent_at timestamptz;
 ALTER TABLE orders ADD COLUMN delivery_email_last_error text;
 ALTER TABLE orders ADD COLUMN delivery_status_checked_at timestamptz;
+ALTER TABLE orders ADD COLUMN refunded_at timestamptz;
+ALTER TABLE orders ADD COLUMN refund_amount integer CHECK (refund_amount > 0);
+ALTER TABLE orders ADD COLUMN refund_reason text;
+ALTER TABLE orders ADD COLUMN refund_method text CHECK (refund_method IN ('stripe', 'bank_transfer'));
+ALTER TABLE orders ADD COLUMN credit_note_ref text;
+
+-- Inventory expansion
+ALTER TABLE inventory_log ADD COLUMN reference_type text CHECK (reference_type IN ('order', 'invoice', 'return', 'internal'));
+ALTER TABLE inventory_log ADD COLUMN reference_id text;
+ALTER TABLE inventory_log ADD COLUMN created_by text NOT NULL DEFAULT 'system';
+ALTER TABLE inventory_log ADD COLUMN location_id text NOT NULL DEFAULT 'MAIN';
+ALTER TABLE inventory_log ADD CONSTRAINT chk_location_id_nonempty CHECK (location_id <> '');
+ALTER TABLE inventory_log ADD CONSTRAINT chk_reference_id_nonempty CHECK (reference_type IS NULL OR (reference_id IS NOT NULL AND reference_id <> ''));
+-- Update type constraint to include new movement types
+ALTER TABLE inventory_log DROP CONSTRAINT inventory_log_type_check;
+ALTER TABLE inventory_log ADD CONSTRAINT inventory_log_type_check CHECK (type IN ('batch_in', 'order_out', 'cancellation', 'wholesale_out', 'sample_out', 'damaged', 'return_in', 'adjustment_gain', 'adjustment_loss'));
 ```
-Plus the `issue_invoice_number`, `dashboard_stats`, `claim_marketing_emails`, and `confirm_delivery` functions, the indexes, and the unique tracking number index.
+Plus the `issue_invoice_number`, `dashboard_stats`, `claim_marketing_emails`, `confirm_delivery` functions, the complaints table with sequence, the updated trigger, the indexes, and the unique tracking number index.
 
 ## Status constraint — includes `expired` for abandoned checkout sessions
 Valid values: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`

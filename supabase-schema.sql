@@ -61,7 +61,7 @@ create table if not exists orders (
   paid_at timestamptz,              -- Card: set on Stripe webhook; COD: set when courier settlement received
   courier_ppp_ref text,             -- COD: courier's postal money transfer (ППП) document reference
   settlement_ref text,              -- COD: courier's bank transfer reference (batch payout)
-  settlement_amount integer,        -- COD: actual amount received after courier commission, in stotinki
+  settlement_amount integer,        -- COD: actual amount received after courier commission, in cents
 
   -- Admin
   admin_notes jsonb not null default '[]',
@@ -75,6 +75,13 @@ create table if not exists orders (
 
   -- Cancellation
   cancellation_reason text,
+
+  -- Refund tracking
+  refunded_at timestamptz,                -- When refund was recorded (idempotency guard). Semantics: money has been sent.
+  refund_amount integer check (refund_amount > 0),  -- Amount refunded in cents (smallest currency unit)
+  refund_reason text,                     -- Free text reason
+  refund_method text check (refund_method in ('stripe', 'bank_transfer')),
+  credit_note_ref text,                   -- Кредитно известие reference (when invoice was issued)
 
   -- Marketing consent (unchecked by default at checkout, required for soft opt-in under ЗЕС чл. 261)
   marketing_consent boolean not null default false
@@ -213,23 +220,41 @@ create policy "Deny public deletes on promo codes" on promo_codes for delete usi
 
 -- Append-only audit log of all inventory movements.
 -- type:
---   batch_in    — new stock added (has batch_id, expiry_date)
---   order_out   — stock consumed by a confirmed order (has order_id)
---   cancellation — stock restored when an order is cancelled (has order_id)
---   adjustment  — manual correction (has notes)
+--   batch_in         — new stock added (has batch_id, expiry_date)
+--   order_out        — stock consumed by a confirmed order (has order_id)
+--   cancellation     — stock restored when an order is cancelled (has order_id)
+--   wholesale_out    — B2B shipment (reference_type = 'invoice')
+--   sample_out       — marketing samples, giveaways (reference_type = 'internal')
+--   damaged          — write-off: opened returns, expired, physical damage
+--   return_in        — customer return restocked, unopened only (reference_type = 'return')
+--   adjustment_gain  — reconciliation: physical count > system (notes mandatory)
+--   adjustment_loss  — reconciliation: physical count < system (notes mandatory)
 -- quantity is always positive; direction is encoded in type.
+-- reference_type + reference_id: document linkage for audit trail.
+-- created_by: actual user identity for audit (admin email or 'system' for automated).
+-- location_id: ERP-ready warehouse/location identifier, single location for now.
 create table if not exists inventory_log (
-  id          bigint generated always as identity primary key,
-  sku         text not null,
-  type        text not null check (type in ('batch_in', 'order_out', 'adjustment', 'cancellation')),
-  quantity    integer not null check (quantity > 0),
-  batch_id    text,
-  expiry_date date,
-  order_id         uuid references orders(id) on delete set null,
-  notes            text,
-  before_quantity  integer,  -- stock level before this movement (set by trigger)
-  after_quantity   integer,  -- stock level after this movement (set by trigger)
-  created_at       timestamptz not null default now()
+  id              bigint generated always as identity primary key,
+  sku             text not null,
+  type            text not null check (type in (
+                    'batch_in', 'order_out', 'cancellation',
+                    'wholesale_out', 'sample_out', 'damaged',
+                    'return_in', 'adjustment_gain', 'adjustment_loss'
+                  )),
+  quantity        integer not null check (quantity > 0),
+  batch_id        text,
+  expiry_date     date,
+  order_id        uuid references orders(id) on delete set null,
+  notes           text,
+  reference_type  text check (reference_type in ('order', 'invoice', 'return', 'internal')),
+  reference_id    text,
+  created_by      text not null default 'system',
+  location_id     text not null default 'MAIN',
+  before_quantity integer,  -- stock level before this movement (set by trigger)
+  after_quantity  integer,  -- stock level after this movement (set by trigger)
+  created_at      timestamptz not null default now(),
+  constraint chk_location_id_nonempty check (location_id <> ''),
+  constraint chk_reference_id_nonempty check (reference_type is null or (reference_id is not null and reference_id <> ''))
 );
 
 create index if not exists idx_inventory_log_sku        on inventory_log (sku);
@@ -261,9 +286,17 @@ begin
   where sku = new.sku;
 
   v_delta := case
-    when new.type in ('batch_in', 'cancellation') then  new.quantity
-    when new.type in ('order_out', 'adjustment')  then -new.quantity
+    when new.type in ('batch_in', 'cancellation', 'return_in', 'adjustment_gain')
+      then  new.quantity
+    when new.type in ('order_out', 'wholesale_out', 'sample_out', 'damaged', 'adjustment_loss')
+      then -new.quantity
+    else
+      null  -- will be caught below
   end;
+
+  if v_delta is null then
+    raise exception 'Unknown inventory_log type: %', new.type;
+  end if;
 
   v_after := v_before + v_delta;
 
@@ -413,6 +446,36 @@ create policy "Deny all on marketing_email_log" on marketing_email_log
 -- Index on orders for cron candidate queries
 create index if not exists idx_orders_delivered_at
   on orders (delivered_at) where delivered_at is not null;
+
+-- ─── Complaints register (регистър на рекламациите, ЗЗП чл. 127) ────────────
+-- Formal complaints table — separate from orders. Multiple complaints per order allowed.
+-- complaint_ref is auto-generated via DB sequence (RCL-YYYY-NNNN format).
+-- defect_description and customer_demand are mandatory per ZZP Art. 127.
+create sequence if not exists complaint_ref_seq start 1;
+
+create table if not exists complaints (
+  id                  bigint generated always as identity primary key,
+  order_id            uuid not null references orders(id),
+  complaint_ref       text not null unique,
+  reported_at         timestamptz not null default now(),
+  defect_description  text not null,
+  customer_demand     text not null check (customer_demand in ('refund', 'replacement', 'repair', 'discount')),
+  status              text not null default 'open' check (status in ('open', 'resolved', 'rejected')),
+  resolution          text,
+  resolved_at         timestamptz,
+  created_by          text not null,
+  created_at          timestamptz not null default now(),
+  constraint chk_defect_nonempty check (defect_description <> ''),
+  constraint chk_created_by_nonempty check (created_by <> ''),
+  constraint chk_resolved_status check (resolved_at is null or status in ('resolved', 'rejected'))
+);
+
+create index if not exists idx_complaints_order_id on complaints (order_id);
+create index if not exists idx_complaints_status on complaints (status) where status = 'open';
+
+alter table complaints enable row level security;
+create policy "Deny all on complaints" on complaints
+  for all using (false) with check (false);
 
 -- ─── claim_marketing_emails RPC ──────────────────────────────────────────────
 -- Single function: find candidates → insert as pending → reclaim stale → claim

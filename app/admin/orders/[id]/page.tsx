@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, type OrderDetail, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, recordComplaint, resolveComplaint, getOrderComplaints, type OrderDetail, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -58,11 +58,37 @@ export default function AdminOrderDetailPage({
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
 
+  // Refund state
+  const [refundAmount, setRefundAmount] = useState("")
+  const [refundReason, setRefundReason] = useState("")
+  const [refundMethod, setRefundMethod] = useState<"stripe" | "bank_transfer">("stripe")
+  const [refundDate, setRefundDate] = useState("")
+  const [refundCreditNote, setRefundCreditNote] = useState("")
+  const [refundLoading, setRefundLoading] = useState(false)
+  const [refundSaved, setRefundSaved] = useState(false)
+
+  // Complaint state
+  const [complaints, setComplaints] = useState<Complaint[]>([])
+  const [complaintDefect, setComplaintDefect] = useState("")
+  const [complaintDemand, setComplaintDemand] = useState("")
+  const [complaintLoading, setComplaintLoading] = useState(false)
+  const [complaintResult, setComplaintResult] = useState("")
+  const [resolveId, setResolveId] = useState<number | null>(null)
+  const [resolveResolution, setResolveResolution] = useState("")
+  const [resolveStatus, setResolveStatus] = useState<"resolved" | "rejected">("resolved")
+  const [resolveLoading, setResolveLoading] = useState(false)
+
   useEffect(() => {
     getOrder(id)
-      .then((o) => setOrder(o))
+      .then((o) => {
+        setOrder(o)
+        setRefundMethod(o.payment_method === "card" ? "stripe" : "bank_transfer")
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
+    getOrderComplaints(id)
+      .then(setComplaints)
+      .catch(() => {})
   }, [id])
 
   async function handleStatusUpdate(newStatus: string) {
@@ -385,6 +411,38 @@ export default function AdminOrderDetailPage({
         </Card>
       )}
 
+      {/* Refund status card */}
+      {order.refunded_at && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Възстановяване</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-blue-900">
+              Възстановено на {new Date(order.refunded_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+            {order.refund_amount != null && (
+              <div>
+                <span className="text-muted-foreground">Сума:</span>{" "}
+                <span className="font-medium">{formatPrice(order.refund_amount)}</span>
+                {order.refund_amount !== order.total_amount && (
+                  <span className="ml-2 text-xs text-muted-foreground">(частично)</span>
+                )}
+              </div>
+            )}
+            {order.refund_method && (
+              <div><span className="text-muted-foreground">Метод:</span> {order.refund_method === "stripe" ? "Stripe" : "Банков превод"}</div>
+            )}
+            {order.refund_reason && (
+              <div><span className="text-muted-foreground">Причина:</span> {order.refund_reason}</div>
+            )}
+            {order.credit_note_ref && (
+              <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{order.credit_note_ref}</span></div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* History */}
       <Card className="mt-6">
         <CardHeader>
@@ -403,6 +461,8 @@ export default function AdminOrderDetailPage({
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
+                { label: "Възстановяване", date: order.refunded_at, detail: order.refund_amount != null ? `${formatPrice(order.refund_amount)} (${order.refund_method === "stripe" ? "Stripe" : "Банков превод"})` : undefined },
+                ...complaints.filter(c => c.reported_at).map(c => ({ label: "Рекламация", date: c.reported_at, detail: `#${c.complaint_ref}` })),
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
                 ...order.admin_notes.map((note) => ({
                   label: "Бележка",
@@ -880,6 +940,192 @@ export default function AdminOrderDetailPage({
               )}
             </div>
           )}
+
+          {/* Refund form — visible when paid but not yet refunded */}
+          {order.paid_at && !order.refunded_at && (
+            <div className="space-y-3 border-t pt-4 mt-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Възстановяване на сума</p>
+              {order.delivered_at && (() => {
+                const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
+                const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                return (
+                  <div className={`rounded-md px-3 py-2 text-sm ${
+                    daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
+                    : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
+                    : "border border-border bg-secondary text-foreground"
+                  }`}>
+                    {daysLeft <= 0
+                      ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
+                      : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
+                    }
+                  </div>
+                )
+              })()}
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
+                  <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => { setRefundDate(e.target.value); setRefundSaved(false) }} className="h-8" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                  <Input type="number" step="0.01" min="0.01" placeholder={(order.total_amount / 100).toFixed(2)} value={refundAmount} onChange={(e) => { setRefundAmount(e.target.value); setRefundSaved(false) }} className="h-8" />
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
+                  <select value={refundMethod} onChange={(e) => { setRefundMethod(e.target.value as "stripe" | "bank_transfer"); setRefundSaved(false) }} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                    <option value="stripe">Stripe</option>
+                    <option value="bank_transfer">Банков превод</option>
+                  </select>
+                </div>
+                {order.needs_invoice && order.invoice_number && (
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+                    <Input value={refundCreditNote} onChange={(e) => { setRefundCreditNote(e.target.value); setRefundSaved(false) }} placeholder="Задължително" className="h-8" maxLength={100} />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
+                <Input value={refundReason} onChange={(e) => { setRefundReason(e.target.value); setRefundSaved(false) }} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+              </div>
+              <div className="flex items-center gap-3">
+                <Button size="sm" disabled={refundLoading || !refundReason.trim()} onClick={async () => {
+                  setRefundLoading(true)
+                  setActionError("")
+                  try {
+                    const amountFloat = refundAmount ? parseFloat(refundAmount) : order.total_amount / 100
+                    const amountCents = Math.round(amountFloat * 100)
+                    await recordRefund(id, {
+                      refundAmount: amountCents,
+                      refundReason: refundReason.trim(),
+                      refundMethod,
+                      refundedAt: refundDate || undefined,
+                      creditNoteRef: refundCreditNote.trim() || undefined,
+                    })
+                    const updated = await getOrder(id)
+                    setOrder(updated)
+                    setRefundSaved(true)
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
+                  } finally {
+                    setRefundLoading(false)
+                  }
+                }}>
+                  {refundLoading ? "Записване..." : "Запиши възстановяване"}
+                </Button>
+                {refundSaved && <span className="text-xs text-muted-foreground">Записано</span>}
+              </div>
+              {order.payment_method === "card" && (
+                <p className="text-xs text-muted-foreground">
+                  Издайте възстановяване в{" "}
+                  <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
+                  {" "}и след това запишете тук.
+                </p>
+              )}
+              {order.payment_method === "cod" && (
+                <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
+              )}
+              <p className="text-xs text-muted-foreground">За връщане на стока в наличност или бракуване, използвайте <a href="/admin/inventory" className="underline">Движение на склад</a>.</p>
+            </div>
+          )}
+
+          {/* Complaints section */}
+          <div className="space-y-3 border-t pt-4 mt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Рекламации</p>
+            {complaints.length > 0 && (
+              <div className="space-y-2">
+                {complaints.map((c) => (
+                  <div key={c.id} className="rounded-md border border-border p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-medium">{c.complaint_ref}</span>
+                      <Badge variant={c.status === "open" ? "outline" : c.status === "resolved" ? "default" : "destructive"} className="text-[10px]">
+                        {c.status === "open" ? "Отворена" : c.status === "resolved" ? "Приключена" : "Отхвърлена"}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{c.defect_description.length > 100 ? c.defect_description.slice(0, 100) + "…" : c.defect_description}</p>
+                    <p className="mt-1 text-xs"><span className="text-muted-foreground">Претенция:</span> {
+                      { refund: "Възстановяване", replacement: "Замяна", repair: "Ремонт", discount: "Отстъпка" }[c.customer_demand] ?? c.customer_demand
+                    }</p>
+                    {c.resolution && <p className="mt-1 text-xs"><span className="text-muted-foreground">Решение:</span> {c.resolution}</p>}
+                    {c.status === "open" && (
+                      resolveId === c.id ? (
+                        <div className="mt-2 space-y-2">
+                          <select value={resolveStatus} onChange={(e) => setResolveStatus(e.target.value as "resolved" | "rejected")} className="h-7 rounded-md border border-border bg-background px-2 text-xs">
+                            <option value="resolved">Приключена</option>
+                            <option value="rejected">Отхвърлена</option>
+                          </select>
+                          <Input value={resolveResolution} onChange={(e) => setResolveResolution(e.target.value)} placeholder="Решение (задължително)" className="h-7 text-xs" maxLength={1000} />
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setResolveId(null)}>Отказ</Button>
+                            <Button size="sm" className="h-7 text-xs" disabled={resolveLoading || !resolveResolution.trim()} onClick={async () => {
+                              setResolveLoading(true)
+                              try {
+                                await resolveComplaint(c.id, { status: resolveStatus, resolution: resolveResolution.trim() })
+                                const updated = await getOrderComplaints(id)
+                                setComplaints(updated)
+                                setResolveId(null)
+                                setResolveResolution("")
+                              } catch (err) {
+                                setActionError(err instanceof Error ? err.message : "Грешка")
+                              } finally {
+                                setResolveLoading(false)
+                              }
+                            }}>
+                              {resolveLoading ? "..." : "Запиши"}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={() => setResolveId(c.id)}>Приключи</Button>
+                      )
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Input value={complaintDefect} onChange={(e) => setComplaintDefect(e.target.value)} placeholder="Описание на несъответствието" className="h-8" maxLength={2000} />
+              <select value={complaintDemand} onChange={(e) => setComplaintDemand(e.target.value)} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                <option value="">Претенция на потребителя...</option>
+                <option value="refund">Възстановяване на сумата</option>
+                <option value="replacement">Замяна</option>
+                <option value="repair">Ремонт</option>
+                <option value="discount">Отстъпка</option>
+              </select>
+              <div className="flex items-center gap-3">
+                <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
+                  setComplaintLoading(true)
+                  setComplaintResult("")
+                  setActionError("")
+                  try {
+                    const result = await recordComplaint(id, {
+                      defectDescription: complaintDefect.trim(),
+                      customerDemand: complaintDemand as "refund" | "replacement" | "repair" | "discount",
+                    })
+                    setComplaintResult(result.complaintRef)
+                    setComplaintDefect("")
+                    setComplaintDemand("")
+                    const updated = await getOrderComplaints(id)
+                    setComplaints(updated)
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
+                  } finally {
+                    setComplaintLoading(false)
+                  }
+                }}>
+                  {complaintLoading ? "Записване..." : "Регистрирай рекламация"}
+                </Button>
+              </div>
+              {complaintResult && (
+                <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900">
+                  <p className="font-medium">Рекламация регистрирана: {complaintResult}</p>
+                  <p className="mt-1 text-xs">Предоставете този номер на клиента като потвърждение за регистрация на рекламацията.</p>
+                </div>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 

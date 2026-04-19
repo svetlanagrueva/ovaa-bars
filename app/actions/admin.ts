@@ -196,6 +196,11 @@ export interface OrderDetail extends OrderSummary {
   courier_ppp_ref: string | null
   settlement_ref: string | null
   settlement_amount: number | null
+  refunded_at: string | null
+  refund_amount: number | null
+  refund_reason: string | null
+  refund_method: string | null
+  credit_note_ref: string | null
 }
 
 interface OrderQueryParams {
@@ -932,6 +937,269 @@ export async function recordCodSettlement(
   return { success: true }
 }
 
+// ─── Refund tracking ─────────────────────────────────────────────────────────
+
+export async function recordRefund(
+  orderId: string,
+  data: {
+    refundAmount: number
+    refundReason: string
+    refundMethod: "stripe" | "bank_transfer"
+    refundedAt?: string
+    creditNoteRef?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  // Validate refund amount
+  if (!Number.isInteger(data.refundAmount) || data.refundAmount < 1) {
+    throw new Error("Сумата за възстановяване трябва да е положително цяло число")
+  }
+
+  // Validate reason
+  const trimmedReason = data.refundReason?.trim()
+  if (!trimmedReason) throw new Error("Причината за възстановяване е задължителна")
+  if (trimmedReason.length > 1000) throw new Error("Причината е твърде дълга")
+
+  // Validate method
+  if (data.refundMethod !== "stripe" && data.refundMethod !== "bank_transfer") {
+    throw new Error("Невалиден метод на възстановяване")
+  }
+
+  // Validate creditNoteRef
+  const trimmedCreditNote = data.creditNoteRef?.trim() || null
+  if (trimmedCreditNote && trimmedCreditNote.length > 100) {
+    throw new Error("Референцията на кредитното известие е твърде дълга")
+  }
+
+  // Validate refundedAt
+  let refundedAtValue: string
+  if (data.refundedAt) {
+    const parsed = new Date(data.refundedAt)
+    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на възстановяване")
+    if (parsed > new Date()) throw new Error("Датата не може да е в бъдещето")
+    // Date picker YYYY-MM-DD: store at 23:59:59 UTC for timeline sorting
+    if (/^\d{4}-\d{2}-\d{2}$/.test(data.refundedAt)) {
+      refundedAtValue = new Date(data.refundedAt + "T23:59:59.000Z").toISOString()
+    } else {
+      refundedAtValue = parsed.toISOString()
+    }
+  } else {
+    refundedAtValue = new Date().toISOString()
+  }
+
+  // Fetch order
+  const supabase = await createClient()
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, refunded_at")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
+  if (data.refundAmount > order.total_amount) {
+    throw new Error("Сумата за възстановяване не може да надвишава общата сума на поръчката")
+  }
+
+  // Validate refundedAt not before delivered_at
+  if (order.delivered_at && data.refundedAt) {
+    const deliveredDate = new Date(order.delivered_at)
+    const refundDate = new Date(data.refundedAt)
+    if (refundDate < deliveredDate) {
+      throw new Error("Датата на възстановяване не може да е преди датата на доставка")
+    }
+  }
+
+  // Conditional credit_note_ref validation
+  if (order.needs_invoice && order.invoice_number && !trimmedCreditNote) {
+    throw new Error("За поръчка с издадена фактура е необходима референция на кредитно известие")
+  }
+  if ((!order.needs_invoice || !order.invoice_number) && trimmedCreditNote) {
+    // Ignore credit note ref if no invoice was issued — don't error, just drop it
+  }
+
+  // Build update payload
+  const updateData: Record<string, unknown> = {
+    refunded_at: refundedAtValue,
+    refund_amount: data.refundAmount,
+    refund_reason: trimmedReason,
+    refund_method: data.refundMethod,
+  }
+  if (order.needs_invoice && order.invoice_number && trimmedCreditNote) {
+    updateData.credit_note_ref = trimmedCreditNote
+  }
+
+  // Atomic update with idempotency guard
+  const { data: updated, error: updateError } = await supabase
+    .from("orders")
+    .update(updateData)
+    .eq("id", orderId)
+    .is("refunded_at", null)
+    .select("id")
+
+  if (updateError) {
+    console.error("Failed to record refund:", updateError)
+    throw new Error("Грешка при записване на възстановяване")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Възстановяването вече е записано за тази поръчка")
+  }
+
+  return { success: true }
+}
+
+// ─── Complaints register (ЗЗП чл. 127) ──────────────────────────────────────
+
+export async function recordComplaint(
+  orderId: string,
+  data: {
+    defectDescription: string
+    customerDemand: "refund" | "replacement" | "repair" | "discount"
+  },
+): Promise<{ success: true; complaintRef: string }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  // Validate defect description
+  const trimmedDefect = data.defectDescription?.trim()
+  if (!trimmedDefect) throw new Error("Описанието на несъответствието е задължително")
+  if (trimmedDefect.length > 2000) throw new Error("Описанието е твърде дълго")
+
+  // Validate customer demand
+  const validDemands = ["refund", "replacement", "repair", "discount"]
+  if (!validDemands.includes(data.customerDemand)) {
+    throw new Error("Невалидна претенция на потребителя")
+  }
+
+  // Verify order exists
+  const supabase = await createClient()
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+
+  // Generate complaint ref atomically via DB sequence
+  const { data: seqData, error: seqError } = await supabase
+    .rpc("nextval_text", { seq_name: "complaint_ref_seq" })
+
+  // Fallback: if RPC doesn't exist, use a direct query approach
+  let seqNum: number
+  if (seqError) {
+    // Direct SQL via rpc isn't available for nextval — use a raw approach
+    const { data: rawSeq, error: rawErr } = await supabase
+      .from("complaints")
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1)
+    seqNum = rawSeq && rawSeq.length > 0 ? (rawSeq[0].id as number) + 1 : 1
+    if (rawErr) seqNum = Date.now() // last resort
+  } else {
+    seqNum = parseInt(seqData as string, 10) || Date.now()
+  }
+
+  const year = new Date().getFullYear()
+  const complaintRef = `RCL-${year}-${String(seqNum).padStart(4, "0")}`
+
+  // Insert complaint
+  const { error: insertError } = await supabase.from("complaints").insert({
+    order_id: orderId,
+    complaint_ref: complaintRef,
+    defect_description: trimmedDefect,
+    customer_demand: data.customerDemand,
+    status: "open",
+    created_by: "admin",
+  })
+
+  if (insertError) {
+    console.error("Failed to record complaint:", insertError)
+    // If unique constraint violation, likely a race — retry with different number
+    if (insertError.code === "23505") {
+      throw new Error("Дублиран номер на рекламация. Моля, опитайте отново.")
+    }
+    throw new Error("Грешка при записване на рекламация")
+  }
+
+  return { success: true, complaintRef }
+}
+
+export async function resolveComplaint(
+  complaintId: number,
+  data: {
+    status: "resolved" | "rejected"
+    resolution: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  if (!Number.isInteger(complaintId) || complaintId < 1) {
+    throw new Error("Невалиден идентификатор на рекламация")
+  }
+
+  const trimmedResolution = data.resolution?.trim()
+  if (!trimmedResolution) throw new Error("Решението е задължително")
+  if (trimmedResolution.length > 1000) throw new Error("Решението е твърде дълго")
+
+  if (data.status !== "resolved" && data.status !== "rejected") {
+    throw new Error("Невалиден статус")
+  }
+
+  const supabase = await createClient()
+  const { data: updated, error } = await supabase
+    .from("complaints")
+    .update({
+      status: data.status,
+      resolution: trimmedResolution,
+      resolved_at: new Date().toISOString(),
+    })
+    .eq("id", complaintId)
+    .eq("status", "open")
+    .select("id")
+
+  if (error) {
+    console.error("Failed to resolve complaint:", error)
+    throw new Error("Грешка при приключване на рекламация")
+  }
+
+  if (!updated || updated.length === 0) {
+    throw new Error("Рекламацията не е намерена или вече е приключена")
+  }
+
+  return { success: true }
+}
+
+// ─── Complaint queries ───────────────────────────────────────────────────────
+
+export async function getOrderComplaints(orderId: string): Promise<Complaint[]> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("complaints")
+    .select("*")
+    .eq("order_id", orderId)
+    .order("reported_at", { ascending: false })
+
+  if (error) {
+    console.error("Failed to fetch complaints:", error)
+    throw new Error("Грешка при зареждане на рекламации")
+  }
+
+  return (data || []) as Complaint[]
+}
+
 function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
   if (!process.env.RESEND_API_KEY) return
 
@@ -1281,9 +1549,26 @@ export interface InventoryLogEntry {
   expiry_date: string | null
   order_id: string | null
   notes: string | null
+  reference_type: string | null
+  reference_id: string | null
+  created_by: string
+  location_id: string
   before_quantity: number | null
   after_quantity: number | null
   created_at: string
+}
+
+export interface Complaint {
+  id: number
+  order_id: string
+  complaint_ref: string
+  reported_at: string
+  defect_description: string
+  customer_demand: string
+  status: string
+  resolution: string | null
+  resolved_at: string | null
+  created_by: string
 }
 
 export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]; log: InventoryLogEntry[] }> {
@@ -1344,11 +1629,136 @@ export async function addInventoryBatch(data: {
     batch_id: data.batchId.trim(),
     expiry_date: data.expiryDate || null,
     notes: data.notes?.trim() || null,
+    reference_type: "internal" as const,
+    reference_id: data.batchId.trim(),
+    created_by: "admin",
   })
 
   if (error) {
     console.error("Failed to insert inventory batch:", error)
     throw new Error("Грешка при добавяне на наличност")
+  }
+
+  return { success: true }
+}
+
+// ─── Manual stock movement (B2B, samples, damage, returns, adjustments) ──────
+
+const MANUAL_MOVEMENT_TYPES = [
+  "wholesale_out",
+  "sample_out",
+  "damaged",
+  "return_in",
+  "adjustment_gain",
+  "adjustment_loss",
+] as const
+type ManualMovementType = (typeof MANUAL_MOVEMENT_TYPES)[number]
+
+const ALLOWED_REFERENCE_TYPES: Record<ManualMovementType, string[]> = {
+  wholesale_out: ["invoice"],
+  sample_out: ["internal"],
+  damaged: ["internal", "return"],
+  return_in: ["return"],
+  adjustment_gain: ["internal"],
+  adjustment_loss: ["internal"],
+}
+
+const NOTES_REQUIRED_TYPES: ManualMovementType[] = [
+  "adjustment_gain",
+  "adjustment_loss",
+  "damaged",
+]
+
+export async function recordStockMovement(data: {
+  sku: string
+  type: ManualMovementType
+  quantity: number
+  referenceType: "order" | "invoice" | "return" | "internal"
+  referenceId: string
+  notes?: string
+  batchId?: string
+  expiryDate?: string
+  orderId?: string
+}): Promise<{ success: true }> {
+  await requireAdmin()
+
+  // Validate SKU
+  const validSkus = PRODUCTS.map((p) => p.sku)
+  if (!validSkus.includes(data.sku)) throw new Error("Невалиден SKU")
+
+  // Validate type
+  if (!MANUAL_MOVEMENT_TYPES.includes(data.type)) {
+    throw new Error("Невалиден тип движение")
+  }
+
+  // Validate quantity
+  if (!Number.isInteger(data.quantity) || data.quantity < 1 || data.quantity > 100000) {
+    throw new Error("Количеството трябва да е цяло число между 1 и 100 000")
+  }
+
+  // Validate reference_type ↔ type combination
+  const allowed = ALLOWED_REFERENCE_TYPES[data.type]
+  if (!allowed.includes(data.referenceType)) {
+    throw new Error(
+      `Невалиден тип референция "${data.referenceType}" за движение "${data.type}". Позволени: ${allowed.join(", ")}`,
+    )
+  }
+
+  // Validate referenceId
+  const trimmedRefId = data.referenceId?.trim()
+  if (!trimmedRefId) throw new Error("Референцията е задължителна")
+  if (trimmedRefId.length > 200) throw new Error("Референцията е твърде дълга")
+
+  // Validate notes (mandatory for certain types)
+  const trimmedNotes = data.notes?.trim() || null
+  if (NOTES_REQUIRED_TYPES.includes(data.type) && !trimmedNotes) {
+    throw new Error("Бележката е задължителна за този тип движение")
+  }
+  if (trimmedNotes && trimmedNotes.length > 500) {
+    throw new Error("Бележката е твърде дълга")
+  }
+
+  // Validate batchId/expiryDate — only for return_in
+  if (data.batchId && data.type !== "return_in") {
+    throw new Error("Номер на партида е допустим само за връщане")
+  }
+  if (data.expiryDate && data.type !== "return_in") {
+    throw new Error("Срок на годност е допустим само за връщане")
+  }
+  const trimmedBatchId = data.batchId?.trim() || null
+  if (trimmedBatchId && trimmedBatchId.length > 100) {
+    throw new Error("Номерът на партидата е твърде дълъг")
+  }
+  if (data.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.expiryDate)) {
+    throw new Error("Невалидна дата на годност")
+  }
+
+  // Validate orderId — only for return_in
+  if (data.orderId && data.type !== "return_in") {
+    throw new Error("Поръчка може да се свърже само при връщане")
+  }
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (data.orderId && !uuidRegex.test(data.orderId)) {
+    throw new Error("Невалиден формат на поръчка")
+  }
+
+  const supabase = await createClient()
+  const { error } = await supabase.from("inventory_log").insert({
+    sku: data.sku,
+    type: data.type,
+    quantity: data.quantity,
+    reference_type: data.referenceType,
+    reference_id: trimmedRefId,
+    notes: trimmedNotes,
+    batch_id: trimmedBatchId,
+    expiry_date: data.expiryDate || null,
+    order_id: data.orderId || null,
+    created_by: "admin",
+  })
+
+  if (error) {
+    console.error("Failed to record stock movement:", error)
+    throw new Error("Грешка при записване на движение")
   }
 
   return { success: true }
