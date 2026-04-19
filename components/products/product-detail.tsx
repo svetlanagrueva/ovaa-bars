@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { Plus, Minus, Check, ShoppingBag, ShoppingCart, ArrowRight } from "lucide-react"
@@ -12,6 +12,7 @@ import { formatPrice, isOnSale, type Product } from "@/lib/products"
 import { PriceDisplay } from "@/components/products/price-display"
 import { ProductCard } from "@/components/products/product-card"
 import { MAX_QUANTITY } from "@/lib/constants"
+import { trackAddToCart, trackViewContent } from "@/lib/meta-pixel"
 
 interface ProductDetailProps {
   product: Product
@@ -25,8 +26,17 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
   const [selectedImage, setSelectedImage] = useState(0)
   const addItemWithQuantity = useCartStore((state) => state.addItemWithQuantity)
 
+  useEffect(() => {
+    trackViewContent({ sku: product.sku, priceInCents: product.priceInCents })
+  }, [product.sku, product.priceInCents])
+
   const handleAddToCart = () => {
     addItemWithQuantity(product, quantity)
+    trackAddToCart({
+      sku: product.sku,
+      priceInCents: product.priceInCents,
+      quantity,
+    })
     toast(product.name, {
       description: `${quantity > 1 ? quantity + " x " : ""}Добавено в количката`,
       icon: <ShoppingCart className="h-4 w-4" />,

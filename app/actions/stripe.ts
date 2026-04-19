@@ -639,7 +639,39 @@ export async function createCheckoutSession(data: CheckoutData) {
   return { url: session.url }
 }
 
-export async function confirmOrder(orderId: string) {
+export interface OrderTrackingItem {
+  sku: string
+  quantity: number
+  priceInCents: number
+}
+
+export interface ConfirmOrderResult {
+  status: "confirmed"
+  totalCents: number
+  items: OrderTrackingItem[]
+}
+
+interface OrderItemsRow {
+  productId: string
+  productName: string
+  quantity: number
+  priceInCents: number
+}
+
+function toTrackingItems(raw: unknown): OrderTrackingItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((entry: OrderItemsRow) => {
+    const product = PRODUCTS.find((p) => p.id === entry.productId)
+    if (!product) return []
+    return [{
+      sku: product.sku,
+      quantity: entry.quantity,
+      priceInCents: entry.priceInCents,
+    }]
+  })
+}
+
+export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult> {
   // Validate orderId is a UUID
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (!uuidRegex.test(orderId)) {
@@ -650,7 +682,7 @@ export async function confirmOrder(orderId: string) {
 
   const { data: existingOrder, error: fetchError } = await supabase
     .from("orders")
-    .select("id, status, payment_method, stripe_session_id")
+    .select("id, status, payment_method, stripe_session_id, total_amount, items")
     .eq("id", orderId)
     .single()
 
@@ -660,7 +692,11 @@ export async function confirmOrder(orderId: string) {
   }
 
   if (existingOrder.status === "confirmed") {
-    return { status: "confirmed" as const }
+    return {
+      status: "confirmed",
+      totalCents: existingOrder.total_amount ?? 0,
+      items: toTrackingItems(existingOrder.items),
+    }
   }
 
   // For card payments, verify the Stripe session and fetch receipt URL
@@ -717,7 +753,11 @@ export async function confirmOrder(orderId: string) {
       .single()
 
     if (recheckOrder?.status === "confirmed") {
-      return { status: "confirmed" as const }
+      return {
+        status: "confirmed",
+        totalCents: existingOrder.total_amount ?? 0,
+        items: toTrackingItems(existingOrder.items),
+      }
     }
 
     console.error("Failed to update order:", updateError)
@@ -727,7 +767,11 @@ export async function confirmOrder(orderId: string) {
   // Send confirmation email only after successful status update
   sendOrderConfirmationEmail(updatedOrder)
 
-  return { status: "confirmed" as const }
+  return {
+    status: "confirmed",
+    totalCents: updatedOrder.total_amount ?? 0,
+    items: toTrackingItems(updatedOrder.items),
+  }
 }
 
 export async function createCODOrder(data: CODOrderData) {

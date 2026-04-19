@@ -20,6 +20,7 @@ import { isOnSale } from "@/lib/products"
 import { DeliveryInfo } from "@/components/delivery/delivery-info"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
+import { trackInitiateCheckout } from "@/lib/meta-pixel"
 
 interface CustomerInfo {
   firstName: string
@@ -111,6 +112,20 @@ export default function CheckoutPage() {
     if (!mounted || items.length === 0) return
     const cartItems = items.map((item) => ({ productId: item.product.id, quantity: item.quantity }))
     checkCartInventory(cartItems).then(setStockWarnings).catch(() => {})
+  }, [mounted, items])
+
+  // Fire InitiateCheckout once per distinct cart contents per tab session.
+  // Helper uses a sessionStorage marker keyed on cart hash — refreshes and
+  // back/forward on the same cart do not re-fire; edits produce a new event.
+  useEffect(() => {
+    if (!mounted || items.length === 0) return
+    trackInitiateCheckout(
+      items.map((item) => ({
+        sku: item.product.sku,
+        quantity: item.quantity,
+        unitPriceCents: item.product.priceInCents,
+      })),
+    )
   }, [mounted, items])
 
   const totalPrice = getTotalPrice()

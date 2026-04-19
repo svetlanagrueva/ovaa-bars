@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useCartStore } from "@/lib/store/cart"
 import { confirmOrder } from "@/app/actions/stripe"
+import { trackPurchase } from "@/lib/meta-pixel"
 
 export default function CheckoutSuccessPage() {
   const searchParams = useSearchParams()
@@ -24,10 +25,19 @@ export default function CheckoutSuccessPage() {
         return
       }
       try {
-        await confirmOrder(orderId)
+        const result = await confirmOrder(orderId)
         if (!cancelled) {
           setStatus("confirmed")
           clearCart()
+          trackPurchase({
+            orderId,
+            totalCents: result.totalCents,
+            items: result.items.map((item) => ({
+              sku: item.sku,
+              quantity: item.quantity,
+              unitPriceCents: item.priceInCents,
+            })),
+          })
         }
       } catch {
         if (!cancelled) {

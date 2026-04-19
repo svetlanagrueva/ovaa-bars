@@ -215,11 +215,16 @@ describe("confirmOrder", () => {
   })
 
   it("returns minimal data if already confirmed", async () => {
-    const confirmedOrder = { id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890", status: "confirmed" }
+    const confirmedOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "confirmed",
+      total_amount: 2570,
+      items: [],
+    }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    expect(result).toEqual({ status: "confirmed" })
+    expect(result).toEqual({ status: "confirmed", totalCents: 2570, items: [] })
     expect(mockSupabase.update).not.toHaveBeenCalled()
   })
 
@@ -575,10 +580,11 @@ describe("input validation", () => {
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    expect(result).toEqual({ status: "confirmed" })
+    expect(result.status).toBe("confirmed")
     expect(result).not.toHaveProperty("email")
     expect(result).not.toHaveProperty("first_name")
     expect(result).not.toHaveProperty("phone")
+    expect(result).not.toHaveProperty("stripe_session_id")
   })
 })
 
