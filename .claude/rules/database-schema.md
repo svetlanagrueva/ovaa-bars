@@ -28,7 +28,7 @@
 - `credit_note_ref` text — кредитно известие reference. Required when invoice was issued for the order.
 
 ## Inventory Tables
-- `inventory_log` — append-only movement log; `quantity` always positive (`CHECK quantity > 0`); `type` in (`batch_in`, `order_out`, `cancellation`, `wholesale_out`, `sample_out`, `damaged`, `return_in`, `adjustment_gain`, `adjustment_loss`); has `before_quantity`, `after_quantity`, `batch_id`, `expiry_date`, `order_id`, `reference_type`, `reference_id`, `created_by`, `location_id`
+- `inventory_log` — append-only movement log; `quantity` always positive (`CHECK quantity > 0`); `type` in (`batch_in`, `order_out`, `cancellation`, `wholesale_out`, `sample_out`, `damaged`, `return_in`, `adjustment_gain`, `adjustment_loss`); has `before_quantity`, `after_quantity`, `batch_id`, `expiry_date`, `order_id`, `reference_type`, `reference_id`, `created_by`, `location_id`, `idempotency_key`. **Immutable: `BEFORE UPDATE`/`BEFORE DELETE` triggers block all mutations, no service-role bypass.** Correct errors by inserting an offsetting movement.
 - `inventory_current` — trigger-maintained running total, one row per SKU; never write directly
 
 ## Complaints Table

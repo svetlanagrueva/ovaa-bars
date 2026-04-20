@@ -47,6 +47,8 @@ A "stock count" flow should capture: `counted_quantity`, `count_date`, then gene
 
 ## Key constraints
 - `quantity` is always **positive** (`CHECK quantity > 0`) — the `type` encodes the direction. Seed data and inserts must use ≥ 1.
+- **`inventory_log` is immutable at the DB layer.** `BEFORE UPDATE` and `BEFORE DELETE` triggers (`trg_inventory_log_immutable_update`, `trg_inventory_log_immutable_delete`) raise unconditionally — no service-role bypass. The ledger is append-only, not just by convention. If data correction is needed, insert an offsetting movement (e.g. `adjustment_gain` / `adjustment_loss`) rather than trying to edit or delete an existing row.
+- `update_inventory_current` is a `BEFORE INSERT` trigger that sets `NEW.before_quantity` / `NEW.after_quantity` directly, so no post-insert UPDATE is needed — the only write path to a log row is the initial INSERT.
 - **One `order_out` row per `(order_id, sku)`** — enforced by unique partial index `idx_inventory_log_order_out_unique`. Encodes the "cart dedups by SKU" product-model assumption. Changing the cart to allow multiple lines per SKU (variants, split fulfillment, bundles flattening to same SKU) requires dropping this index. Linkage in: `supabase/migrations/20260420144423_inventory_idempotency.sql`, `lib/store/cart.ts:addItemWithQuantity`.
 - **Global-unique `idempotency_key`** for admin-initiated movements (batch_in, wholesale_out, sample_out, damaged, return_in, adjustment_*) — enforced by partial unique index. Callers generate UUID per form submission; double-submit raises unique violation, server action returns success (idempotent no-op). System-generated movements (order_out, cancellation) leave `idempotency_key` null.
 
