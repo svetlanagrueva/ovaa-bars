@@ -34,12 +34,21 @@
 ## Complaints Table
 - `complaints` — formal complaints register (ЗЗП чл. 127). Multiple per order. `complaint_ref` UNIQUE auto-generated via DB sequence (`complaint_ref_seq`) as `RCL-YYYY-NNNN`. Has `defect_description` (required), `customer_demand` ('refund'/'replacement'/'repair'/'discount'), `status` ('open'/'resolved'/'rejected'), `resolution`, `resolved_at`, `created_by`. No `complaint_ref` pointer on orders table — query complaints table directly.
 
+## Order Audit Events Table
+- `order_audit_events` — append-only unified event log for orders. `(id bigserial, order_id uuid fk, event_type text, actor text default 'admin', payload jsonb default '{}', created_at timestamptz)`. **Immutable**: `BEFORE UPDATE`/`BEFORE DELETE` triggers reject mutations; correct by appending.
+- Populated by two paths:
+  - `emit_order_audit_events` trigger on orders AFTER UPDATE — diffs OLD vs NEW for whitelisted columns (`status`, `invoice_number`, `invoice_sent_at`, `paid_at`, `shipped_at`, `delivered_at`, `cancelled_at`, `refunded_at`, `tracking_number`) and emits typed events (`status_changed`, `invoice_number_set`, `paid_at_recorded`, `shipped_at_recorded`, `delivered_at_recorded`, `cancelled`, `refunded`, `tracking_number_set`, `invoice_marked_sent`).
+  - `record_order_outcome(p_order_id, p_outcome_type, p_payload, p_actor)` RPC — explicit admin calls for domain events that aren't column diffs: `delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`, `status_force_override`, `data_repair`.
+- Actor: `coalesce(current_setting('app.actor', true), 'admin')`. Single-admin pre-launch. When per-user auth lands (L14), server actions will set `app.actor` via `set_config('app.actor', $1, true)` at request start.
+
 ## Postgres Functions
 - `dashboard_stats(p_today_start, p_week_start, p_month_start)` — returns JSON with aggregated stats (SQL-level, not in-memory), includes `awaiting_settlement` count for COD orders delivered but not yet paid
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements stock; raises exception if insufficient
 - `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session / partial cancel). Sum-based guard: `sum(restored) + p_quantity` must not exceed `sum(reserved)` for `(sku, order_id)`. Raises if no matching `order_out` exists, or if the invariant would be violated. Multiple cancellation rows per `(sku, order_id)` are allowed (supports partial cancellation).
 - `claim_marketing_emails(p_now, p_limit)` — find candidates + insert pending + reclaim stale + claim work, all in one call. Uses `FOR UPDATE SKIP LOCKED` for concurrency. Filters unsubscribes via `NOT EXISTS` with `lower()`.
 - `confirm_delivery(p_order_id, p_delivered_at)` — atomically marks order as delivered WHERE `status = 'shipped'`, returns updated row. Idempotent — no-op if order is not shipped.
+- `record_order_outcome(p_order_id, p_outcome_type, p_payload, p_actor)` — inserts a domain event into `order_audit_events`. Validates outcome_type against the allowed set. Called by admin server actions for `delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`, `status_force_override`, `data_repair`.
+- `emit_order_audit_events()` — trigger function (not callable via RPC). AFTER UPDATE on orders; diffs audited columns and inserts typed events.
 
 ## Marketing Email Tables
 - `email_unsubscribes` — `email text PRIMARY KEY`, RLS deny-all. Keyed by lowercase email.

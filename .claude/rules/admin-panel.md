@@ -35,7 +35,7 @@
 - Price breakdown uses stored `shipping_fee` and `cod_fee` (not recalculated from constants)
 - Invoice section: issue invoice (with confirmation dialog), download PDF (invoice or proforma)
 - Invoice deadline: 5 days from payment (card: created_at, COD: delivered_at)
-- History timeline: chronological events sorted by date, includes "Плащане получено", "Фактура изпратена", and "Бележка" events, with fallback for pre-timestamp orders
+- History timeline: chronological events sorted by date, includes "Плащане получено", "Фактура изпратена", and "Бележка" events, with fallback for pre-timestamp orders. `order_audit_events` is the authoritative source going forward — status changes, invoice number set, payment recorded, refunds, etc. are auto-captured by the AFTER UPDATE trigger on orders. Domain events (`delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`) are explicitly written via the `record_order_outcome` RPC from admin actions.
 - COD settlement: form in Действия card for delivered unpaid COD orders (date picker, amount, ППП ref, bank ref); green status card shown after settlement recorded
 - COD settlement date picker: `min` set to delivery date, `max` set to today; server validates date is not before delivery or in the future; date stored at 23:59:59 UTC to sort after same-day events
 - Card payment section: shows paid_at confirmation date (set automatically by webhook)
