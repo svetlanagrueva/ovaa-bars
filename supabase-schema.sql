@@ -131,6 +131,7 @@ create or replace function dashboard_stats(
 )
 returns json
 language plpgsql
+set search_path = public, pg_temp
 as $$
 declare
   result json;
@@ -271,18 +272,21 @@ create table if not exists inventory_current (
 
 -- Trigger: keep inventory_current in sync with every inventory_log insert
 create or replace function update_inventory_current()
-returns trigger as $$
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
 declare
   v_before integer;
   v_delta  integer;
   v_after  integer;
 begin
-  insert into inventory_current (sku, quantity, updated_at)
+  insert into public.inventory_current (sku, quantity, updated_at)
   values (new.sku, 0, now())
   on conflict (sku) do nothing;
 
   select quantity into v_before
-  from inventory_current
+  from public.inventory_current
   where sku = new.sku;
 
   v_delta := case
@@ -300,18 +304,18 @@ begin
 
   v_after := v_before + v_delta;
 
-  update inventory_current
+  update public.inventory_current
   set quantity = v_after, updated_at = now()
   where sku = new.sku;
 
   -- Write before/after back to the log row so each entry is self-contained
-  update inventory_log
+  update public.inventory_log
   set before_quantity = v_before, after_quantity = v_after
   where id = new.id;
 
   return new;
 end;
-$$ language plpgsql;
+$$;
 
 create or replace trigger trg_update_inventory_current
 after insert on inventory_log
@@ -336,13 +340,14 @@ create or replace function reserve_inventory(
 )
 returns integer  -- returns remaining quantity after reservation
 language plpgsql
+set search_path = public, pg_temp
 as $$
 declare
   v_current integer;
 begin
   -- Lock row to prevent concurrent reservations from both seeing sufficient stock
   select quantity into v_current
-  from inventory_current
+  from public.inventory_current
   where sku = p_sku
   for update;
 
@@ -356,7 +361,7 @@ begin
   end if;
 
   -- Insert movement — trigger updates inventory_current automatically
-  insert into inventory_log (sku, type, quantity, order_id)
+  insert into public.inventory_log (sku, type, quantity, order_id)
   values (p_sku, 'order_out', p_quantity, p_order_id);
 
   return v_current - p_quantity;
@@ -372,12 +377,13 @@ create or replace function restore_inventory(
 )
 returns integer  -- returns quantity after restoration
 language plpgsql
+set search_path = public, pg_temp
 as $$
 begin
-  insert into inventory_log (sku, type, quantity, order_id)
+  insert into public.inventory_log (sku, type, quantity, order_id)
   values (p_sku, 'cancellation', p_quantity, p_order_id);
 
-  return (select quantity from inventory_current where sku = p_sku);
+  return (select quantity from public.inventory_current where sku = p_sku);
 end;
 $$;
 
@@ -385,12 +391,15 @@ $$;
 -- Atomically mark an order as delivered. Returns the updated row or empty set.
 -- Guard on status = 'shipped' makes this idempotent.
 create or replace function confirm_delivery(p_order_id uuid, p_delivered_at timestamptz)
-returns setof orders as $$
-  update orders
+returns setof orders
+language sql
+set search_path = public, pg_temp
+as $$
+  update public.orders
   set status = 'delivered', delivered_at = p_delivered_at
   where id = p_order_id and status = 'shipped'
   returning *;
-$$ language sql;
+$$;
 
 -- ─── Seed data ────────────────────────────────────────────────────────────────
 -- Uncomment and update quantities + batch details to reflect actual stock
@@ -492,22 +501,24 @@ returns table (
   payment_method text,
   email_type text,
   attempt_count integer
-) language plpgsql as $$
+) language plpgsql
+set search_path = public, pg_temp
+as $$
 begin
   -- Step 1: Reclaim stale sending rows (crashed workers)
   -- Uses claimed_at, not created_at — a row created yesterday but claimed 5s ago is NOT stale
-  update marketing_email_log
+  update public.marketing_email_log
   set status = 'failed', error_message = 'stale sending row reclaimed', claimed_at = null
   where status = 'sending'
     and claimed_at < p_now - interval '10 minutes';
 
   -- Step 2: Insert new candidates as pending (idempotent via ON CONFLICT)
-  insert into marketing_email_log (order_id, email_type, email)
+  insert into public.marketing_email_log (order_id, email_type, email)
   select o.id, c.email_type, o.email
   from (
     -- Review request: delivered 3-4 days ago
     select o2.id as order_id, 'review_request'::text as email_type
-    from orders o2
+    from public.orders o2
     where o2.status = 'delivered'
       and o2.marketing_consent = true
       and o2.delivered_at >= p_now - interval '4 days'
@@ -517,30 +528,30 @@ begin
 
     -- Cross-sell: delivered 10-11 days ago
     select o2.id as order_id, 'cross_sell'::text as email_type
-    from orders o2
+    from public.orders o2
     where o2.status = 'delivered'
       and o2.marketing_consent = true
       and o2.delivered_at >= p_now - interval '11 days'
       and o2.delivered_at < p_now - interval '10 days'
   ) c
-  join orders o on o.id = c.order_id
-  where not exists (select 1 from email_unsubscribes u where u.email = lower(o.email))
+  join public.orders o on o.id = c.order_id
+  where not exists (select 1 from public.email_unsubscribes u where u.email = lower(o.email))
   on conflict (order_id, email_type) do nothing;
 
   -- Step 3: Atomically claim rows (pending or retryable failed) → sending
   return query
   with claimed as (
-    update marketing_email_log l
+    update public.marketing_email_log l
     set status = 'sending',
         attempt_count = l.attempt_count + 1,
         claimed_at = p_now,
         last_attempt_at = p_now
     where l.id in (
-      select l2.id from marketing_email_log l2
+      select l2.id from public.marketing_email_log l2
       where l2.status in ('pending', 'failed')
         and (l2.status = 'pending' or l2.attempt_count < 3)
         -- re-check unsubscribe at claim time
-        and not exists (select 1 from email_unsubscribes u where u.email = lower(l2.email))
+        and not exists (select 1 from public.email_unsubscribes u where u.email = lower(l2.email))
       order by l2.created_at
       limit p_limit
       for update skip locked
@@ -550,6 +561,6 @@ begin
   select c.id, c.order_id, o.email, o.first_name, o.items, o.total_amount, o.payment_method,
          c.email_type, c.attempt_count
   from claimed c
-  join orders o on o.id = c.order_id;
+  join public.orders o on o.id = c.order_id;
 end;
 $$;

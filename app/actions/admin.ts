@@ -274,7 +274,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   await requireAdmin()
   const supabase = await createClient()
 
-  const page = params?.page ?? 0
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
   const from = page * ORDERS_PAGE_SIZE
   const to = from + ORDERS_PAGE_SIZE - 1
 
@@ -375,7 +375,7 @@ export async function getInvoices(params?: InvoiceQueryParams & { page?: number 
   await requireAdmin()
   const supabase = await createClient()
 
-  const page = params?.page ?? 0
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
   const from = page * ORDERS_PAGE_SIZE
   const to = from + ORDERS_PAGE_SIZE - 1
 
