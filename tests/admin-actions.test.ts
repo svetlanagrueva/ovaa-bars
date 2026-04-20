@@ -455,50 +455,37 @@ describe("admin actions", () => {
       await expect(addAdminNote(validOrderId, "x".repeat(2001))).rejects.toThrow("Бележката е твърде дълга")
     })
 
-    it("appends note to existing notes", async () => {
-      const existingNotes = [{ text: "First note", created_at: "2026-04-15T10:00:00.000Z" }]
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { admin_notes: existingNotes },
-        error: null,
-      })
-      mockSupabase.update = vi.fn(() => mockThenableResult(null))
+    it("calls add_admin_note RPC with trimmed text", async () => {
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: null }))
 
       const { addAdminNote } = await import("@/app/actions/admin")
-      const result = await addAdminNote(validOrderId, "Second note")
+      const result = await addAdminNote(validOrderId, "  Second note  ")
 
       expect(result).toEqual({ success: true })
-      expect(mockSupabase.update).toHaveBeenCalledWith({
-        admin_notes: [
-          ...existingNotes,
-          expect.objectContaining({ text: "Second note", created_at: expect.any(String) }),
-        ],
+      expect(mockSupabase.rpc).toHaveBeenCalledWith("add_admin_note", {
+        p_order_id: validOrderId,
+        p_text: "Second note",
       })
     })
 
-    it("creates first note when admin_notes is empty array", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { admin_notes: [] },
-        error: null,
-      })
-      mockSupabase.update = vi.fn(() => mockThenableResult(null))
-
-      const { addAdminNote } = await import("@/app/actions/admin")
-      const result = await addAdminNote(validOrderId, "First note")
-
-      expect(result).toEqual({ success: true })
-      expect(mockSupabase.update).toHaveBeenCalledWith({
-        admin_notes: [expect.objectContaining({ text: "First note" })],
-      })
-    })
-
-    it("throws when order not found", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
+    it("throws when RPC reports order not found", async () => {
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({
         data: null,
-        error: { message: "not found" },
-      })
+        error: { message: "Order <uuid> not found" },
+      }))
 
       const { addAdminNote } = await import("@/app/actions/admin")
       await expect(addAdminNote(validOrderId, "note")).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("throws generic error on other RPC failures", async () => {
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({
+        data: null,
+        error: { message: "connection refused" },
+      }))
+
+      const { addAdminNote } = await import("@/app/actions/admin")
+      await expect(addAdminNote(validOrderId, "note")).rejects.toThrow("Грешка при добавяне на бележка")
     })
   })
 

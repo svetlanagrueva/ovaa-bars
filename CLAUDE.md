@@ -60,7 +60,7 @@ Zustand cart store (`lib/store/cart.ts`) with localStorage persistence. Syncs pr
 - **Idempotent writes**: Status transitions use `.eq("status", currentStatus)` to prevent races. Settlement uses `.is("paid_at", null)`. Invoice number uses `.is("invoice_number", null)`.
 - **Fail-open inventory**: `getInventoryMap()` returns empty Map on DB error — products show as available, not sold out.
 - **Supabase query builder is thenable, not a Promise**: Never chain `.catch()` on it. Always use `const { error } = await supabase.rpc(...)`.
-- **Admin notes are append-only JSONB**: `admin_notes` is `jsonb default '[]'`, each entry is `{text, created_at}`. Use `addAdminNote`, never overwrite.
+- **Admin notes are append-only JSONB**: `admin_notes` is `jsonb default '[]'`, each entry is `{text, created_at, author}`. `addAdminNote` calls the `add_admin_note` RPC which does atomic `jsonb ||` append — never fetch-modify-update the array from app code.
 
 ## Testing
 

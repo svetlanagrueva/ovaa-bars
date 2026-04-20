@@ -39,7 +39,7 @@
 - COD settlement: form in Действия card for delivered unpaid COD orders (date picker, amount, ППП ref, bank ref); green status card shown after settlement recorded
 - COD settlement date picker: `min` set to delivery date, `max` set to today; server validates date is not before delivery or in the future; date stored at 23:59:59 UTC to sort after same-day events
 - Card payment section: shows paid_at confirmation date (set automatically by webhook)
-- Admin notes: append-only JSONB array of `{text, created_at}` entries; notes shown in reverse-chronological list + appear in timeline; `addAdminNote` server action appends, never overwrites
+- Admin notes: append-only JSONB array of `{text, created_at, author}` entries; notes shown in reverse-chronological list + appear in timeline. `addAdminNote` server action calls the `add_admin_note` RPC (atomic `jsonb ||` append), which kills the read-modify-write race of the previous fetch+spread+update pattern. Author defaults to `'admin'` pre-launch.
 - Actions: status transitions with validation, cancellation requires reason field
 - Invoice sent tracking: "Отбележи като изпратена на клиента" button appears after invoice number is saved; sets `invoice_sent_at`
 

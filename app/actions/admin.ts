@@ -194,7 +194,7 @@ export interface OrderDetail extends OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   cancelled_at: string | null
-  admin_notes: Array<{ text: string; created_at: string }>
+  admin_notes: Array<{ text: string; created_at: string; author?: string }>
   cancellation_reason: string | null
   invoice_sent_at: string | null
   paid_at: string | null
@@ -793,24 +793,17 @@ export async function addAdminNote(orderId: string, note: string) {
 
   const supabase = await createClient()
 
-  // Fetch current notes
-  const { data: order, error: fetchError } = await supabase
-    .from("orders")
-    .select("admin_notes")
-    .eq("id", orderId)
-    .single()
-
-  if (fetchError || !order) throw new Error("Поръчката не е намерена")
-
-  const existingNotes = Array.isArray(order.admin_notes) ? order.admin_notes : []
-  const newNote = { text: trimmed, created_at: new Date().toISOString() }
-
-  const { error } = await supabase
-    .from("orders")
-    .update({ admin_notes: [...existingNotes, newNote] })
-    .eq("id", orderId)
+  // Atomic append via the add_admin_note RPC — kills the read-modify-write
+  // race of the previous fetch → spread → update pattern.
+  const { error } = await supabase.rpc("add_admin_note", {
+    p_order_id: orderId,
+    p_text: trimmed,
+  })
 
   if (error) {
+    if (error.message?.includes("not found")) {
+      throw new Error("Поръчката не е намерена")
+    }
     console.error("Failed to add admin note:", error)
     throw new Error("Грешка при добавяне на бележка")
   }

@@ -49,7 +49,7 @@
 - `getBaseUrl()` shared via `lib/constants.ts` — single source of truth for absolute URLs
 - `recordCodSettlement` idempotency: `.is("paid_at", null)` prevents double-recording; validates order is COD + delivered/shipped; `paidAt` date cannot be before delivery or in future
 - `markInvoiceSent` idempotency: `.is("invoice_sent_at", null)` + `.not("invoice_number", "is", null)` guards
-- `addAdminNote` append-only: fetches existing JSONB array, appends new `{text, created_at}` entry; max 2000 chars per note
+- `addAdminNote` append-only: calls the `add_admin_note` RPC which does `admin_notes || jsonb_build_object('text', ..., 'created_at', now(), 'author', ...)` atomically; max 2000 chars per note. Row-level serialization prevents concurrent-note loss.
 
 ## Contact Form
 - Fields: Име (name), Фамилия (lastName), Имейл (email), Съобщение (message) — no subject field

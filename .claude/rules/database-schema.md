@@ -49,6 +49,7 @@
 - `confirm_delivery(p_order_id, p_delivered_at)` — atomically marks order as delivered WHERE `status = 'shipped'`, returns updated row. Idempotent — no-op if order is not shipped.
 - `record_order_outcome(p_order_id, p_outcome_type, p_payload, p_actor)` — inserts a domain event into `order_audit_events`. Validates outcome_type against the allowed set. Called by admin server actions for `delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`, `status_force_override`, `data_repair`.
 - `emit_order_audit_events()` — trigger function (not callable via RPC). AFTER UPDATE on orders; diffs audited columns and inserts typed events.
+- `add_admin_note(p_order_id, p_text, p_author)` — atomic `admin_notes || jsonb_build_object(...)` append. Validates non-empty text ≤ 2000 chars and non-empty author. Replaces the previous fetch-modify-update pattern; row-level serialization prevents concurrent-note loss.
 - `force_status_override(p_order_id, p_new_status, p_reason, p_actor)` — data-repair RPC. Validates reason ≥ 20 chars, writes `status_force_override` audit event, bypasses the state-machine trigger transaction-locally, updates status. Every override is auditable.
 - `enforce_order_status_transition()` — trigger function (not callable via RPC). BEFORE UPDATE on orders; raises on illegal transitions unless `current_setting('app.allow_status_override', true) = 'true'`.
 
