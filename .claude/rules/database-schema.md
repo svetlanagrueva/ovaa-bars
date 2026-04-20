@@ -72,6 +72,15 @@
 ## Status constraint
 Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`.
 
+## Delivery mode consistency (`chk_logistics_partner_enum` + `chk_delivery_fields_consistent`)
+- `logistics_partner` must be one of `econt-office`, `speedy-office`, `speedy-address`, or NULL (grandfathered). `econt-address` is deliberately unsupported.
+- Each mode requires its partner-specific columns be populated and the other partner's columns be null:
+  - `econt-office` → all 4 `econt_office_*` columns set; all 3 `speedy_office_*` columns null.
+  - `speedy-office` → all 3 `speedy_office_*` columns set; all 4 `econt_office_*` columns null.
+  - `speedy-address` → `address` and `postal_code` non-empty; no office fields on either partner.
+- `city` stays `NOT NULL` independently (office modes populate it from the chosen office).
+- Server-side validation in `validateAddressForDelivery` (stripe.ts) enforces non-empty `address` and `postal_code` for `speedy-address` before the CHECK sees the insert.
+
 ## Timestamp invariants
 - `chk_shipped_after_confirmed` — `shipped_at IS NULL OR (confirmed_at IS NOT NULL AND shipped_at >= confirmed_at)`. Strict: both timestamps are set by the app, no cross-clock drift.
 - `chk_delivered_after_shipped` — `delivered_at IS NULL OR (shipped_at IS NOT NULL AND delivered_at >= shipped_at - interval '1 hour')`. 1h tolerance absorbs courier clock drift (delivery timestamps come from the courier API; fast same-day flows can produce small negative deltas). Still rejects obviously wrong writes where delivered_at predates shipped_at by more than an hour.

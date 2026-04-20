@@ -112,9 +112,14 @@ function validateDeliveryMethod(method: string): string {
   return method
 }
 
-function validateAddressForDelivery(deliveryMethod: string, address: string) {
-  if (deliveryMethod.endsWith("-address") && (!address || address.trim().length === 0)) {
-    throw new Error("Address is required for address delivery")
+function validateAddressForDelivery(deliveryMethod: string, address: string, postalCode: string) {
+  if (deliveryMethod.endsWith("-address")) {
+    if (!address || address.trim().length === 0) {
+      throw new Error("Address is required for address delivery")
+    }
+    if (!postalCode || postalCode.trim().length === 0) {
+      throw new Error("Postal code is required for address delivery")
+    }
   }
 }
 
@@ -502,7 +507,7 @@ export async function createCheckoutSession(data: CheckoutData) {
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
   validateCustomerInfo(customerInfo, deliveryMethod)
   validateInvoiceInfo(needsInvoice, invoiceInfo)
-  validateAddressForDelivery(deliveryMethod, customerInfo.address)
+  validateAddressForDelivery(deliveryMethod, customerInfo.address, customerInfo.postalCode || "")
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
   validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
   const validatedItems = await validateCartItems(cartItems)
@@ -812,7 +817,7 @@ export async function createCODOrder(data: CODOrderData) {
   const deliveryMethod = validateDeliveryMethod(data.deliveryMethod)
   validateCustomerInfo(customerInfo, deliveryMethod)
   validateInvoiceInfo(needsInvoice, invoiceInfo)
-  validateAddressForDelivery(deliveryMethod, customerInfo.address)
+  validateAddressForDelivery(deliveryMethod, customerInfo.address, customerInfo.postalCode || "")
   validateOfficeData("Econt", deliveryMethod, "econt-office", econtOffice)
   validateOfficeData("Speedy", deliveryMethod, "speedy-office", speedyOffice)
 
