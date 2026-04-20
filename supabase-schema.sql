@@ -110,7 +110,7 @@ create policy "Deny public deletes" on orders
 -- IMPORTANT: Server actions use the SUPABASE_SERVICE_ROLE_KEY to bypass RLS.
 -- See .env.local and lib/supabase/server.ts.
 
--- Invoice number index (invoice numbers are now entered manually via external software)
+-- Invoice number index (invoice numbers aO re now entered manually via external software)
 create index if not exists idx_orders_invoice_number on orders (invoice_number)
   where invoice_number is not null;
 
@@ -368,8 +368,15 @@ begin
 end;
 $$;
 
--- Restore stock when an order is cancelled.
--- No lock needed — adding stock back cannot cause overselling.
+-- Restore stock when an order is cancelled, expired, or rolled back.
+-- Guards (defense-in-depth — callers also gate on order status):
+--   1. Lock the inventory_current row to serialize concurrent restores per SKU
+--      (mirrors reserve_inventory).
+--   2. Require a matching order_out row for (sku, order_id) — refuses to
+--      inflate stock for an order that never reserved.
+--   3. Refuse to double-restore: errors if a cancellation row already exists
+--      for (sku, order_id).
+--   4. Reject p_quantity > total reserved for this (sku, order_id).
 create or replace function restore_inventory(
   p_sku      text,
   p_quantity integer,
@@ -379,7 +386,36 @@ returns integer  -- returns quantity after restoration
 language plpgsql
 set search_path = public, pg_temp
 as $$
+declare
+  v_reserved integer;
+  v_already_restored boolean;
 begin
+  -- Lock to serialize concurrent restores against the same SKU (e.g. admin
+  -- cancel racing with the Stripe expired-session webhook).
+  perform 1 from public.inventory_current where sku = p_sku for update;
+
+  select coalesce(sum(quantity), 0) into v_reserved
+  from public.inventory_log
+  where sku = p_sku and order_id = p_order_id and type = 'order_out';
+
+  if v_reserved = 0 then
+    raise exception 'No reservation found for SKU % on order %', p_sku, p_order_id;
+  end if;
+
+  select exists(
+    select 1 from public.inventory_log
+    where sku = p_sku and order_id = p_order_id and type = 'cancellation'
+  ) into v_already_restored;
+
+  if v_already_restored then
+    raise exception 'Inventory already restored for SKU % on order %', p_sku, p_order_id;
+  end if;
+
+  if p_quantity > v_reserved then
+    raise exception 'Restore quantity % exceeds reserved % for SKU % on order %',
+      p_quantity, v_reserved, p_sku, p_order_id;
+  end if;
+
   insert into public.inventory_log (sku, type, quantity, order_id)
   values (p_sku, 'cancellation', p_quantity, p_order_id);
 

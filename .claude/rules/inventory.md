@@ -57,7 +57,7 @@ Refund tracking (refunded_at, refund_amount on orders table) and inventory track
 
 ## Postgres Functions
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements; **raises exception** if insufficient stock
-- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments (cancellation / session expiry)
+- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments (cancellation / session expiry). **Raises** if no `order_out` exists for `(sku, order_id)`, if a `cancellation` row already exists for it (double-restore guard), or if `p_quantity` exceeds total reserved. Locks `inventory_current` row to serialize concurrent restores.
 
 ## Calling pattern — CRITICAL
 Supabase query builder is thenable but **not a Promise subclass** — it has no `.catch()` method. Always use:

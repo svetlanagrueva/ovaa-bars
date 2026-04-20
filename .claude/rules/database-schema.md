@@ -37,7 +37,7 @@
 ## Postgres Functions
 - `dashboard_stats(p_today_start, p_week_start, p_month_start)` — returns JSON with aggregated stats (SQL-level, not in-memory), includes `awaiting_settlement` count for COD orders delivered but not yet paid
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements stock; raises exception if insufficient
-- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session)
+- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session). Raises if no matching `order_out` row exists, if a `cancellation` row already exists (double-restore), or if `p_quantity` > reserved.
 - `claim_marketing_emails(p_now, p_limit)` — find candidates + insert pending + reclaim stale + claim work, all in one call. Uses `FOR UPDATE SKIP LOCKED` for concurrency. Filters unsubscribes via `NOT EXISTS` with `lower()`.
 - `confirm_delivery(p_order_id, p_delivered_at)` — atomically marks order as delivered WHERE `status = 'shipped'`, returns updated row. Idempotent — no-op if order is not shipped.
 
