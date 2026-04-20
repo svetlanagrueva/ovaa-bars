@@ -3,18 +3,21 @@
 ## Checkout Invoice Section
 - "Искам фактура" checkbox (unchecked by default)
 - Two tabs when checked: Физическо лице / Юридическо лице
-- Физическо лице fields: name, EGN (10 digits), address, city, postal code
+- Физическо лице fields: name, address, city, postal code (**no EGN** — not required for retail invoices under ЗДДС)
 - Юридическо лице fields: company name, EIK/Булстат, ДДС номер, МОЛ name, registered address, city, postal code
 
 ## Server-Side Validation (`validateInvoiceInfo` in stripe.ts)
+- `type` must be `individual` or `company`
 - Company: EIK must be 9-13 digits, VAT format BG+digits, company name required
-- Individual: EGN must be 10 digits (if provided)
+- Individual: only MOL (name) + address required — no identifier
 - Both: MOL/name and address required
 - Field length limits enforced
 
 ## Invoice Data Storage
 - `needs_invoice` boolean on order
-- `invoice_company_name`, `invoice_eik`, `invoice_vat_number`, `invoice_mol`, `invoice_address`, `invoice_egn` columns
+- `invoice_type` text CHECK ('individual', 'company')
+- `invoice_company_name`, `invoice_eik`, `invoice_vat_number`, `invoice_mol`, `invoice_address` columns
+- DB enforces consistency: `needs_invoice=true` requires `invoice_type` + mol + address; company requires EIK + company name; individual forbids company identifiers; `needs_invoice=false` requires all invoice_* fields null
 - `invoice_number` — manually entered by admin (generated externally via Microinvest Invoice Pro)
 - `invoice_date` — set when admin saves the invoice number
 

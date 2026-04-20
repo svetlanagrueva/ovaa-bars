@@ -652,10 +652,10 @@ describe("invoice validation", () => {
       speedyOffice: validSpeedyOffice,
       needsInvoice: true,
       invoiceInfo: {
+        type: "company",
         companyName: "Test EOOD",
         eik: "123456789",
         vatNumber: "BG123456789",
-        egn: "",
         mol: "Иван Петров",
         invoiceAddress: "София, ул. Тестова 1",
       },
@@ -673,10 +673,10 @@ describe("invoice validation", () => {
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "company",
           companyName: "Test EOOD",
           eik: "abc",
           vatNumber: "",
-          egn: "",
           mol: "Test",
           invoiceAddress: "Sofia",
         },
@@ -693,10 +693,10 @@ describe("invoice validation", () => {
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "company",
           companyName: "Test EOOD",
           eik: "",
           vatNumber: "",
-          egn: "",
           mol: "Test",
           invoiceAddress: "Sofia",
         },
@@ -713,10 +713,10 @@ describe("invoice validation", () => {
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "company",
           companyName: "Test EOOD",
           eik: "123456789",
           vatNumber: "INVALID",
-          egn: "",
           mol: "Test",
           invoiceAddress: "Sofia",
         },
@@ -724,7 +724,7 @@ describe("invoice validation", () => {
     ).rejects.toThrow("Невалиден ДДС номер")
   })
 
-  it("rejects invoice without MOL", async () => {
+  it("rejects individual invoice without MOL", async () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
@@ -733,10 +733,10 @@ describe("invoice validation", () => {
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "individual",
           companyName: "",
           eik: "",
           vatNumber: "",
-          egn: "",
           mol: "",
           invoiceAddress: "Sofia",
         },
@@ -744,7 +744,7 @@ describe("invoice validation", () => {
     ).rejects.toThrow("МОЛ / Име е задължително")
   })
 
-  it("rejects invoice without address", async () => {
+  it("rejects individual invoice without address", async () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
@@ -753,10 +753,10 @@ describe("invoice validation", () => {
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "individual",
           companyName: "",
           eik: "",
           vatNumber: "",
-          egn: "",
           mol: "Test Person",
           invoiceAddress: "",
         },
@@ -764,27 +764,7 @@ describe("invoice validation", () => {
     ).rejects.toThrow("Адресът е задължителен")
   })
 
-  it("rejects individual invoice with invalid EGN", async () => {
-    await expect(
-      createCODOrder({
-        cartItems: validCartItems,
-        customerInfo: validCustomerInfo,
-        deliveryMethod: "speedy-office",
-        speedyOffice: validSpeedyOffice,
-        needsInvoice: true,
-        invoiceInfo: {
-          companyName: "",
-          eik: "",
-          vatNumber: "",
-          egn: "12345",
-          mol: "Test Person",
-          invoiceAddress: "Sofia",
-        },
-      })
-    ).rejects.toThrow("ЕГН трябва да бъде 10 цифри")
-  })
-
-  it("accepts valid individual invoice with EGN", async () => {
+  it("accepts valid individual invoice (name + address, no identifier)", async () => {
     const fakeOrder = { id: "order-inv-ind", email: "t@t.com", first_name: "T" }
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
 
@@ -795,10 +775,10 @@ describe("invoice validation", () => {
       speedyOffice: validSpeedyOffice,
       needsInvoice: true,
       invoiceInfo: {
+        type: "individual",
         companyName: "",
         eik: "",
         vatNumber: "",
-        egn: "1234567890",
         mol: "Иван Петров",
         invoiceAddress: "София, ул. Тестова 1",
       },
@@ -843,10 +823,10 @@ describe("createCODOrder — additional", () => {
       speedyOffice: validSpeedyOffice,
       needsInvoice: true,
       invoiceInfo: {
+        type: "company",
         companyName: "Firm",
         eik: "123456789",
         vatNumber: "",
-        egn: "",
         mol: "Boss",
         invoiceAddress: "Sofia",
       },
@@ -854,6 +834,7 @@ describe("createCODOrder — additional", () => {
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
     expect(insertCall.needs_invoice).toBe(true)
+    expect(insertCall.invoice_type).toBe("company")
     expect(insertCall.invoice_company_name).toBe("Firm")
     expect(insertCall.invoice_eik).toBe("123456789")
     expect(insertCall.invoice_mol).toBe("Boss")

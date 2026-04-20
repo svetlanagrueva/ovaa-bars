@@ -167,6 +167,7 @@ export interface OrderDetail extends OrderSummary {
     lineNo: number
   }>
   needs_invoice: boolean
+  invoice_type: "individual" | "company" | null
   invoice_company_name: string | null
   invoice_eik: string | null
   invoice_vat_number: string | null
@@ -195,7 +196,6 @@ export interface OrderDetail extends OrderSummary {
   cancelled_at: string | null
   admin_notes: Array<{ text: string; created_at: string }>
   cancellation_reason: string | null
-  invoice_egn: string | null
   invoice_sent_at: string | null
   paid_at: string | null
   courier_ppp_ref: string | null

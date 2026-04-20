@@ -27,10 +27,10 @@ interface CustomerInfo {
 }
 
 interface InvoiceInfo {
+  type: "individual" | "company"
   companyName: string
   eik: string
   vatNumber: string
-  egn: string
   mol: string
   invoiceAddress: string
 }
@@ -468,10 +468,12 @@ function validateOfficeData(
 function validateInvoiceInfo(needsInvoice: boolean | undefined, invoiceInfo: InvoiceInfo | undefined) {
   if (!needsInvoice) return
   if (!invoiceInfo) return
-  const isCompany = !!(invoiceInfo.companyName || invoiceInfo.eik)
 
-  // Company invoice validation
-  if (isCompany) {
+  if (invoiceInfo.type !== "individual" && invoiceInfo.type !== "company") {
+    throw new Error("Невалиден тип фактура")
+  }
+
+  if (invoiceInfo.type === "company") {
     if (!invoiceInfo.companyName?.trim()) {
       throw new Error("Името на фирмата е задължително за фактура")
     }
@@ -483,13 +485,6 @@ function validateInvoiceInfo(needsInvoice: boolean | undefined, invoiceInfo: Inv
     }
     if (invoiceInfo.companyName.length > MAX_FIELD_LENGTH) {
       throw new Error("Името на фирмата е твърде дълго")
-    }
-  }
-
-  // Individual invoice validation
-  if (!isCompany) {
-    if (invoiceInfo.egn?.trim() && !/^\d{10}$/.test(invoiceInfo.egn.trim())) {
-      throw new Error("ЕГН трябва да бъде 10 цифри")
     }
   }
 
@@ -569,12 +564,12 @@ export async function createCheckoutSession(data: CheckoutData) {
       status: "pending",
       payment_method: "card",
       needs_invoice: needsInvoice || false,
-      invoice_company_name: invoiceInfo?.companyName || null,
-      invoice_eik: invoiceInfo?.eik || null,
-      invoice_vat_number: invoiceInfo?.vatNumber || null,
-      invoice_mol: invoiceInfo?.mol || null,
-      invoice_address: invoiceInfo?.invoiceAddress || null,
-      invoice_egn: invoiceInfo?.egn || null,
+      invoice_type: needsInvoice ? (invoiceInfo?.type ?? null) : null,
+      invoice_company_name: needsInvoice ? (invoiceInfo?.companyName?.trim() || null) : null,
+      invoice_eik: needsInvoice ? (invoiceInfo?.eik?.trim() || null) : null,
+      invoice_vat_number: needsInvoice ? (invoiceInfo?.vatNumber?.trim() || null) : null,
+      invoice_mol: needsInvoice ? (invoiceInfo?.mol?.trim() || null) : null,
+      invoice_address: needsInvoice ? (invoiceInfo?.invoiceAddress?.trim() || null) : null,
       econt_office_id: econtOffice?.id ?? null,
       econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
@@ -861,12 +856,12 @@ export async function createCODOrder(data: CODOrderData) {
       confirmed_at: new Date().toISOString(),
       payment_method: "cod",
       needs_invoice: needsInvoice || false,
-      invoice_company_name: invoiceInfo?.companyName || null,
-      invoice_eik: invoiceInfo?.eik || null,
-      invoice_vat_number: invoiceInfo?.vatNumber || null,
-      invoice_mol: invoiceInfo?.mol || null,
-      invoice_address: invoiceInfo?.invoiceAddress || null,
-      invoice_egn: invoiceInfo?.egn || null,
+      invoice_type: needsInvoice ? (invoiceInfo?.type ?? null) : null,
+      invoice_company_name: needsInvoice ? (invoiceInfo?.companyName?.trim() || null) : null,
+      invoice_eik: needsInvoice ? (invoiceInfo?.eik?.trim() || null) : null,
+      invoice_vat_number: needsInvoice ? (invoiceInfo?.vatNumber?.trim() || null) : null,
+      invoice_mol: needsInvoice ? (invoiceInfo?.mol?.trim() || null) : null,
+      invoice_address: needsInvoice ? (invoiceInfo?.invoiceAddress?.trim() || null) : null,
       econt_office_id: econtOffice?.id ?? null,
       econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,

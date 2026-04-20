@@ -297,9 +297,11 @@ export default function AdminOrderDetailPage({
             {order.invoice_date && (
               <div><span className="text-muted-foreground">Дата:</span> {new Date(order.invoice_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
             )}
+            {order.invoice_type && (
+              <div><span className="text-muted-foreground">Тип:</span> {order.invoice_type === "company" ? "Юридическо лице" : "Физическо лице"}</div>
+            )}
             {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
             {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
-            {order.invoice_egn && <div><span className="text-muted-foreground">ЕГН:</span> {order.invoice_egn}</div>}
             {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}

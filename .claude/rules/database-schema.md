@@ -9,7 +9,7 @@
 - `cancelled_at` timestamptz — set when admin cancels
 - `cancellation_reason` text — optional, set on cancellation
 - `admin_notes` jsonb NOT NULL DEFAULT '[]' — append-only array of `{text, created_at}` note entries, shown in order timeline
-- `invoice_egn` text — EGN for individual (физическо лице) invoices
+- `invoice_type` text CHECK ('individual', 'company') — which invoice form this order used. Required when `needs_invoice=true`.
 - `paid_at` timestamptz — Card: set on webhook/success page confirmation; COD: set when admin records courier settlement
 - `courier_ppp_ref` text — COD only: courier's ППП (postal money transfer) document reference
 - `settlement_ref` text — COD only: courier's bank transfer reference (batch payout, multiple orders may share)
@@ -71,6 +71,14 @@
 
 ## Status constraint
 Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`.
+
+## Invoice mode consistency
+- `chk_invoice_needs_fields` — `needs_invoice=true` requires `invoice_type`, non-empty `invoice_mol`, non-empty `invoice_address`.
+- `chk_invoice_company_fields` — `invoice_type='company'` requires non-empty `invoice_company_name` and `invoice_eik`.
+- `chk_invoice_individual_fields` — `invoice_type='individual'` forbids company-only identifiers (`invoice_eik`, `invoice_vat_number`, `invoice_company_name` all null). Individual invoices carry only name (`invoice_mol`) and address.
+- `chk_invoice_fields_cleared` — `needs_invoice=false` requires ALL invoice_* fields to be null. Prevents stale identifier data when a customer toggles the invoice checkbox off after typing.
+
+**EGN is never collected.** Bulgarian tax law (ЗДДС) does not require EGN on individual retail invoices; the `invoice_egn` column was dropped in migration `20260420161754_invoice_mode_drop_egn.sql`. No national ID number touches the DB.
 
 ## Delivery mode consistency (`chk_logistics_partner_enum` + `chk_delivery_fields_consistent`)
 - `logistics_partner` must be one of `econt-office`, `speedy-office`, `speedy-address`, or NULL (grandfathered). `econt-address` is deliberately unsupported.

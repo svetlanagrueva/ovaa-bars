@@ -40,7 +40,6 @@ interface BillingInfo {
   company: string
   eik: string
   vatNumber: string
-  egn: string
   city: string
   postalCode: string
 }
@@ -91,7 +90,6 @@ export default function CheckoutPage() {
     company: "",
     eik: "",
     vatNumber: "",
-    egn: "",
     city: "",
     postalCode: "",
   })
@@ -236,10 +234,10 @@ export default function CheckoutPage() {
 
       const invoiceData = wantsInvoice
         ? {
+            type: billingType,
             companyName: billingType === "company" ? billingInfo.company.trim() : "",
             eik: billingType === "company" ? billingInfo.eik.trim() : "",
             vatNumber: billingType === "company" ? billingInfo.vatNumber.trim() : "",
-            egn: billingType === "individual" ? billingInfo.egn.trim() : "",
             mol: billingName,
             invoiceAddress: computedInvoiceAddress,
           }
@@ -660,18 +658,6 @@ export default function CheckoutPage() {
                                 required={wantsInvoice && billingType === "individual"}
                               />
                             </div>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="billingEgn">ЕГН *</Label>
-                            <Input
-                              id="billingEgn"
-                              name="egn"
-                              value={billingInfo.egn}
-                              onChange={handleBillingChange}
-                              required={wantsInvoice && billingType === "individual"}
-                              placeholder="10 цифри"
-                              maxLength={10}
-                            />
                           </div>
                         </>
                       )}
