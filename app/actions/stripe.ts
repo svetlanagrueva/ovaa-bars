@@ -549,7 +549,7 @@ export async function createCheckoutSession(data: CheckoutData) {
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
-      email: customerInfo.email,
+      email: customerInfo.email.trim().toLowerCase(),
       first_name: customerInfo.firstName,
       last_name: customerInfo.lastName,
       phone: customerInfo.phone,
@@ -635,7 +635,7 @@ export async function createCheckoutSession(data: CheckoutData) {
       ...(stripeDiscounts ? { discounts: stripeDiscounts } : {}),
       success_url: `${baseUrl}/checkout/success?order_id=${order.id}`,
       cancel_url: `${baseUrl}/checkout?canceled=true`,
-      customer_email: customerInfo.email,
+      customer_email: customerInfo.email.trim().toLowerCase(),
       metadata: {
         orderId: order.id,
       },
@@ -840,7 +840,7 @@ export async function createCODOrder(data: CODOrderData) {
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
-      email: customerInfo.email,
+      email: customerInfo.email.trim().toLowerCase(),
       first_name: customerInfo.firstName,
       last_name: customerInfo.lastName,
       phone: customerInfo.phone,

@@ -94,6 +94,7 @@ Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`,
 - `chk_refund_amount_le_total` — `refund_amount IS NULL OR refund_amount <= total_amount`. Overages belong in a separate adjustment, not this order's refund_amount.
 - `chk_refund_method_stripe_requires_pi` — `refund_method='stripe'` requires `stripe_payment_intent_id IS NOT NULL`. COD / non-Stripe orders cannot be Stripe-refunded.
 - `chk_cod_fee_implies_cod` — `cod_fee > 0 ⇒ payment_method = 'cod'`. One-way only: card orders must have cod_fee=0; COD orders may have 0 (free-COD promo) or positive.
+- `chk_orders_email_lowercase` — `email = lower(email)`. Prevents case-variance divergence from `email_unsubscribes` (which already keys by lowercase). App normalizes via `.trim().toLowerCase()` in the three insert paths in stripe.ts; CHECK is defense-in-depth.
 
 ## Timestamp invariants
 - `chk_shipped_after_confirmed` — `shipped_at IS NULL OR (confirmed_at IS NOT NULL AND shipped_at >= confirmed_at)`. Strict: both timestamps are set by the app, no cross-clock drift.
