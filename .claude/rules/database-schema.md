@@ -49,6 +49,8 @@
 - `confirm_delivery(p_order_id, p_delivered_at)` — atomically marks order as delivered WHERE `status = 'shipped'`, returns updated row. Idempotent — no-op if order is not shipped.
 - `record_order_outcome(p_order_id, p_outcome_type, p_payload, p_actor)` — inserts a domain event into `order_audit_events`. Validates outcome_type against the allowed set. Called by admin server actions for `delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`, `status_force_override`, `data_repair`.
 - `emit_order_audit_events()` — trigger function (not callable via RPC). AFTER UPDATE on orders; diffs audited columns and inserts typed events.
+- `force_status_override(p_order_id, p_new_status, p_reason, p_actor)` — data-repair RPC. Validates reason ≥ 20 chars, writes `status_force_override` audit event, bypasses the state-machine trigger transaction-locally, updates status. Every override is auditable.
+- `enforce_order_status_transition()` — trigger function (not callable via RPC). BEFORE UPDATE on orders; raises on illegal transitions unless `current_setting('app.allow_status_override', true) = 'true'`.
 
 ## Marketing Email Tables
 - `email_unsubscribes` — `email text PRIMARY KEY`, RLS deny-all. Keyed by lowercase email.
@@ -69,6 +71,16 @@
 
 ## Status constraint
 Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`.
+
+## Status state machine (enforced by `trg_enforce_order_status_transition`)
+BEFORE UPDATE trigger on orders; fires only when `OLD.status IS DISTINCT FROM NEW.status`. Legal transitions:
+
+- `pending   → {confirmed, expired, cancelled}`
+- `confirmed → {shipped, cancelled}`
+- `shipped   → {delivered}` (no `shipped → cancelled` — post-shipment exceptions via refund flow + outcome events like `delivery_refused` / `package_lost`)
+- `delivered`, `cancelled`, `expired` — terminal
+
+Data-repair path: `force_status_override(p_order_id, p_new_status, p_reason, p_actor)` RPC. Validates status value, requires `p_reason` ≥ 20 chars, writes a `status_force_override` audit event, then sets transaction-local `app.allow_status_override = 'true'` to bypass the trigger. Any legacy-state correction leaves an audit trail.
 
 ## Setting up the database
 Apply migrations from `supabase/migrations/` in filename order — see that directory's `README.md` for the workflow. The initial schema migration (`20260420120000_initial_schema.sql`) is the first file; subsequent schema changes are separate migration files. Never edit an applied migration, always add a new one.
