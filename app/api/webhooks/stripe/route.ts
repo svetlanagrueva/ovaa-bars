@@ -33,21 +33,25 @@ export async function POST(request: Request) {
         .update({ status: "expired" })
         .eq("id", orderId)
         .eq("status", "pending")
-        .select("items")
+        .select("id")
 
       if (claimed && claimed.length > 0) {
-        const { PRODUCTS } = await import("@/lib/products")
-        const items = claimed[0].items as Array<{ productId: string; quantity: number }>
-        for (const item of items) {
-          const product = PRODUCTS.find((p) => p.id === item.productId)
-          if (!product) continue
-          const { error: restoreErr } = await supabase.rpc("restore_inventory", {
-            p_sku: product.sku,
-            p_quantity: item.quantity,
-            p_order_id: orderId,
-          })
-          if (restoreErr) {
-            console.error(`Failed to restore inventory for ${product.sku} on expired session ${orderId}:`, restoreErr)
+        const { data: items, error: itemsErr } = await supabase
+          .from("order_items")
+          .select("sku, quantity")
+          .eq("order_id", orderId)
+        if (itemsErr || !items) {
+          console.error(`Failed to load order_items for expired session ${orderId}:`, itemsErr)
+        } else {
+          for (const item of items) {
+            const { error: restoreErr } = await supabase.rpc("restore_inventory", {
+              p_sku: item.sku,
+              p_quantity: item.quantity,
+              p_order_id: orderId,
+            })
+            if (restoreErr) {
+              console.error(`Failed to restore inventory for ${item.sku} on expired session ${orderId}:`, restoreErr)
+            }
           }
         }
       }

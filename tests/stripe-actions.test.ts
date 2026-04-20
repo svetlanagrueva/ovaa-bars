@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
+import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
 import { validCustomerInfo, validCartItems, singleCartItem, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
 
 // Mock Stripe
@@ -228,16 +228,16 @@ describe("confirmOrder", () => {
     expect(mockSupabase.update).not.toHaveBeenCalled()
   })
 
-  it("resolves sku from PRODUCTS for known productIds in tracking items", async () => {
+  it("returns tracking items from order_items table", async () => {
     const confirmedOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       status: "confirmed",
       total_amount: 5140,
-      items: [
-        { productId: "egg-origin-dark-chocolate-box", productName: "Dark", quantity: 2, priceInCents: 2570 },
-      ],
     }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
+    mockSupabase.order.mockReturnValueOnce(mockThenableResult([
+      { sku: "EGO-DC-12", quantity: 2, unit_price_cents: 2570 },
+    ]))
 
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     expect(result.items).toEqual([
@@ -245,36 +245,14 @@ describe("confirmOrder", () => {
     ])
   })
 
-  it("falls back to productId as sku when PRODUCTS does not resolve", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
-    const confirmedOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      status: "confirmed",
-      total_amount: 1000,
-      items: [
-        { productId: "egg-origin-discontinued-flavor", productName: "Old", quantity: 1, priceInCents: 1000 },
-      ],
-    }
-    mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
-
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    expect(result.items).toEqual([
-      { sku: "egg-origin-discontinued-flavor", quantity: 1, priceInCents: 1000 },
-    ])
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("egg-origin-discontinued-flavor"),
-    )
-    warnSpy.mockRestore()
-  })
-
-  it("returns empty items array when orders.items is null or non-array", async () => {
+  it("returns empty items array when order_items query fails or is empty", async () => {
     const confirmedOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       status: "confirmed",
       total_amount: 0,
-      items: null,
     }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
+    mockSupabase.order.mockReturnValueOnce(mockThenableResult(null, { message: "fetch failed" }))
 
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     expect(result.items).toEqual([])

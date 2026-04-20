@@ -158,8 +158,11 @@ export interface OrderDetail extends OrderSummary {
   items: Array<{
     productId: string
     productName: string
+    sku: string
     quantity: number
     priceInCents: number
+    cancelledQuantity: number
+    lineNo: number
   }>
   needs_invoice: boolean
   invoice_company_name: string | null
@@ -442,7 +445,18 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
 
   const { data, error } = await supabase
     .from("orders")
-    .select("*")
+    .select(`
+      *,
+      items:order_items(
+        productId:product_id,
+        productName:product_name,
+        sku,
+        quantity,
+        priceInCents:unit_price_cents,
+        cancelledQuantity:cancelled_quantity,
+        lineNo:line_no
+      )
+    `)
     .eq("id", orderId)
     .single()
 
@@ -546,20 +560,22 @@ export async function updateOrderStatus(
 
   // Restore inventory on cancellation
   if (newStatus === "cancelled") {
-    const items = order.items as Array<{ productId: string; quantity: number }>
-    for (const item of items) {
-      const product = PRODUCTS.find((p) => p.id === item.productId)
-      if (!product) {
-        console.error(`Cannot restore inventory: unknown productId ${item.productId}`)
-        continue
-      }
-      const { error: restoreErr } = await supabase.rpc("restore_inventory", {
-        p_sku: product.sku,
-        p_quantity: item.quantity,
-        p_order_id: orderId,
-      })
-      if (restoreErr) {
-        console.error(`Failed to restore inventory for ${product.sku} on order ${orderId}:`, restoreErr)
+    const { data: items, error: itemsErr } = await supabase
+      .from("order_items")
+      .select("sku, quantity")
+      .eq("order_id", orderId)
+    if (itemsErr || !items) {
+      console.error(`Failed to load order_items for cancellation of ${orderId}:`, itemsErr)
+    } else {
+      for (const item of items) {
+        const { error: restoreErr } = await supabase.rpc("restore_inventory", {
+          p_sku: item.sku,
+          p_quantity: item.quantity,
+          p_order_id: orderId,
+        })
+        if (restoreErr) {
+          console.error(`Failed to restore inventory for ${item.sku} on order ${orderId}:`, restoreErr)
+        }
       }
     }
   }
@@ -613,8 +629,14 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
     .single()
 
   if (error || !order) throw new Error("Order not found")
-  const items = order.items as Array<{ productName: string; quantity: number }>
-  const contents = items.map((i) => `${i.productName} x${i.quantity}`).join(", ")
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("order_items")
+    .select("product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no")
+  if (itemsErr || !items) throw new Error("Failed to load order items")
+  const contents = items.map((i) => `${i.product_name} x${i.quantity}`).join(", ")
   const partner = order.logistics_partner || ""
   const isCod = order.payment_method === "cod"
   const isOffice = partner.endsWith("-office")
@@ -1200,19 +1222,25 @@ export async function getOrderComplaints(orderId: string): Promise<Complaint[]> 
   return (data || []) as Complaint[]
 }
 
-function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
+async function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
   if (!process.env.RESEND_API_KEY) return
+
+  const supabase = await createClient()
+  const { data: orderItems, error: itemsErr } = await supabase
+    .from("order_items")
+    .select("product_name, quantity, unit_price_cents")
+    .eq("order_id", order.id as string)
+    .order("line_no")
+  if (itemsErr || !orderItems) {
+    console.error(`Failed to load order_items for shipping email on ${order.id}:`, itemsErr)
+    return
+  }
 
   const resend = new Resend(process.env.RESEND_API_KEY)
   const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
-  const orderItems = order.items as Array<{
-    productName: string
-    quantity: number
-    priceInCents: number
-  }>
 
   const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+    .map((item) => `${item.product_name} x ${item.quantity} - ${formatPrice(item.unit_price_cents * item.quantity)}`)
     .join("\n")
 
   const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""

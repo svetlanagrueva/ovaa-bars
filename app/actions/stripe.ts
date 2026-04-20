@@ -198,6 +198,35 @@ async function validateCartItems(cartItems: CartItem[]) {
   })
 }
 
+// Insert one order_items row per validated cart line. line_no is the 1-based
+// position in validatedItems; caller is expected to have deduped by productId.
+// If this throws, caller must delete the parent order row (cascade cleans up).
+async function insertOrderItems(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+  validatedItems: Array<{
+    product: { sku: string }
+    productId: string
+    productName: string
+    quantity: number
+    priceInCents: number
+  }>,
+): Promise<void> {
+  const rows = validatedItems.map((item, idx) => ({
+    order_id: orderId,
+    line_no: idx + 1,
+    product_id: item.productId,
+    sku: item.product.sku,
+    product_name: item.productName,
+    quantity: item.quantity,
+    unit_price_cents: item.priceInCents,
+  }))
+  const { error } = await supabase.from("order_items").insert(rows)
+  if (error) {
+    throw new Error(`Failed to create order items: ${error.message}`)
+  }
+}
+
 // Reserve inventory for all items in an order. Rolls back already-reserved
 // items if any single reservation fails (e.g. insufficient stock mid-loop).
 async function reserveInventoryForOrder(
@@ -514,13 +543,6 @@ export async function createCheckoutSession(data: CheckoutData) {
 
   const supabase = await createClient()
 
-  const orderItems = validatedItems.map((item) => ({
-    productId: item.productId,
-    productName: item.productName,
-    quantity: item.quantity,
-    priceInCents: item.priceInCents,
-  }))
-
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
@@ -533,7 +555,6 @@ export async function createCheckoutSession(data: CheckoutData) {
       postal_code: customerInfo.postalCode || "",
       notes: customerInfo.notes || "",
       logistics_partner: deliveryMethod,
-      items: orderItems,
       total_amount: totalAmount,
       shipping_fee: shippingPrice,
       cod_fee: 0,
@@ -563,6 +584,14 @@ export async function createCheckoutSession(data: CheckoutData) {
   if (orderError) {
     console.error("Failed to create order:", orderError)
     throw new Error("Failed to create order")
+  }
+
+  // Persist order_items rows. Cascade on orders delete cleans them up on rollback.
+  try {
+    await insertOrderItems(supabase, order.id, validatedItems)
+  } catch (itemsErr) {
+    await supabase.from("orders").delete().eq("id", order.id)
+    throw itemsErr
   }
 
   // Reserve inventory — if insufficient stock, clean up the order and surface the error
@@ -651,31 +680,24 @@ export interface ConfirmOrderResult {
   items: OrderTrackingItem[]
 }
 
-interface OrderItemsRow {
-  productId: string
-  productName: string
-  quantity: number
-  priceInCents: number
-}
-
-function toTrackingItems(raw: unknown): OrderTrackingItem[] {
-  if (!Array.isArray(raw)) return []
-  return raw.map((entry: OrderItemsRow) => {
-    const product = PRODUCTS.find((p) => p.id === entry.productId)
-    if (!product) {
-      // Fall back to productId as the pixel sku so value/contents stay
-      // consistent (value is derived from totalCents, contents must match).
-      // Log so a discontinued/renamed product shows up in observability.
-      console.warn(
-        `[confirmOrder] Unknown productId on order items: ${entry.productId}; falling back to productId as pixel sku`,
-      )
-    }
-    return {
-      sku: product?.sku ?? entry.productId,
-      quantity: entry.quantity,
-      priceInCents: entry.priceInCents,
-    }
-  })
+async function fetchTrackingItems(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+): Promise<OrderTrackingItem[]> {
+  const { data, error } = await supabase
+    .from("order_items")
+    .select("sku, quantity, unit_price_cents")
+    .eq("order_id", orderId)
+    .order("line_no")
+  if (error || !data) {
+    console.error(`[fetchTrackingItems] Failed to fetch order_items for ${orderId}:`, error)
+    return []
+  }
+  return data.map((row) => ({
+    sku: row.sku,
+    quantity: row.quantity,
+    priceInCents: row.unit_price_cents,
+  }))
 }
 
 export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult> {
@@ -689,7 +711,7 @@ export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult>
 
   const { data: existingOrder, error: fetchError } = await supabase
     .from("orders")
-    .select("id, status, payment_method, stripe_session_id, total_amount, items")
+    .select("id, status, payment_method, stripe_session_id, total_amount")
     .eq("id", orderId)
     .single()
 
@@ -702,7 +724,7 @@ export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult>
     return {
       status: "confirmed",
       totalCents: existingOrder.total_amount ?? 0,
-      items: toTrackingItems(existingOrder.items),
+      items: await fetchTrackingItems(supabase, orderId),
     }
   }
 
@@ -763,7 +785,7 @@ export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult>
       return {
         status: "confirmed",
         totalCents: existingOrder.total_amount ?? 0,
-        items: toTrackingItems(existingOrder.items),
+        items: await fetchTrackingItems(supabase, orderId),
       }
     }
 
@@ -777,7 +799,7 @@ export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult>
   return {
     status: "confirmed",
     totalCents: updatedOrder.total_amount ?? 0,
-    items: toTrackingItems(updatedOrder.items),
+    items: await fetchTrackingItems(supabase, orderId),
   }
 }
 
@@ -812,13 +834,6 @@ export async function createCODOrder(data: CODOrderData) {
 
   const supabase = await createClient()
 
-  const orderItems = validatedItems.map((item) => ({
-    productId: item.productId,
-    productName: item.productName,
-    quantity: item.quantity,
-    priceInCents: item.priceInCents,
-  }))
-
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
@@ -831,7 +846,6 @@ export async function createCODOrder(data: CODOrderData) {
       postal_code: customerInfo.postalCode || "",
       notes: customerInfo.notes || "",
       logistics_partner: deliveryMethod,
-      items: orderItems,
       total_amount: totalAmount,
       shipping_fee: shippingPrice,
       cod_fee: codFee,
@@ -862,6 +876,14 @@ export async function createCODOrder(data: CODOrderData) {
   if (orderError) {
     console.error("Failed to create COD order:", orderError)
     throw new Error("Failed to create order")
+  }
+
+  // Persist order_items rows. Cascade on orders delete cleans them up on rollback.
+  try {
+    await insertOrderItems(supabase, order.id, validatedItems)
+  } catch (itemsErr) {
+    await supabase.from("orders").delete().eq("id", order.id)
+    throw itemsErr
   }
 
   // Reserve inventory — if insufficient stock, clean up the order and surface the error

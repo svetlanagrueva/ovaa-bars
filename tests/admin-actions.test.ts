@@ -1340,10 +1340,12 @@ describe("admin actions", () => {
           econt_office_name: "Sofia Mladost 1",
           speedy_office_id: null,
           speedy_office_name: null,
-          items: [{ productName: "Dark Chocolate", quantity: 2 }],
         },
         error: null,
       })
+      mockSupabase.order.mockReturnValueOnce(mockThenableResult([
+        { product_name: "Dark Chocolate", quantity: 2 },
+      ]))
 
       const { getShipmentDefaults } = await import("@/app/actions/admin")
       const result = await getShipmentDefaults(validUUID)
@@ -1375,10 +1377,12 @@ describe("admin actions", () => {
           econt_office_name: null,
           speedy_office_id: null,
           speedy_office_name: null,
-          items: [{ productName: "Mix Box", quantity: 1 }],
         },
         error: null,
       })
+      mockSupabase.order.mockReturnValueOnce(mockThenableResult([
+        { product_name: "Mix Box", quantity: 1 },
+      ]))
 
       const { getShipmentDefaults } = await import("@/app/actions/admin")
       const result = await getShipmentDefaults(validUUID)
