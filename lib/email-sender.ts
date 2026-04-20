@@ -70,13 +70,15 @@ export async function sendOrderConfirmationEmail(order: Record<string, unknown>)
       html,
       text,
     }).then(async () => {
-      // Record that the confirmation email was sent
+      // Record that the confirmation email was sent. Idempotency guard:
+      // .is("order_confirmation_sent_at", null) — first writer wins, retries no-op.
       try {
         const supabase = await createClient()
         const { error: tsError } = await supabase
           .from("orders")
           .update({ order_confirmation_sent_at: new Date().toISOString() })
           .eq("id", order.id as string)
+          .is("order_confirmation_sent_at", null)
         if (tsError) {
           console.error(`Failed to record confirmation email timestamp for order ${order.id}:`, tsError)
         }
@@ -120,12 +122,15 @@ export async function sendDeliveryEmail(order: Record<string, unknown>) {
       html,
       text,
     }).then(async () => {
+      // Idempotency guard: .is("delivery_email_sent_at", null) — overlapping
+      // cron runs or retries cannot double-write the success timestamp.
       try {
         const supabase = await createClient()
         const { error: tsError } = await supabase
           .from("orders")
           .update({ delivery_email_sent_at: new Date().toISOString(), delivery_email_last_error: null })
           .eq("id", order.id as string)
+          .is("delivery_email_sent_at", null)
         if (tsError) {
           console.error(`Failed to record delivery email timestamp for order ${order.id}:`, tsError)
         }
@@ -134,12 +139,16 @@ export async function sendDeliveryEmail(order: Record<string, unknown>) {
       }
     }).catch(async (err) => {
       console.error(`Failed to send delivery email for order ${order.id}:`, err)
+      // Only record the error if success hasn't been recorded concurrently —
+      // avoids overwriting a successful send's state with an error from a
+      // stale attempt.
       try {
         const supabase = await createClient()
         await supabase
           .from("orders")
           .update({ delivery_email_last_error: String(err) })
           .eq("id", order.id as string)
+          .is("delivery_email_sent_at", null)
       } catch (dbErr) {
         console.error(`Failed to record delivery email error for order ${order.id}:`, dbErr)
       }
