@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
 import { validUUID } from "./helpers/fixtures"
 
+const TEST_IDEMPOTENCY_KEY = "11111111-2222-3333-4444-555555555555"
+
 // Mock admin-auth
 const mockCreateAdminSession = vi.fn()
 const mockValidateAdminSession = vi.fn(() => Promise.resolve(true))
@@ -1666,6 +1668,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
           quantity: 5,
@@ -1680,6 +1683,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "INVALID-SKU",
           type: "wholesale_out",
           quantity: 5,
@@ -1694,6 +1698,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
           quantity: 0,
@@ -1708,6 +1713,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
           quantity: 2.5,
@@ -1722,6 +1728,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
           quantity: 5,
@@ -1736,6 +1743,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
           quantity: 5,
@@ -1750,6 +1758,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "adjustment_loss",
           quantity: 2,
@@ -1764,6 +1773,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "damaged",
           quantity: 1,
@@ -1778,6 +1788,7 @@ describe("admin actions", () => {
 
       await expect(
         recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
           quantity: 5,
@@ -1792,6 +1803,7 @@ describe("admin actions", () => {
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       const result = await recordStockMovement({
+        idempotencyKey: TEST_IDEMPOTENCY_KEY,
         sku: "EGO-DC-12",
         type: "wholesale_out",
         quantity: 10,
@@ -1817,6 +1829,7 @@ describe("admin actions", () => {
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       const result = await recordStockMovement({
+        idempotencyKey: TEST_IDEMPOTENCY_KEY,
         sku: "EGO-DC-12",
         type: "return_in",
         quantity: 1,

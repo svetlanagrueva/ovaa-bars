@@ -47,6 +47,8 @@ A "stock count" flow should capture: `counted_quantity`, `count_date`, then gene
 
 ## Key constraints
 - `quantity` is always **positive** (`CHECK quantity > 0`) — the `type` encodes the direction. Seed data and inserts must use ≥ 1.
+- **One `order_out` row per `(order_id, sku)`** — enforced by unique partial index `idx_inventory_log_order_out_unique`. Encodes the "cart dedups by SKU" product-model assumption. Changing the cart to allow multiple lines per SKU (variants, split fulfillment, bundles flattening to same SKU) requires dropping this index. Linkage in: `supabase/migrations/20260420144423_inventory_idempotency.sql`, `lib/store/cart.ts:addItemWithQuantity`.
+- **Global-unique `idempotency_key`** for admin-initiated movements (batch_in, wholesale_out, sample_out, damaged, return_in, adjustment_*) — enforced by partial unique index. Callers generate UUID per form submission; double-submit raises unique violation, server action returns success (idempotent no-op). System-generated movements (order_out, cancellation) leave `idempotency_key` null.
 
 ## Refund ≠ Return (important distinction)
 Refund tracking (refunded_at, refund_amount on orders table) and inventory tracking (inventory_log) are separate concerns:
@@ -57,7 +59,7 @@ Refund tracking (refunded_at, refund_amount on orders table) and inventory track
 
 ## Postgres Functions
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements; **raises exception** if insufficient stock
-- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments (cancellation / session expiry). **Raises** if no `order_out` exists for `(sku, order_id)`, if a `cancellation` row already exists for it (double-restore guard), or if `p_quantity` exceeds total reserved. Locks `inventory_current` row to serialize concurrent restores.
+- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments (cancellation / session expiry / partial cancel). Uses **sum-based guard**: `sum(cancellation quantities) + p_quantity` must not exceed `sum(order_out quantities)` for `(sku, order_id)`. Allows multiple cancellation rows per `(sku, order_id)` to support future partial-cancellation flow. **Raises** if no `order_out` exists, or if the sum invariant would be violated. Locks `inventory_current` row to serialize concurrent restores.
 
 ## Calling pattern — CRITICAL
 Supabase query builder is thenable but **not a Promise subclass** — it has no `.catch()` method. Always use:

@@ -1628,12 +1628,15 @@ export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]
   }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export async function addInventoryBatch(data: {
   sku: string
   quantity: number
   batchId: string
   expiryDate: string
   notes: string
+  idempotencyKey: string
 }): Promise<{ success: true }> {
   await requireAdmin()
 
@@ -1648,6 +1651,7 @@ export async function addInventoryBatch(data: {
     throw new Error("Невалидна дата на годност")
   }
   if (data.notes && data.notes.length > 500) throw new Error("Бележката е твърде дълга")
+  if (!UUID_REGEX.test(data.idempotencyKey)) throw new Error("Невалиден idempotency key")
 
   const supabase = await createClient()
   const { error } = await supabase.from("inventory_log").insert({
@@ -1660,9 +1664,15 @@ export async function addInventoryBatch(data: {
     reference_type: "internal" as const,
     reference_id: data.batchId.trim(),
     created_by: "admin",
+    idempotency_key: data.idempotencyKey,
   })
 
   if (error) {
+    // 23505 = unique_violation on idempotency_key; treat as idempotent no-op.
+    // The original submission already recorded this movement.
+    if (error.code === "23505") {
+      return { success: true }
+    }
     console.error("Failed to insert inventory batch:", error)
     throw new Error("Грешка при добавяне на наличност")
   }
@@ -1707,8 +1717,11 @@ export async function recordStockMovement(data: {
   batchId?: string
   expiryDate?: string
   orderId?: string
+  idempotencyKey: string
 }): Promise<{ success: true }> {
   await requireAdmin()
+
+  if (!UUID_REGEX.test(data.idempotencyKey)) throw new Error("Невалиден idempotency key")
 
   // Validate SKU
   const validSkus = PRODUCTS.map((p) => p.sku)
@@ -1782,9 +1795,14 @@ export async function recordStockMovement(data: {
     expiry_date: data.expiryDate || null,
     order_id: data.orderId || null,
     created_by: "admin",
+    idempotency_key: data.idempotencyKey,
   })
 
   if (error) {
+    // Idempotency key collision — same operation already recorded.
+    if (error.code === "23505") {
+      return { success: true }
+    }
     console.error("Failed to record stock movement:", error)
     throw new Error("Грешка при записване на движение")
   }

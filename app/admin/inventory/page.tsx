@@ -96,6 +96,7 @@ export default function AdminInventoryPage() {
   const [batchId, setBatchId] = useState("")
   const [expiryDate, setExpiryDate] = useState("")
   const [notes, setNotes] = useState("")
+  const [batchIdempotencyKey, setBatchIdempotencyKey] = useState("")
 
   // Movement form state
   const [movDialogOpen, setMovDialogOpen] = useState(false)
@@ -109,6 +110,17 @@ export default function AdminInventoryPage() {
   const [movBatchId, setMovBatchId] = useState("")
   const [movExpiryDate, setMovExpiryDate] = useState("")
   const [movOrderId, setMovOrderId] = useState("")
+  const [movIdempotencyKey, setMovIdempotencyKey] = useState("")
+
+  // Regenerate idempotency keys on dialog open so each distinct submission
+  // intent gets its own key. Double-clicks within a single dialog session
+  // reuse the same key and collide at the unique index (treated as no-op).
+  useEffect(() => {
+    if (dialogOpen) setBatchIdempotencyKey(crypto.randomUUID())
+  }, [dialogOpen])
+  useEffect(() => {
+    if (movDialogOpen) setMovIdempotencyKey(crypto.randomUUID())
+  }, [movDialogOpen])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -136,6 +148,7 @@ export default function AdminInventoryPage() {
         batchId,
         expiryDate,
         notes,
+        idempotencyKey: batchIdempotencyKey,
       })
       setDialogOpen(false)
       setSku("")
@@ -168,6 +181,7 @@ export default function AdminInventoryPage() {
         batchId: movType === "return_in" && movBatchId ? movBatchId : undefined,
         expiryDate: movType === "return_in" && movExpiryDate ? movExpiryDate : undefined,
         orderId: movType === "return_in" && movOrderId ? movOrderId : undefined,
+        idempotencyKey: movIdempotencyKey,
       })
       setMovDialogOpen(false)
       setMovType("")

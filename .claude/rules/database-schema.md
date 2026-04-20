@@ -37,7 +37,7 @@
 ## Postgres Functions
 - `dashboard_stats(p_today_start, p_week_start, p_month_start)` — returns JSON with aggregated stats (SQL-level, not in-memory), includes `awaiting_settlement` count for COD orders delivered but not yet paid
 - `reserve_inventory(p_sku, p_quantity, p_order_id)` — atomically decrements stock; raises exception if insufficient
-- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session). Raises if no matching `order_out` row exists, if a `cancellation` row already exists (double-restore), or if `p_quantity` > reserved.
+- `restore_inventory(p_sku, p_quantity, p_order_id)` — atomically increments stock (cancellation / expired session / partial cancel). Sum-based guard: `sum(restored) + p_quantity` must not exceed `sum(reserved)` for `(sku, order_id)`. Raises if no matching `order_out` exists, or if the invariant would be violated. Multiple cancellation rows per `(sku, order_id)` are allowed (supports partial cancellation).
 - `claim_marketing_emails(p_now, p_limit)` — find candidates + insert pending + reclaim stale + claim work, all in one call. Uses `FOR UPDATE SKIP LOCKED` for concurrency. Filters unsubscribes via `NOT EXISTS` with `lower()`.
 - `confirm_delivery(p_order_id, p_delivered_at)` — atomically marks order as delivered WHERE `status = 'shipped'`, returns updated row. Idempotent — no-op if order is not shipped.
 
@@ -55,6 +55,8 @@
 - `idx_orders_delivered_at` — partial index on delivered_at WHERE NOT NULL (marketing cron)
 - `idx_marketing_email_log_claimable` — partial index on status WHERE IN ('pending', 'failed')
 - `idx_orders_tracking_number_unique` — unique partial index on tracking_number WHERE NOT NULL AND != '__generating__'
+- `idx_inventory_log_order_out_unique` — unique partial index on (order_id, sku) WHERE type='order_out'. Encodes "cart dedups by SKU" assumption; changing the cart model requires dropping this index.
+- `idx_inventory_log_idempotency_key_unique` — unique partial index on idempotency_key WHERE NOT NULL. Rejects duplicate admin-movement submissions at the DB layer.
 
 ## Status constraint
 Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`.
