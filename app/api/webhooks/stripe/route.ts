@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
+import { sanitizeError } from "@/lib/logger"
 import type Stripe from "stripe"
 
 export async function POST(request: Request) {
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
           .select("sku, quantity")
           .eq("order_id", orderId)
         if (itemsErr || !items) {
-          console.error(`Failed to load order_items for expired session ${orderId}:`, itemsErr)
+          console.error(`Failed to load order_items for expired session ${orderId}:`, sanitizeError(itemsErr))
         } else {
           for (const item of items) {
             const { error: restoreErr } = await supabase.rpc("restore_inventory", {
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
               p_order_id: orderId,
             })
             if (restoreErr) {
-              console.error(`Failed to restore inventory for ${item.sku} on expired session ${orderId}:`, restoreErr)
+              console.error(`Failed to restore inventory for ${item.sku} on expired session ${orderId}:`, sanitizeError(restoreErr))
             }
           }
         }

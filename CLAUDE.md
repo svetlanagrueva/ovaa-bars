@@ -61,6 +61,7 @@ Zustand cart store (`lib/store/cart.ts`) with localStorage persistence. Syncs pr
 - **Fail-open inventory**: `getInventoryMap()` returns empty Map on DB error — products show as available, not sold out.
 - **Supabase query builder is thenable, not a Promise**: Never chain `.catch()` on it. Always use `const { error } = await supabase.rpc(...)`.
 - **Admin notes are append-only JSONB**: `admin_notes` is `jsonb default '[]'`, each entry is `{text, created_at, author}`. `addAdminNote` calls the `add_admin_note` RPC which does atomic `jsonb ||` append — never fetch-modify-update the array from app code.
+- **PII-safe error logging**: when logging a Supabase error or any object that may contain user data, wrap it with `sanitizeError` from `@/lib/logger`. `console.error("Failed to X:", sanitizeError(err))` extracts only code/hint/name and redacts email + Bulgarian phone patterns from the message. Static-message + ID-only logs don't need it.
 
 ## Testing
 

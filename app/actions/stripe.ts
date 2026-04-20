@@ -8,6 +8,7 @@ import { getProductsWithSales } from "@/lib/sales"
 import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
+import { sanitizeError } from "@/lib/logger"
 import type Stripe from "stripe"
 
 interface CartItem {
@@ -585,7 +586,7 @@ export async function createCheckoutSession(data: CheckoutData) {
     .single()
 
   if (orderError) {
-    console.error("Failed to create order:", orderError)
+    console.error("Failed to create order:", sanitizeError(orderError))
     throw new Error("Failed to create order")
   }
 
@@ -663,7 +664,7 @@ export async function createCheckoutSession(data: CheckoutData) {
     .eq("id", order.id)
 
   if (updateError) {
-    console.error("Failed to store stripe_session_id:", updateError)
+    console.error("Failed to store stripe_session_id:", sanitizeError(updateError))
     // Don't block the redirect — the webhook can still confirm the order
     // via session.metadata.orderId without needing the stored session ID.
   }
@@ -877,7 +878,7 @@ export async function createCODOrder(data: CODOrderData) {
     .single()
 
   if (orderError) {
-    console.error("Failed to create COD order:", orderError)
+    console.error("Failed to create COD order:", sanitizeError(orderError))
     throw new Error("Failed to create order")
   }
 
