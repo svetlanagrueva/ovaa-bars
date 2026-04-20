@@ -360,6 +360,7 @@ export default function AdminInventoryPage() {
                 <Input
                   id="expiry"
                   type="date"
+                  required
                   value={expiryDate}
                   onChange={(e) => setExpiryDate(e.target.value)}
                 />

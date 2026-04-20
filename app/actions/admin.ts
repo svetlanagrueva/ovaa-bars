@@ -1649,7 +1649,8 @@ export async function addInventoryBatch(data: {
   }
   if (!data.batchId?.trim()) throw new Error("Номерът на партидата е задължителен")
   if (data.batchId.length > 100) throw new Error("Номерът на партидата е твърде дълъг")
-  if (data.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.expiryDate)) {
+  if (!data.expiryDate) throw new Error("Срокът на годност е задължителен")
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data.expiryDate)) {
     throw new Error("Невалидна дата на годност")
   }
   if (data.notes && data.notes.length > 500) throw new Error("Бележката е твърде дълга")
@@ -1661,7 +1662,7 @@ export async function addInventoryBatch(data: {
     type: "batch_in",
     quantity: data.quantity,
     batch_id: data.batchId.trim(),
-    expiry_date: data.expiryDate || null,
+    expiry_date: data.expiryDate,
     notes: data.notes?.trim() || null,
     reference_type: "internal" as const,
     reference_id: data.batchId.trim(),
