@@ -72,6 +72,12 @@
 ## Status constraint
 Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`.
 
+## Timestamp invariants
+- `chk_shipped_after_confirmed` — `shipped_at IS NULL OR (confirmed_at IS NOT NULL AND shipped_at >= confirmed_at)`. Strict: both timestamps are set by the app, no cross-clock drift.
+- `chk_delivered_after_shipped` — `delivered_at IS NULL OR (shipped_at IS NOT NULL AND delivered_at >= shipped_at - interval '1 hour')`. 1h tolerance absorbs courier clock drift (delivery timestamps come from the courier API; fast same-day flows can produce small negative deltas). Still rejects obviously wrong writes where delivered_at predates shipped_at by more than an hour.
+
+**Deliberately not encoded:** `paid_at >= confirmed_at` and `refunded_at >= paid_at` — too strict for legitimate edge cases (pre-capture Stripe refunds, COD settlement entered long after delivery, etc.). Those relationships live in business-logic validation in the refund / settlement RPCs, not as DB chronology checks.
+
 ## Status state machine (enforced by `trg_enforce_order_status_transition`)
 BEFORE UPDATE trigger on orders; fires only when `OLD.status IS DISTINCT FROM NEW.status`. Legal transitions:
 
