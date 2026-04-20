@@ -1019,7 +1019,7 @@ export async function recordRefund(
   const supabase = await createClient()
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, refunded_at")
+    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, refunded_at, stripe_payment_intent_id")
     .eq("id", orderId)
     .single()
 
@@ -1027,6 +1027,9 @@ export async function recordRefund(
   if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
   if (data.refundAmount > order.total_amount) {
     throw new Error("Сумата за възстановяване не може да надвишава общата сума на поръчката")
+  }
+  if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
+    throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
   }
 
   // Validate refundedAt not before delivered_at

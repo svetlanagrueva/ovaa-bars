@@ -1947,9 +1947,25 @@ describe("admin actions", () => {
       ).rejects.toThrow("не може да надвишава")
     })
 
+    it("rejects Stripe refund when order has no Stripe PaymentIntent", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        error: null,
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Customer withdrawal",
+          refundMethod: "stripe",
+        }),
+      ).rejects.toThrow("няма Stripe платеж")
+    })
+
     it("requires creditNoteRef when invoice was issued", async () => {
       mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: true, invoice_number: "INV-001" },
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: true, invoice_number: "INV-001", stripe_payment_intent_id: "pi_test" },
         error: null,
       })
 
@@ -1965,7 +1981,7 @@ describe("admin actions", () => {
 
     it("records refund successfully", async () => {
       mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false },
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: "pi_test" },
         error: null,
       })
 
@@ -1989,7 +2005,7 @@ describe("admin actions", () => {
 
     it("rejects when already refunded (idempotency)", async () => {
       mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false },
+        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: "pi_test" },
         error: null,
       })
       const updateChain = {

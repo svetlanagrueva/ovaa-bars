@@ -89,6 +89,11 @@ Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`,
 - `city` stays `NOT NULL` independently (office modes populate it from the chosen office).
 - Server-side validation in `validateAddressForDelivery` (stripe.ts) enforces non-empty `address` and `postal_code` for `speedy-address` before the CHECK sees the insert.
 
+## Sanity CHECKs on orders
+- `chk_refund_amount_le_total` — `refund_amount IS NULL OR refund_amount <= total_amount`. Overages belong in a separate adjustment, not this order's refund_amount.
+- `chk_refund_method_stripe_requires_pi` — `refund_method='stripe'` requires `stripe_payment_intent_id IS NOT NULL`. COD / non-Stripe orders cannot be Stripe-refunded.
+- `chk_cod_fee_implies_cod` — `cod_fee > 0 ⇒ payment_method = 'cod'`. One-way only: card orders must have cod_fee=0; COD orders may have 0 (free-COD promo) or positive.
+
 ## Timestamp invariants
 - `chk_shipped_after_confirmed` — `shipped_at IS NULL OR (confirmed_at IS NOT NULL AND shipped_at >= confirmed_at)`. Strict: both timestamps are set by the app, no cross-clock drift.
 - `chk_delivered_after_shipped` — `delivered_at IS NULL OR (shipped_at IS NOT NULL AND delivered_at >= shipped_at - interval '1 hour')`. 1h tolerance absorbs courier clock drift (delivery timestamps come from the courier API; fast same-day flows can produce small negative deltas). Still rejects obviously wrong writes where delivered_at predates shipped_at by more than an hour.
