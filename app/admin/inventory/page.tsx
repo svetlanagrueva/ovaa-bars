@@ -76,6 +76,7 @@ const MOVEMENT_TYPE_OPTIONS = [
 ] as const
 
 function StockBadge({ quantity }: { quantity: number }) {
+  if (quantity < 0) return <Badge variant="destructive">Дълг {quantity} бр.</Badge>
   if (quantity === 0) return <Badge variant="destructive">Изчерпан</Badge>
   if (quantity <= LOW_STOCK_THRESHOLD) return <Badge variant="outline" className="border-amber-400 text-amber-700">Малко — {quantity}</Badge>
   return <Badge variant="secondary">{quantity} бр.</Badge>

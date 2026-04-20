@@ -74,6 +74,7 @@ export interface DashboardStats {
   pendingOrders: number
   invoicesAwaiting: number
   awaitingSettlement: number
+  inventoryDebtSkus: number
   recentOrders: Array<{
     id: string
     created_at: string
@@ -125,6 +126,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
     awaitingSettlement: s.awaiting_settlement ?? 0,
+    inventoryDebtSkus: s.inventory_debt_skus ?? 0,
     recentOrders: recentOrders || [],
   }
 }

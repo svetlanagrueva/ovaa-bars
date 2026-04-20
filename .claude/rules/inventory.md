@@ -69,10 +69,19 @@ if (error) console.error("Failed to restore inventory:", error)
 ```
 Never chain `.catch()` on a Supabase call — throws `TypeError: supabase.rpc(...).catch is not a function`.
 
+## Non-negative stock policy (ledger vs snapshot distinction)
+`inventory_log` is the **ledger** — append-only, reflects reality including operational debt, backdated corrections, discovered shortages. `inventory_current` is the **operational snapshot** used for sold-out decisions.
+
+Policy (enforced by `update_inventory_current` trigger):
+- `order_out` movements **cannot** drive `inventory_current.quantity < 0`. The trigger raises an exception. This is a backstop to `reserve_inventory`'s sufficiency check — customer-facing reservations must never go negative.
+- Admin-initiated decrements (`wholesale_out`, `sample_out`, `damaged`, `adjustment_loss`) **may** drive quantity below zero. The DB's job is to record what happened truthfully; "we're short 5 units" is a valid state reflecting operational debt.
+
+Negative `inventory_current` is surfaced in admin UI (red "Дълг" badge in inventory panel, counter "SKU в оперативен дълг" on dashboard). Admin reconciles via `batch_in` or `adjustment_gain`.
+
 ## Fail-open pattern
 `getInventoryMap()` in `lib/inventory.ts` returns an **empty Map** on DB error — not a map of zeros.
 - `inventoryMap.has(id) === false` → treat product as available (DB error / unknown state)
-- `inventoryMap.has(id) && inventoryMap.get(id) === 0` → confirmed sold out
+- `inventoryMap.has(id) && inventoryMap.get(id) <= 0` → confirmed sold out (zero OR negative — negative stock reads as sold out in customer-facing UI)
 
 This prevents false sold-out UI on transient failures. Always use the `has()` guard before `get()`.
 

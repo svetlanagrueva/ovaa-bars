@@ -312,7 +312,10 @@ export async function checkCartInventory(
     .filter((item) => stockMap.has(item.sku) && (stockMap.get(item.sku) ?? 0) < item.quantity)
     .map((item) => ({
       productName: item.name,
-      available: stockMap.get(item.sku) ?? 0,
+      // Clamp to 0 for customer display. Negative stock reflects operational
+      // debt (seller oversold / discovered shortage) and isn't meaningful to a
+      // shopper; they just need to see "0 available" vs their requested qty.
+      available: Math.max(0, stockMap.get(item.sku) ?? 0),
       requested: item.quantity,
     }))
 }
