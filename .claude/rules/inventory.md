@@ -92,4 +92,4 @@ This prevents false sold-out UI on transient failures. Always use the `has()` gu
 - Movement log shows: date, SKU, type badge, ±quantity, before/after, batch ID or order link, expiry date
 
 ## Running inventory SQL on a new database
-Tables, functions, trigger, and RLS policies are all in `supabase-schema.sql`. Run the full file. If tables already exist (partial run), run only the functions + trigger block — policies will error with "already exists" otherwise.
+Inventory tables, functions, trigger, and RLS policies are part of the initial schema migration at `supabase/migrations/20260420120000_initial_schema.sql`. On a fresh DB, apply all migrations in `supabase/migrations/` in filename order (see that directory's README.md for the workflow). For schema changes post-initial, add a new migration file rather than editing an existing one.

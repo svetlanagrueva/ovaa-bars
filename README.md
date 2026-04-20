@@ -32,7 +32,7 @@ Continue building your app on:
 ## Setup
 Supabase setup
 1. Go to https://supabase.com and create a free project                                                                                                                       
-2. Go to SQL Editor → paste the contents of supabase-schema.sql → click Run
+2. Go to SQL Editor → apply each file in `supabase/migrations/` in filename order (the prefix is a UTC timestamp that defines the apply order). For a fresh setup there's typically only `20260420120000_initial_schema.sql`. See `supabase/migrations/README.md` for the workflow.
 3. Go to Project Settings → API and copy:
   - Project URL → paste into NEXT_PUBLIC_SUPABASE_URL in .env.local
   - service_role secret key → paste into SUPABASE_SERVICE_ROLE_KEY
@@ -117,7 +117,7 @@ SELLER_IBAN=BG12AAAA12341234123412
 SELLER_BANK=Банка АД
 ```
 
-The full database schema (including invoice, sales, and promo code tables) is in `supabase-schema.sql`. Run it in Supabase SQL Editor on initial setup.
+The database schema lives in `supabase/migrations/`. Apply migration files in filename order via Supabase SQL Editor on initial setup. See `supabase/migrations/README.md` for the full workflow and naming convention.
 
 Admin panel
 

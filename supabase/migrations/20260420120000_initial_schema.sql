@@ -1,4 +1,8 @@
--- Run this in your Supabase project: SQL Editor → New query → Paste & Run
+-- Initial schema migration for the Egg Origin e-commerce site.
+-- Migration ID: 20260420120000
+-- Apply order: this is the first migration; subsequent migrations in this
+-- directory build on it. Run files in filename (timestamp) order.
+-- See supabase/migrations/README.md for the workflow.
 
 create table if not exists orders (
   id uuid primary key default gen_random_uuid(),

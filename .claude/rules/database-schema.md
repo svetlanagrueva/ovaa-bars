@@ -56,60 +56,8 @@
 - `idx_marketing_email_log_claimable` — partial index on status WHERE IN ('pending', 'failed')
 - `idx_orders_tracking_number_unique` — unique partial index on tracking_number WHERE NOT NULL AND != '__generating__'
 
-## ALTER TABLE statements for existing databases
-When updating an existing database, run these in Supabase SQL Editor:
-```sql
-ALTER TABLE orders ADD COLUMN shipping_fee integer NOT NULL DEFAULT 0;
-ALTER TABLE orders ADD COLUMN cod_fee integer NOT NULL DEFAULT 0;
-ALTER TABLE orders ADD COLUMN confirmed_at timestamptz;
-ALTER TABLE orders ADD COLUMN shipped_at timestamptz;
-ALTER TABLE orders ADD COLUMN delivered_at timestamptz;
-ALTER TABLE orders ADD COLUMN cancelled_at timestamptz;
-ALTER TABLE orders ADD COLUMN cancellation_reason text;
-ALTER TABLE orders ADD COLUMN admin_notes jsonb NOT NULL DEFAULT '[]';
-ALTER TABLE orders ADD COLUMN invoice_egn text;
-ALTER TABLE orders ADD COLUMN marketing_consent boolean NOT NULL DEFAULT false;
-ALTER TABLE orders ADD COLUMN paid_at timestamptz;
-ALTER TABLE orders ADD COLUMN courier_ppp_ref text;
-ALTER TABLE orders ADD COLUMN settlement_ref text;
-ALTER TABLE orders ADD COLUMN settlement_amount integer;
-ALTER TABLE orders ADD COLUMN invoice_sent_at timestamptz;
-ALTER TABLE orders ADD COLUMN stripe_payment_intent_id text;
-ALTER TABLE orders ADD COLUMN stripe_receipt_url text;
-ALTER TABLE orders ADD COLUMN order_confirmation_sent_at timestamptz;
-ALTER TABLE orders ADD COLUMN delivery_email_sent_at timestamptz;
-ALTER TABLE orders ADD COLUMN delivery_email_last_error text;
-ALTER TABLE orders ADD COLUMN delivery_status_checked_at timestamptz;
-ALTER TABLE orders ADD COLUMN refunded_at timestamptz;
-ALTER TABLE orders ADD COLUMN refund_amount integer CHECK (refund_amount > 0);
-ALTER TABLE orders ADD COLUMN refund_reason text;
-ALTER TABLE orders ADD COLUMN refund_method text CHECK (refund_method IN ('stripe', 'bank_transfer'));
-ALTER TABLE orders ADD COLUMN credit_note_ref text;
+## Status constraint
+Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`.
 
--- Inventory expansion
-ALTER TABLE inventory_log ADD COLUMN reference_type text CHECK (reference_type IN ('order', 'invoice', 'return', 'internal'));
-ALTER TABLE inventory_log ADD COLUMN reference_id text;
-ALTER TABLE inventory_log ADD COLUMN created_by text NOT NULL DEFAULT 'system';
-ALTER TABLE inventory_log ADD COLUMN location_id text NOT NULL DEFAULT 'MAIN';
-ALTER TABLE inventory_log ADD CONSTRAINT chk_location_id_nonempty CHECK (location_id <> '');
-ALTER TABLE inventory_log ADD CONSTRAINT chk_reference_id_nonempty CHECK (reference_type IS NULL OR (reference_id IS NOT NULL AND reference_id <> ''));
--- Update type constraint to include new movement types
-ALTER TABLE inventory_log DROP CONSTRAINT inventory_log_type_check;
-ALTER TABLE inventory_log ADD CONSTRAINT inventory_log_type_check CHECK (type IN ('batch_in', 'order_out', 'cancellation', 'wholesale_out', 'sample_out', 'damaged', 'return_in', 'adjustment_gain', 'adjustment_loss'));
-```
-Plus the `issue_invoice_number`, `dashboard_stats`, `claim_marketing_emails`, `confirm_delivery` functions, the complaints table with sequence, the updated trigger, the indexes, and the unique tracking number index.
-
-## Status constraint — includes `expired` for abandoned checkout sessions
-Valid values: `pending`, `confirmed`, `shipped`, `delivered`, `cancelled`, `expired`
-```sql
-ALTER TABLE orders DROP CONSTRAINT orders_status_check;
-ALTER TABLE orders ADD CONSTRAINT orders_status_check
-  CHECK (status IN ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired'));
-```
-
-## Setting up inventory on an existing database
-Run the full `supabase-schema.sql` on a fresh DB. On an existing DB that already has the inventory tables (partial run), run only the functions + trigger block — `CREATE POLICY` will error with "already exists" if tables are there.
-```sql
-ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS before_quantity integer;
-ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS after_quantity integer;
-```
+## Setting up the database
+Apply migrations from `supabase/migrations/` in filename order — see that directory's `README.md` for the workflow. The initial schema migration (`20260420120000_initial_schema.sql`) is the first file; subsequent schema changes are separate migration files. Never edit an applied migration, always add a new one.

@@ -18,6 +18,8 @@ npm run format                  # Prettier
 
 Local Stripe testing requires `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
 
+Database schema is managed via migrations in `supabase/migrations/` — see that directory's `README.md` for the workflow. Never edit an applied migration; write a new one.
+
 ## Architecture
 
 **Next.js 16 + Supabase + Stripe** e-commerce app for a Bulgarian protein bar brand (Egg Origin). Bulgarian-language UI, EUR pricing.
