@@ -303,6 +303,27 @@ export default function CheckoutPage() {
         return
       }
 
+      // Insufficient stock for a specific product — raw RPC error exposes SKU
+      // codes, so the server translates to a sentinel + product name.
+      if (message.startsWith("INV_INSUFFICIENT:")) {
+        const productName = message.slice("INV_INSUFFICIENT:".length).trim()
+        setError(
+          `Не достига наличност от "${productName}". Моля, намалете количеството или опитайте по-късно.`,
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+      if (message.startsWith("INV_FAILED:")) {
+        const productName = message.slice("INV_FAILED:".length).trim()
+        setError(
+          `Грешка при резервация на "${productName}". Моля, опитайте отново след малко.`,
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
       const friendlyMessages: Record<string, string> = {
         "Invalid phone format": "Моля, въведете валиден телефонен номер.",
         "Invalid email format": "Моля, въведете валиден имейл адрес.",

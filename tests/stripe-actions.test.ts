@@ -978,12 +978,40 @@ describe("inventory reservation", () => {
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
       })
-    ).rejects.toThrow("Insufficient stock")
+    // Error is translated to a sentinel that doesn't leak the SKU code to the UI.
+    // The sentinel includes the product name so the client can render a
+    // Bulgarian message.
+    ).rejects.toThrow(/^INV_INSUFFICIENT:/)
 
     // Order must be cleaned up
     expect(mockSupabase.delete).toHaveBeenCalled()
     // Stripe session must NOT have been created
     expect(stripe.checkout.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it("insufficient-stock error message carries the product name, not the SKU", async () => {
+    const fakeOrder = { id: "order-inv-message" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+    mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: { message: "Insufficient stock for SKU EGO-DC-12. Available: 0, requested: 1" } }))
+
+    let caught: Error | null = null
+    try {
+      await createCheckoutSession({
+        cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+        clientSubtotal: singleCartSubtotal,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    } catch (err) {
+      caught = err as Error
+    }
+    expect(caught).toBeTruthy()
+    expect(caught!.message).not.toContain("EGO-DC-12")
+    expect(caught!.message).toContain("INV_INSUFFICIENT:")
+    // The PRODUCTS fixture has a Bulgarian-friendly name for this SKU; we
+    // assert the sentinel carries *some* product name, not the opaque SKU.
+    expect(caught!.message.slice("INV_INSUFFICIENT:".length).trim().length).toBeGreaterThan(0)
   })
 
   it("createCheckoutSession rolls back already-reserved items if a later item fails", async () => {

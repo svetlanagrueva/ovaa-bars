@@ -83,6 +83,12 @@ interface CODOrderData {
 // show a "prices changed — please review" banner, re-enable the submit button).
 export const PRICE_DRIFT_ERROR = "PRICE_DRIFT"
 
+// Sentinel prefixes for inventory reservation failures. The UI detects these
+// and renders product-named Bulgarian messages — the raw RPC error messages
+// include internal SKU codes ("EGO-DC-12") which shouldn't leak to customers.
+export const INV_INSUFFICIENT_ERROR = "INV_INSUFFICIENT"
+export const INV_FAILED_ERROR = "INV_FAILED"
+
 const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office"]
 const MAX_FIELD_LENGTH = 500
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -243,12 +249,15 @@ async function insertOrderItems(
 
 // Reserve inventory for all items in an order. Rolls back already-reserved
 // items if any single reservation fails (e.g. insufficient stock mid-loop).
+// Errors from the RPC are re-thrown with a sentinel prefix the UI can detect;
+// the raw RPC message ("Insufficient stock for SKU EGO-DC-12. Available: ...")
+// would leak internal SKU codes and English phrasing to the shopper.
 async function reserveInventoryForOrder(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  items: Array<{ sku: string; quantity: number }>,
+  items: Array<{ sku: string; quantity: number; productName: string }>,
   orderId: string,
 ): Promise<void> {
-  const reserved: Array<{ sku: string; quantity: number }> = []
+  const reserved: Array<{ sku: string; quantity: number; productName: string }> = []
   try {
     for (const item of items) {
       const { error } = await supabase.rpc("reserve_inventory", {
@@ -256,7 +265,14 @@ async function reserveInventoryForOrder(
         p_quantity: item.quantity,
         p_order_id: orderId,
       })
-      if (error) throw new Error(error.message)
+      if (error) {
+        const raw = error.message ?? ""
+        if (raw.includes("Insufficient stock for SKU")) {
+          throw new Error(`${INV_INSUFFICIENT_ERROR}: ${item.productName}`)
+        }
+        console.error(`Reserve failed for order ${orderId}:`, sanitizeError(error))
+        throw new Error(`${INV_FAILED_ERROR}: ${item.productName}`)
+      }
       reserved.push(item)
     }
   } catch (err) {
@@ -267,7 +283,7 @@ async function reserveInventoryForOrder(
         p_order_id: orderId,
       })
       if (restoreErr) {
-        console.error(`CRITICAL: Failed to restore inventory for ${r.sku} during rollback of order ${orderId}:`, restoreErr)
+        console.error(`CRITICAL: Failed to restore inventory for ${r.sku} during rollback of order ${orderId}:`, sanitizeError(restoreErr))
       }
     }
     throw err
@@ -620,7 +636,7 @@ export async function createCheckoutSession(data: CheckoutData) {
   try {
     await reserveInventoryForOrder(
       supabase,
-      validatedItems.map((i) => ({ sku: i.product.sku, quantity: i.quantity })),
+      validatedItems.map((i) => ({ sku: i.product.sku, quantity: i.quantity, productName: i.productName })),
       order.id,
     )
   } catch (inventoryErr) {
@@ -919,7 +935,7 @@ export async function createCODOrder(data: CODOrderData) {
   try {
     await reserveInventoryForOrder(
       supabase,
-      validatedItems.map((i) => ({ sku: i.product.sku, quantity: i.quantity })),
+      validatedItems.map((i) => ({ sku: i.product.sku, quantity: i.quantity, productName: i.productName })),
       order.id,
     )
   } catch (inventoryErr) {
