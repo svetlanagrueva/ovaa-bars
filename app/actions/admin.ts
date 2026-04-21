@@ -873,7 +873,7 @@ export async function recordCodSettlement(
     courierPppRef?: string
     settlementRef?: string
     settlementAmount?: number
-    paidAt?: string
+    paidAt: string
   },
 ): Promise<{ success: true }> {
   await requireAdmin()
@@ -892,11 +892,15 @@ export async function recordCodSettlement(
       throw new Error("Получената сума трябва да е положително число")
     }
   }
-  if (data.paidAt) {
-    const parsed = new Date(data.paidAt)
-    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
-    if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
+  // Date is required: the admin must affirm WHEN the courier transferred the
+  // money, not accept an implicit "today" that could silently be wrong (e.g.
+  // settlement actually arrived 2 weeks ago but admin only recorded it today).
+  if (!data.paidAt || !data.paidAt.trim()) {
+    throw new Error("Датата на плащане е задължителна")
   }
+  const parsed = new Date(data.paidAt)
+  if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
+  if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
 
   const supabase = await createClient()
 
@@ -913,20 +917,14 @@ export async function recordCodSettlement(
     throw new Error("Плащане може да се запише само за доставени поръчки")
   }
 
-  let paidAtValue: string
-  if (data.paidAt) {
-    // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
-    // other events (creation, delivery) that happened earlier that day
-    const d = new Date(data.paidAt)
-    d.setUTCHours(23, 59, 59, 0)
-    // Settlement cannot be before delivery
-    if (order.delivered_at && d < new Date(order.delivered_at)) {
-      throw new Error("Датата на плащане не може да е преди доставката")
-    }
-    paidAtValue = d.toISOString()
-  } else {
-    paidAtValue = new Date().toISOString()
+  // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
+  // other events (creation, delivery) that happened earlier that day.
+  const paidDate = new Date(data.paidAt)
+  paidDate.setUTCHours(23, 59, 59, 0)
+  if (order.delivered_at && paidDate < new Date(order.delivered_at)) {
+    throw new Error("Датата на плащане не може да е преди доставката")
   }
+  const paidAtValue = paidDate.toISOString()
 
   const updateData: Record<string, unknown> = {
     paid_at: paidAtValue,

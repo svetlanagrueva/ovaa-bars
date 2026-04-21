@@ -977,13 +977,13 @@ describe("admin actions", () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
-      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Unauthorized")
+      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
-      await expect(recordCodSettlement("bad-id", {})).rejects.toThrow("Invalid order ID")
+      await expect(recordCodSettlement("bad-id", { paidAt: "2026-04-20" })).rejects.toThrow("Invalid order ID")
     })
 
     it("rejects non-COD orders", async () => {
@@ -993,7 +993,7 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("наложен платеж")
+      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("наложен платеж")
     })
 
     it("rejects settlement for non-delivered orders", async () => {
@@ -1003,14 +1003,14 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("доставени поръчки")
+      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("доставени поръчки")
     })
 
     it("rejects ППП ref over 100 chars", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { courierPppRef: "x".repeat(101) })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", courierPppRef: "x".repeat(101) })
       ).rejects.toThrow("ППП референцията е твърде дълга")
     })
 
@@ -1018,7 +1018,7 @@ describe("admin actions", () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { settlementRef: "x".repeat(101) })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementRef: "x".repeat(101) })
       ).rejects.toThrow("Референцията на превода е твърде дълга")
     })
 
@@ -1031,7 +1031,7 @@ describe("admin actions", () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { settlementAmount: 0 })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 0 })
       ).rejects.toThrow("положително число")
 
       mockSupabase.single.mockResolvedValueOnce({
@@ -1040,7 +1040,7 @@ describe("admin actions", () => {
       })
 
       await expect(
-        recordCodSettlement(validOrderId, { settlementAmount: -100 })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: -100 })
       ).rejects.toThrow("положително число")
     })
 
@@ -1053,7 +1053,7 @@ describe("admin actions", () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { settlementAmount: 49.50 })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 49.50 })
       ).rejects.toThrow("положително число")
     })
 
@@ -1065,6 +1065,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       const result = await recordCodSettlement(validOrderId, {
+        paidAt: "2026-04-20",
         courierPppRef: "PPP-12345",
         settlementRef: "BT-2026-04-001",
         settlementAmount: 4850,
@@ -1088,7 +1089,7 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      const result = await recordCodSettlement(validOrderId, {})
+      const result = await recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })
 
       expect(result).toEqual({ success: true })
       expect(mockSupabase.update).toHaveBeenCalledWith(
@@ -1110,7 +1111,15 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await expect(recordCodSettlement(validOrderId, {})).rejects.toThrow("Поръчката не е намерена")
+      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("requires paid_at — rejects when missing", async () => {
+      const { recordCodSettlement } = await import("@/app/actions/admin")
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recordCodSettlement(validUUID, { paidAt: "" } as any)
+      ).rejects.toThrow("Датата на плащане е задължителна")
     })
 
     it("rejects future paid_at date", async () => {
@@ -1175,7 +1184,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { settlementAmount: 5000 })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 5000 })
       ).rejects.toThrow("Плащането вече е записано")
     })
 
@@ -1196,7 +1205,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { settlementAmount: 5000 })
+        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 5000 })
       ).rejects.toThrow("Грешка при записване на плащане")
     })
   })

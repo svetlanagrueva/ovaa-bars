@@ -54,7 +54,7 @@ export default function AdminOrderDetailPage({
   const [settlementPppRef, setSettlementPppRef] = useState("")
   const [settlementRef, setSettlementRef] = useState("")
   const [settlementAmountInput, setSettlementAmountInput] = useState("")
-  const [settlementPaidAt, setSettlementPaidAt] = useState("")
+  const [settlementPaidAt, setSettlementPaidAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
 
@@ -864,16 +864,17 @@ export default function AdminOrderDetailPage({
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане</label>
+                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане *</label>
                     <Input
                       type="date"
+                      required
                       value={settlementPaidAt}
                       min={order.delivered_at ? new Date(order.delivered_at).toISOString().slice(0, 10) : undefined}
                       max={new Date().toISOString().slice(0, 10)}
                       onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
                       className="h-8"
                     />
-                    <p className="mt-1 text-[10px] text-muted-foreground">Дата на банковия превод от куриера. Ако е празно, ще се запише днешна дата.</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">Действителната дата на банковия превод от куриера — не днешна дата по подразбиране.</p>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
@@ -911,7 +912,7 @@ export default function AdminOrderDetailPage({
                 <div className="flex items-center gap-3">
                   <Button
                     size="sm"
-                    disabled={settlementLoading}
+                    disabled={settlementLoading || !settlementPaidAt}
                     onClick={async () => {
                       setSettlementLoading(true)
                       setActionError("")
@@ -922,7 +923,7 @@ export default function AdminOrderDetailPage({
                           courierPppRef: settlementPppRef.trim() || undefined,
                           settlementRef: settlementRef.trim() || undefined,
                           settlementAmount: amountCents,
-                          paidAt: settlementPaidAt || undefined,
+                          paidAt: settlementPaidAt,
                         })
                         const updated = await getOrder(id)
                         setOrder(updated)
