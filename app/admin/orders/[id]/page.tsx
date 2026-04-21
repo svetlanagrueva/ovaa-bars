@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, recordComplaint, resolveComplaint, getOrderComplaints, type OrderDetail, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -77,6 +77,18 @@ export default function AdminOrderDetailPage({
   const [resolveResolution, setResolveResolution] = useState("")
   const [resolveStatus, setResolveStatus] = useState<"resolved" | "rejected">("resolved")
   const [resolveLoading, setResolveLoading] = useState(false)
+
+  // Post-shipment outcome state
+  type OutcomeType = "" | "delivery_refused" | "package_lost" | "returned" | "recalled"
+  const [outcomeType, setOutcomeType] = useState<OutcomeType>("")
+  const [outcomeNote, setOutcomeNote] = useState("")
+  const [outcomeCourierRef, setOutcomeCourierRef] = useState("")
+  const [outcomeReturnRef, setOutcomeReturnRef] = useState("")
+  const [outcomeRecallRef, setOutcomeRecallRef] = useState("")
+  const [outcomeRecallReason, setOutcomeRecallReason] = useState("")
+  const [outcomeCondition, setOutcomeCondition] = useState<"sellable" | "damaged" | "">("")
+  const [outcomeLoading, setOutcomeLoading] = useState(false)
+  const [outcomeSaved, setOutcomeSaved] = useState(false)
 
   useEffect(() => {
     getOrder(id)
@@ -1130,6 +1142,145 @@ export default function AdminOrderDetailPage({
           </div>
         </CardContent>
       </Card>
+
+      {/* Post-shipment outcome events — only for shipped/delivered orders */}
+      {(order.status === "shipped" || order.status === "delivered") && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle className="text-base">Следдоставни събития</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Докладвайте изключение, без да променяте статуса на поръчката. Статусът остава какъвто е — паричните и физическите потоци се записват отделно (възстановяване, връщане в склада, брак).
+            </p>
+            <div className="space-y-2">
+              <select
+                value={outcomeType}
+                onChange={(e) => {
+                  setOutcomeType(e.target.value as OutcomeType)
+                  setOutcomeSaved(false)
+                }}
+                className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+              >
+                <option value="">Тип събитие...</option>
+                <option value="delivery_refused">Отказана доставка</option>
+                <option value="package_lost">Изгубена пратка</option>
+                <option value="returned">Върнат продукт</option>
+                <option value="recalled">Изтеглен продукт</option>
+              </select>
+
+              {outcomeType === "package_lost" && (
+                <Input
+                  value={outcomeCourierRef}
+                  onChange={(e) => setOutcomeCourierRef(e.target.value)}
+                  placeholder="Референция на куриерска претенция *"
+                  className="h-8"
+                  maxLength={100}
+                />
+              )}
+              {outcomeType === "delivery_refused" && (
+                <Input
+                  value={outcomeCourierRef}
+                  onChange={(e) => setOutcomeCourierRef(e.target.value)}
+                  placeholder="Референция на куриера (незадължително)"
+                  className="h-8"
+                  maxLength={100}
+                />
+              )}
+              {outcomeType === "returned" && (
+                <>
+                  <Input
+                    value={outcomeReturnRef}
+                    onChange={(e) => setOutcomeReturnRef(e.target.value)}
+                    placeholder="Референция на връщане *"
+                    className="h-8"
+                    maxLength={100}
+                  />
+                  <select
+                    value={outcomeCondition}
+                    onChange={(e) => setOutcomeCondition(e.target.value as "sellable" | "damaged" | "")}
+                    className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                  >
+                    <option value="">Състояние *</option>
+                    <option value="sellable">Годно за продажба</option>
+                    <option value="damaged">Негодно (брак)</option>
+                  </select>
+                </>
+              )}
+              {outcomeType === "recalled" && (
+                <>
+                  <Input
+                    value={outcomeRecallRef}
+                    onChange={(e) => setOutcomeRecallRef(e.target.value)}
+                    placeholder="Референция на изтегляне *"
+                    className="h-8"
+                    maxLength={100}
+                  />
+                  <Input
+                    value={outcomeRecallReason}
+                    onChange={(e) => setOutcomeRecallReason(e.target.value)}
+                    placeholder="Причина за изтегляне *"
+                    className="h-8"
+                    maxLength={500}
+                  />
+                </>
+              )}
+
+              <textarea
+                value={outcomeNote}
+                onChange={(e) => setOutcomeNote(e.target.value)}
+                placeholder="Описание (поне 10 символа) *"
+                rows={3}
+                maxLength={2000}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={outcomeLoading || !outcomeType || outcomeNote.trim().length < 10}
+                onClick={async () => {
+                  if (!outcomeType) return
+                  setOutcomeLoading(true)
+                  setOutcomeSaved(false)
+                  setActionError("")
+                  try {
+                    await recordOrderOutcome(id, {
+                      outcomeType,
+                      note: outcomeNote.trim(),
+                      courierRef: outcomeCourierRef.trim() || undefined,
+                      returnRef: outcomeReturnRef.trim() || undefined,
+                      recallRef: outcomeRecallRef.trim() || undefined,
+                      recallReason: outcomeRecallReason.trim() || undefined,
+                      condition: outcomeCondition || undefined,
+                    })
+                    setOutcomeSaved(true)
+                    setOutcomeType("")
+                    setOutcomeNote("")
+                    setOutcomeCourierRef("")
+                    setOutcomeReturnRef("")
+                    setOutcomeRecallRef("")
+                    setOutcomeRecallReason("")
+                    setOutcomeCondition("")
+                    // Reload order so the new admin note shows in the timeline.
+                    const refreshed = await getOrder(id)
+                    setOrder(refreshed)
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : "Грешка при записване на събитие")
+                  } finally {
+                    setOutcomeLoading(false)
+                  }
+                }}
+              >
+                {outcomeLoading ? "Записване..." : "Запиши събитие"}
+              </Button>
+              {outcomeSaved && (
+                <p className="text-xs text-green-700">Събитието е записано в историята на поръчката.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Shipment success modal */}
       {shipmentSuccess && (

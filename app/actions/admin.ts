@@ -1075,6 +1075,150 @@ export async function recordRefund(
 
 // ─── Complaints register (ЗЗП чл. 127) ──────────────────────────────────────
 
+// ─── Post-shipment outcome events ───────────────────────────────────────
+// Records a domain event (delivery_refused / package_lost / returned / recalled)
+// via the record_order_outcome RPC and appends a human-readable summary to
+// admin_notes so the event appears in the existing order timeline UI.
+// The main order status is NOT rewound — per the three-layer design
+// (status / refund / inventory + outcome events), post-shipment exceptions
+// are recorded alongside the status, not in place of it.
+
+const OUTCOME_TYPES = ["delivery_refused", "package_lost", "returned", "recalled"] as const
+type OutcomeType = (typeof OUTCOME_TYPES)[number]
+
+const OUTCOME_LABELS: Record<OutcomeType, string> = {
+  delivery_refused: "Отказана доставка",
+  package_lost: "Изгубена пратка",
+  returned: "Върнат продукт",
+  recalled: "Изтеглен продукт",
+}
+
+export async function recordOrderOutcome(
+  orderId: string,
+  data: {
+    outcomeType: OutcomeType
+    note: string
+    // Type-specific fields. Validated per outcomeType below.
+    courierRef?: string
+    returnRef?: string
+    recallRef?: string
+    recallReason?: string
+    condition?: "sellable" | "damaged"
+    expectedReturnAt?: string
+    confirmedLostAt?: string
+    receivedAt?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  if (!OUTCOME_TYPES.includes(data.outcomeType)) {
+    throw new Error("Невалиден тип събитие")
+  }
+
+  const trimmedNote = data.note?.trim()
+  if (!trimmedNote || trimmedNote.length < 10) {
+    throw new Error("Описанието трябва да бъде поне 10 символа")
+  }
+  if (trimmedNote.length > 2000) {
+    throw new Error("Описанието е твърде дълго")
+  }
+
+  // Type-specific required-field validation.
+  const courierRef = data.courierRef?.trim() || null
+  const returnRef = data.returnRef?.trim() || null
+  const recallRef = data.recallRef?.trim() || null
+  const recallReason = data.recallReason?.trim() || null
+
+  if (data.outcomeType === "package_lost" && !courierRef) {
+    throw new Error("Референция на куриерска претенция е задължителна")
+  }
+  if (data.outcomeType === "returned") {
+    if (!returnRef) throw new Error("Референция на връщане е задължителна")
+    if (data.condition !== "sellable" && data.condition !== "damaged") {
+      throw new Error("Укажете състояние на върнатия продукт")
+    }
+  }
+  if (data.outcomeType === "recalled") {
+    if (!recallRef) throw new Error("Референция на изтегляне е задължителна")
+    if (!recallReason) throw new Error("Причината за изтегляне е задължителна")
+  }
+
+  // Date validation helpers (ISO or YYYY-MM-DD).
+  const parseOptionalDate = (value: string | undefined, label: string): string | null => {
+    if (!value) return null
+    const date = new Date(value)
+    if (isNaN(date.getTime())) throw new Error(`Невалидна дата: ${label}`)
+    return date.toISOString()
+  }
+  const expectedReturnAt = parseOptionalDate(data.expectedReturnAt, "очаквано връщане")
+  const confirmedLostAt = parseOptionalDate(data.confirmedLostAt, "изгубване")
+  const receivedAt = parseOptionalDate(data.receivedAt, "получаване")
+
+  const supabase = await createClient()
+
+  // Order must exist and be in a post-shipment state — outcomes don't apply
+  // to pending/confirmed orders (nothing's been shipped yet) or terminal
+  // cancelled/expired (use normal refund flow for any late reversal).
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, status")
+    .eq("id", orderId)
+    .single()
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.status !== "shipped" && order.status !== "delivered") {
+    throw new Error(`Това събитие може да се докладва само след изпращане (текущ статус: ${order.status})`)
+  }
+
+  const payload: Record<string, unknown> = { note: trimmedNote }
+  if (courierRef) payload.courier_ref = courierRef
+  if (returnRef) payload.return_ref = returnRef
+  if (recallRef) payload.recall_ref = recallRef
+  if (recallReason) payload.recall_reason = recallReason
+  if (data.condition) payload.condition = data.condition
+  if (expectedReturnAt) payload.expected_return_at = expectedReturnAt
+  if (confirmedLostAt) payload.confirmed_lost_at = confirmedLostAt
+  if (receivedAt) payload.received_at = receivedAt
+
+  const { error: rpcError } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: data.outcomeType,
+    p_payload: payload,
+    p_actor: "admin",
+  })
+  if (rpcError) {
+    console.error("Failed to record order outcome:", rpcError)
+    throw new Error("Грешка при записване на събитие")
+  }
+
+  // Bridge to the existing timeline until the admin-panel timeline reads from
+  // order_audit_events directly (separate review item). A human-readable
+  // summary as an admin note makes the outcome visible immediately.
+  const summaryParts: string[] = [OUTCOME_LABELS[data.outcomeType]]
+  if (data.outcomeType === "returned" && data.condition) {
+    summaryParts.push(data.condition === "sellable" ? "годно" : "негодно")
+  }
+  if (returnRef) summaryParts.push(`реф. ${returnRef}`)
+  if (recallRef) summaryParts.push(`реф. ${recallRef}`)
+  if (courierRef) summaryParts.push(`куриер ${courierRef}`)
+  const summaryHeader = summaryParts.join(" — ")
+  const noteBody = recallReason ? `${recallReason}\n\n${trimmedNote}` : trimmedNote
+  const fullNote = `[${summaryHeader}] ${noteBody}`
+
+  const { error: noteError } = await supabase.rpc("add_admin_note", {
+    p_order_id: orderId,
+    p_text: fullNote.slice(0, 2000),
+  })
+  if (noteError) {
+    // Audit event already recorded — the note failure is non-fatal.
+    console.error("Failed to append admin note for outcome:", noteError)
+  }
+
+  return { success: true }
+}
+
 export async function recordComplaint(
   orderId: string,
   data: {

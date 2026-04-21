@@ -2028,6 +2028,106 @@ describe("admin actions", () => {
     })
   })
 
+  describe("recordOrderOutcome", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+
+      await expect(
+        recordOrderOutcome(validOrderId, {
+          outcomeType: "delivery_refused",
+          note: "Customer refused at door",
+        }),
+      ).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects unknown outcome type", async () => {
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recordOrderOutcome(validOrderId, { outcomeType: "bogus" as any, note: "x".repeat(20) }),
+      ).rejects.toThrow("Невалиден тип събитие")
+    })
+
+    it("rejects note shorter than 10 chars", async () => {
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+
+      await expect(
+        recordOrderOutcome(validOrderId, { outcomeType: "delivery_refused", note: "short" }),
+      ).rejects.toThrow("поне 10 символа")
+    })
+
+    it("rejects package_lost without courier ref", async () => {
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+
+      await expect(
+        recordOrderOutcome(validOrderId, {
+          outcomeType: "package_lost",
+          note: "Courier confirmed the package is lost in transit",
+        }),
+      ).rejects.toThrow("куриерска претенция")
+    })
+
+    it("rejects returned without condition", async () => {
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+
+      await expect(
+        recordOrderOutcome(validOrderId, {
+          outcomeType: "returned",
+          note: "Customer returned the goods unopened",
+          returnRef: "RET-42",
+        }),
+      ).rejects.toThrow("състояние")
+    })
+
+    it("rejects outcome for orders not in shipped/delivered state", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "pending" },
+        error: null,
+      })
+
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+      await expect(
+        recordOrderOutcome(validOrderId, {
+          outcomeType: "delivery_refused",
+          note: "Customer refused at the door",
+        }),
+      ).rejects.toThrow("може да се докладва само след изпращане")
+    })
+
+    it("records delivery_refused on a shipped order", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "shipped" },
+        error: null,
+      })
+      const rpcSpy = vi.fn(() => Promise.resolve({ data: null, error: null }))
+      mockSupabase.rpc = rpcSpy
+
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+      const result = await recordOrderOutcome(validOrderId, {
+        outcomeType: "delivery_refused",
+        note: "Customer refused at the door; package being returned",
+        courierRef: "RETURN-ABC",
+      })
+
+      expect(result).toEqual({ success: true })
+      // First RPC: record_order_outcome
+      expect(rpcSpy).toHaveBeenNthCalledWith(1, "record_order_outcome", expect.objectContaining({
+        p_order_id: validOrderId,
+        p_outcome_type: "delivery_refused",
+        p_payload: expect.objectContaining({ note: expect.stringContaining("Customer refused") }),
+      }))
+      // Second RPC: add_admin_note (the bridge summary)
+      expect(rpcSpy).toHaveBeenNthCalledWith(2, "add_admin_note", expect.objectContaining({
+        p_order_id: validOrderId,
+        p_text: expect.stringContaining("Отказана доставка"),
+      }))
+    })
+  })
+
   describe("recordComplaint", () => {
     const validOrderId = validUUID
 
