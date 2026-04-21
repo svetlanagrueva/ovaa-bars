@@ -243,6 +243,8 @@ export default function CheckoutPage() {
           }
         : undefined
 
+      const clientSubtotal = totalPrice
+
       if (paymentMethod === "cod") {
         const result = await createCODOrder({
           cartItems,
@@ -254,6 +256,7 @@ export default function CheckoutPage() {
           speedyOffice,
           promoCode: appliedPromo?.code,
           marketingConsent,
+          clientSubtotal,
         })
 
         if (result.success) {
@@ -272,6 +275,7 @@ export default function CheckoutPage() {
           speedyOffice,
           promoCode: appliedPromo?.code,
           marketingConsent,
+          clientSubtotal,
         })
 
         if (result.url) {
@@ -282,6 +286,23 @@ export default function CheckoutPage() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : ""
+
+      // Price drift — resync cart prices, inform the user, let them confirm again.
+      if (message.startsWith("PRICE_DRIFT")) {
+        try {
+          await useCartStore.getState().syncPrices()
+        } catch {
+          // syncPrices is fail-soft; the new prices will still be picked up
+          // on next render via /api/prices.
+        }
+        setError(
+          "Цените са обновени. Прегледайте сумата на поръчката в количката и продължете отново.",
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
       const friendlyMessages: Record<string, string> = {
         "Invalid phone format": "Моля, въведете валиден телефонен номер.",
         "Invalid email format": "Моля, въведете валиден имейл адрес.",

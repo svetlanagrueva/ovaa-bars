@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
-import { validCustomerInfo, validCartItems, singleCartItem, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
+import { validCustomerInfo, validCartItems, validCartSubtotal, singleCartItem, singleCartSubtotal, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
 
 // Mock Stripe
 vi.mock("@/lib/stripe", () => ({
@@ -70,6 +70,7 @@ describe("createCheckoutSession", () => {
 
     const result = await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -91,6 +92,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "nonexistent", quantity: 1 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -102,6 +104,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 100 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -113,6 +116,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 0 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -124,11 +128,24 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Cart is empty")
+  })
+
+  it("rejects with PRICE_DRIFT when client subtotal differs from server", async () => {
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal - 100, // client shows 1 euro less
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    ).rejects.toThrow("PRICE_DRIFT")
   })
 
   it("throws when database insert fails", async () => {
@@ -140,6 +157,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -155,6 +173,7 @@ describe("createCheckoutSession", () => {
     // 2 boxes at 25.70 = 51.40 € → free shipping
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -172,6 +191,7 @@ describe("createCheckoutSession", () => {
     // 1 box = 25.70 € < 30 € threshold, but test checks carrier name not shipping
     await createCheckoutSession({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -193,6 +213,7 @@ describe("createCheckoutSession", () => {
 
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -413,6 +434,7 @@ describe("createCODOrder", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -433,6 +455,7 @@ describe("createCODOrder", () => {
 
     await createCODOrder({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -447,6 +470,7 @@ describe("createCODOrder", () => {
     await expect(
       createCODOrder({
         cartItems: [{ productId: "nonexistent", quantity: 1 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
         econtOffice: validEcontOffice,
@@ -466,6 +490,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "invalid-method",
       })
@@ -476,6 +501,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, firstName: "" },
         deliveryMethod: "speedy-office",
       })
@@ -486,6 +512,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, email: "not-an-email" },
         deliveryMethod: "speedy-office",
       })
@@ -496,6 +523,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, phone: "abc" },
         deliveryMethod: "speedy-office",
       })
@@ -506,6 +534,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1.5 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -517,6 +546,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, address: "" },
         deliveryMethod: "speedy-address",
       })
@@ -527,6 +557,7 @@ describe("input validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, address: "" },
         deliveryMethod: "speedy-address",
       })
@@ -537,6 +568,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, notes: "x".repeat(501) },
         deliveryMethod: "speedy-office",
       })
@@ -547,6 +579,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, lastName: "" },
         deliveryMethod: "speedy-office",
       })
@@ -555,6 +588,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, city: "" },
         deliveryMethod: "speedy-address",
       })
@@ -566,6 +600,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, city: "" },
         deliveryMethod: "speedy-office",
         speedyOffice: { id: 1, name: "Test", city: "Sofia", fullAddress: "Sofia, Test" },
@@ -577,6 +612,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
       })
@@ -587,6 +623,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
       })
@@ -632,6 +669,7 @@ describe("invoice validation", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -647,6 +685,7 @@ describe("invoice validation", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -668,6 +707,7 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -688,6 +728,7 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -708,6 +749,7 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -728,6 +770,7 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -748,6 +791,7 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -770,6 +814,7 @@ describe("invoice validation", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -801,6 +846,7 @@ describe("createCODOrder — additional", () => {
 
     await createCODOrder({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -818,6 +864,7 @@ describe("createCODOrder — additional", () => {
 
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -846,6 +893,7 @@ describe("createCODOrder — additional", () => {
 
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -862,6 +910,7 @@ describe("createCODOrder — additional", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -876,6 +925,7 @@ describe("createCODOrder — additional", () => {
     // 2 boxes = 51.40 EUR > 30 EUR threshold → free office shipping
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -902,6 +952,7 @@ describe("inventory reservation", () => {
 
     await createCheckoutSession({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }],
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -922,6 +973,7 @@ describe("inventory reservation", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+        clientSubtotal: singleCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -955,6 +1007,7 @@ describe("inventory reservation", () => {
           { productId: "egg-origin-dark-chocolate-box", quantity: 1 },
           { productId: "egg-origin-white-chocolate-raspberry-box", quantity: 1 },
         ],
+        clientSubtotal: singleCartSubtotal * 2, // both products are 2570
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -974,6 +1027,7 @@ describe("inventory reservation", () => {
 
     await createCODOrder({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,

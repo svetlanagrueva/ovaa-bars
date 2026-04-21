@@ -61,6 +61,9 @@ interface CheckoutData {
   speedyOffice?: SpeedyOfficeData
   promoCode?: string
   marketingConsent?: boolean
+  // Client-visible cart subtotal (pre-promo, pre-shipping) in cents. Used to
+  // detect price drift between the cart UI and the server. See PRICE_DRIFT_ERROR.
+  clientSubtotal: number
 }
 
 interface CODOrderData {
@@ -73,7 +76,12 @@ interface CODOrderData {
   speedyOffice?: SpeedyOfficeData
   promoCode?: string
   marketingConsent?: boolean
+  clientSubtotal: number
 }
+
+// Sentinel error code the client can detect and react to (trigger syncPrices,
+// show a "prices changed — please review" banner, re-enable the submit button).
+export const PRICE_DRIFT_ERROR = "PRICE_DRIFT"
 
 const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office"]
 const MAX_FIELD_LENGTH = 500
@@ -512,6 +520,16 @@ export async function createCheckoutSession(data: CheckoutData) {
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
+
+  // Price drift guard: the client submits what it displayed at the moment the
+  // user clicked submit. If server-live prices differ (admin edited a sale,
+  // promotion expired, product price changed), reject before taking payment.
+  if (data.clientSubtotal !== subtotal) {
+    throw new Error(
+      `${PRICE_DRIFT_ERROR}: cart showed ${data.clientSubtotal} cents but server computed ${subtotal} cents`,
+    )
+  }
+
   const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
 
   // Apply promo code if provided
@@ -828,6 +846,13 @@ export async function createCODOrder(data: CODOrderData) {
     (sum, item) => sum + item.priceInCents * item.quantity,
     0
   )
+
+  if (data.clientSubtotal !== subtotal) {
+    throw new Error(
+      `${PRICE_DRIFT_ERROR}: cart showed ${data.clientSubtotal} cents but server computed ${subtotal} cents`,
+    )
+  }
+
   const shippingPrice = calculateShippingPrice(subtotal, deliveryMethod)
   const codFee = COD_FEE
 
