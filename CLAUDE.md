@@ -62,6 +62,7 @@ Zustand cart store (`lib/store/cart.ts`) with localStorage persistence. Syncs pr
 - **Supabase query builder is thenable, not a Promise**: Never chain `.catch()` on it. Always use `const { error } = await supabase.rpc(...)`.
 - **Admin notes are append-only JSONB**: `admin_notes` is `jsonb default '[]'`, each entry is `{text, created_at, author}`. `addAdminNote` calls the `add_admin_note` RPC which does atomic `jsonb ||` append — never fetch-modify-update the array from app code.
 - **PII-safe error logging**: when logging a Supabase error or any object that may contain user data, wrap it with `sanitizeError` from `@/lib/logger`. `console.error("Failed to X:", sanitizeError(err))` extracts only code/hint/name and redacts email + Bulgarian phone patterns from the message. Static-message + ID-only logs don't need it.
+- **Env var validation**: `instrumentation.ts` runs `checkEnvAtBoot()` from `lib/env.ts` at server startup. Hard-required vars (Supabase, Stripe secret + webhook secret, admin password, UNSUBSCRIBE_SECRET, CRON_SECRET) throw and abort boot. Soft-expected vars (Resend, seller info, courier creds) log at error level in prod / warn level in dev so Vercel logs surface setup gaps on first deploy. For per-call runtime use, `requireEnv(name)` throws a typed `MissingEnvError`.
 
 ## Testing
 
