@@ -47,7 +47,12 @@
   - **Client idempotency key**: the admin form generates one UUID per submission via `crypto.randomUUID()`. `recordRefund` checks it up-front — if a row already exists with that key (double-submit), returns the existing refund id without re-inserting. Key is regenerated after every successful save.
   - **Inventory on return**: the refund form includes a per-line "Връщане на стока" section. Each order item gets a quantity input + disposition select (`sellable` → `return_in`, `damaged` → `damaged`). Non-zero lines become `inventoryAdjustments` passed to `recordRefund`, which inserts corresponding `inventory_log` rows linked via `reference_type='return'`, `reference_id=<refund.id>`. Idempotency key on each inventory row is `<client_key>-<sku>-<disposition>` so retries are safe.
   - Annotation edits: `RefundRow` component allows admin to edit `reason` and `credit_note_ref` on any row (including webhook-created rows that arrived before the admin's action). `updateRefundAnnotation` does NOT emit an audit event — edits are not money movements.
-  - Webhook path: `refund.created` / `charge.refunded` converge on `upsertRefundFromStripe`; idempotent via `stripe_refund_id` unique partial index. Only `refund.status='succeeded'` is recorded. Fires `alertAdmin` email on new insert (none on idempotent no-op).
+  - Webhook path: `refund.created` / `refund.updated` / `refund.failed` / `charge.refunded` all converge on `upsertRefundFromStripe`, which branches by `refund.status`:
+    - `succeeded` → insert row (idempotent via `stripe_refund_id` unique partial index); fires `alertAdmin` on new insert only.
+    - `failed` → admin alert only (`⚠ Stripe refund FAILED — …` with `failure_reason` + Stripe dashboard link + "ACTION REQUIRED"); no DB write because phase 1 doesn't store rows for money that didn't move.
+    - `canceled` → informational alert; no DB write.
+    - `pending` / `requires_action` → silent skip; the eventual transition event (`refund.updated` or `refund.failed`) is what we act on.
+  - The Stripe webhook configuration must subscribe to all four refund events (`refund.created`, `refund.updated`, `refund.failed`, `charge.refunded`) for full coverage.
 
 ## Invoice Management
 - Invoices are generated externally via Microinvest Invoice Pro

@@ -23,23 +23,61 @@ function alertAdmin(subject: string, body: string) {
   })
 }
 
-// Idempotent upsert of a Stripe Refund into order_refunds.
-// Natural key: stripe_refund_id (unique partial index). First arrival wins,
-// subsequent arrivals (retries, cross-event overlap) are no-ops.
-async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
-  if (refund.status !== "succeeded") {
-    // pending/failed/canceled refunds don't get recorded — we only track
-    // money that actually moved.
-    return
-  }
-
+// Lookup helper: find the local order for a Stripe refund by its PaymentIntent.
+// Returns null (with a logged warning) when no matching order exists — the
+// refund is for a payment that didn't come through our system.
+async function findOrderForRefund(
+  refund: Stripe.Refund,
+): Promise<{ id: string } | null> {
   const paymentIntentId = typeof refund.payment_intent === "string"
     ? refund.payment_intent
     : refund.payment_intent?.id ?? null
   if (!paymentIntentId) {
     console.error(`Refund ${refund.id} has no payment_intent`)
+    return null
+  }
+  const supabase = await createClient()
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("stripe_payment_intent_id", paymentIntentId)
+    .single()
+  if (!order) {
+    console.error(`No order found for payment intent ${paymentIntentId} (refund ${refund.id})`)
+    return null
+  }
+  return order
+}
+
+// Idempotent upsert of a Stripe Refund into order_refunds.
+// Natural key: stripe_refund_id (unique partial index). First arrival wins,
+// subsequent arrivals (retries, cross-event overlap) are no-ops.
+//
+// Status handling:
+//   - succeeded: insert the row (money moved; record it).
+//   - failed: admin alert, no DB write — phase 1 doesn't store rows for
+//     money that never moved. Phase 2 can reconsider once we issue
+//     refunds ourselves and want to track pending lifecycle.
+//   - canceled: informational alert, no DB write.
+//   - pending / requires_action: silent skip. A subsequent refund.updated
+//     or refund.failed will transition state and we act then.
+async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
+  if (refund.status === "failed") {
+    await alertRefundFailed(refund)
     return
   }
+  if (refund.status === "canceled") {
+    await alertRefundCanceled(refund)
+    return
+  }
+  if (refund.status !== "succeeded") {
+    // pending / requires_action — skip silently; we act on the eventual
+    // transition event.
+    return
+  }
+
+  const order = await findOrderForRefund(refund)
+  if (!order) return
 
   const supabase = await createClient()
 
@@ -48,23 +86,10 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
   // first with the Stripe ID, webhook arrival has nothing to add.
   const { data: existing } = await supabase
     .from("order_refunds")
-    .select("id, order_id")
+    .select("id")
     .eq("stripe_refund_id", refund.id)
     .maybeSingle()
   if (existing) return
-
-  // Locate the order. Stripe is our source of the refund, but we need the
-  // local order to attach it to.
-  const { data: order } = await supabase
-    .from("orders")
-    .select("id")
-    .eq("stripe_payment_intent_id", paymentIntentId)
-    .single()
-
-  if (!order) {
-    console.error(`No order found for payment intent ${paymentIntentId} (refund ${refund.id})`)
-    return
-  }
 
   const { error: insertError } = await supabase
     .from("order_refunds")
@@ -91,10 +116,45 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
   alertAdmin(
     `Stripe refund recorded — order ${String(order.id).slice(0, 8)}`,
     `A refund of ${(refund.amount / 100).toFixed(2)} EUR was recorded for order ${order.id}.\n` +
-      `Payment intent: ${paymentIntentId}\n` +
       `Stripe refund: ${refund.id}\n` +
       `Reason (gateway): ${refund.reason ?? "n/a"}\n\n` +
       `Open the order in the admin panel to add the internal reason and credit-note reference.`,
+  )
+}
+
+// Admin alert when a Stripe refund fails (card declined the refund, bank
+// account closed for SEPA refunds, etc.). No DB write — phase 1 doesn't
+// store rows for money that didn't move. The admin needs to see this
+// quickly to take manual action (retry, contact customer, etc.).
+async function alertRefundFailed(refund: Stripe.Refund): Promise<void> {
+  const order = await findOrderForRefund(refund)
+  if (!order) return
+  alertAdmin(
+    `⚠ Stripe refund FAILED — order ${String(order.id).slice(0, 8)}`,
+    `A Stripe refund failed for order ${order.id}. ACTION REQUIRED.\n\n` +
+      `Stripe refund: ${refund.id}\n` +
+      `Amount: ${(refund.amount / 100).toFixed(2)} EUR\n` +
+      `Failure reason: ${refund.failure_reason ?? "n/a"}\n` +
+      `Status: ${refund.status}\n\n` +
+      `Check Stripe dashboard (https://dashboard.stripe.com/refunds/${refund.id}), ` +
+      `retry the refund if appropriate, or contact the customer to arrange ` +
+      `alternative settlement.`,
+  )
+}
+
+// Admin alert when a Stripe refund was canceled (typically: admin canceled
+// a pending refund before it processed). Informational, not urgent.
+async function alertRefundCanceled(refund: Stripe.Refund): Promise<void> {
+  const order = await findOrderForRefund(refund)
+  if (!order) return
+  alertAdmin(
+    `Stripe refund canceled — order ${String(order.id).slice(0, 8)}`,
+    `A Stripe refund was canceled for order ${order.id}.\n\n` +
+      `Stripe refund: ${refund.id}\n` +
+      `Amount: ${(refund.amount / 100).toFixed(2)} EUR\n` +
+      `Status: ${refund.status}\n\n` +
+      `No money moved. If a refund is still needed, initiate a new one ` +
+      `in the Stripe dashboard.`,
   )
 }
 
@@ -225,21 +285,33 @@ export async function POST(request: Request) {
     sendOrderConfirmationEmail(order)
   }
 
-  // ─── refund.created / charge.refunded ───────────────────────────────────
-  // Either event signals a refund. refund.created is the cleaner payload —
-  // it carries the full Refund object. charge.refunded is handled as a
-  // fallback for deployments subscribed to the older event; both converge
-  // on the same upsertRefund() path, idempotent via stripe_refund_id.
-  if (event.type === "refund.created" || event.type === "refund.updated") {
+  // ─── Refund lifecycle events ────────────────────────────────────────────
+  //
+  // refund.created         — initial refund event; usually status='succeeded'
+  //                          for card, 'pending' for SEPA/bank-debit
+  // refund.updated         — status transition (pending → succeeded|failed|canceled)
+  // refund.failed          — explicit failure event; also surfaces as
+  //                          refund.updated with status='failed'. Subscribing
+  //                          to both is defensive — handler dedupes internally.
+  // charge.refunded        — legacy fan-in event; newer Stripe API versions
+  //                          don't auto-expand charge.refunds so we list
+  //                          explicitly.
+  //
+  // All paths converge on upsertRefundFromStripe, which branches by
+  // refund.status: 'succeeded' → insert a row (idempotent via stripe_refund_id),
+  // 'failed' → admin alert, 'canceled' → informational alert, pending →
+  // silent skip (we'll act on the eventual transition).
+  if (
+    event.type === "refund.created" ||
+    event.type === "refund.updated" ||
+    event.type === "refund.failed"
+  ) {
     const refund = event.data.object as Stripe.Refund
     await upsertRefundFromStripe(refund)
   }
 
   if (event.type === "charge.refunded") {
     const charge = event.data.object as Stripe.Charge
-    // On newer Stripe API versions charge.refunds is not auto-expanded.
-    // List refunds explicitly and ingest each one. Upsert is idempotent, so
-    // overlap with refund.created is safe.
     const refunds = await stripe.refunds.list({ charge: charge.id, limit: 10 })
     for (const refund of refunds.data) {
       await upsertRefundFromStripe(refund)
