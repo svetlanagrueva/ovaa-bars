@@ -38,6 +38,7 @@ export function mockThenableResult(data: unknown, error: unknown = null, count: 
     neq: vi.fn(() => obj),
     is: vi.fn(() => obj),
     not: vi.fn(() => obj),
+    in: vi.fn(() => obj),
     ilike: vi.fn(() => obj),
     or: vi.fn(() => obj),
     gte: vi.fn(() => obj),

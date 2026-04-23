@@ -1849,6 +1849,70 @@ describe("admin actions", () => {
 
   describe("recordRefund", () => {
     const validOrderId = validUUID
+    const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    // recordRefund DB-call sequence:
+    //   1. order_refunds .eq(client_idempotency_key=…) — thenable array (idempotency check)
+    //   2. orders .single() — order row
+    //   3. order_refunds .eq(order_id=…) — thenable array (existing-sum query)
+    //   If inventoryAdjustments present:
+    //     4. order_items .eq(order_id=…) — thenable array
+    //     5. inventory_log .eq(order_id=…).in(type, …) — thenable array (prior returns)
+    //   N.  order_refunds insert → .single() — inserted row
+    //   N+. inventory_log insert (one per adjustment) — no return value read
+    function setupRecordRefundMocks(options: {
+      order?: Record<string, unknown>
+      existingByIdempotencyKey?: Array<{ id: string; order_id: string }>
+      existingRefunds?: Array<{ amount_cents: number }>
+      insertResult?: { data: { id: string } | null; error: unknown }
+      orderItems?: Array<{ sku: string; quantity: number }>
+      priorReturns?: Array<{ sku: string; quantity: number; type: string }>
+      includeAdjustmentQueries?: boolean
+    } = {}) {
+      const defaultOrder = {
+        id: validOrderId,
+        paid_at: "2026-04-01T00:00:00Z",
+        delivered_at: null,
+        total_amount: 5000,
+        needs_invoice: false,
+        invoice_number: null,
+        stripe_payment_intent_id: "pi_test",
+      }
+
+      // .single() queue — called for: orders fetch, then order_refunds insert.
+      mockSupabase.single
+        .mockResolvedValueOnce({ data: options.order ?? defaultOrder, error: null })
+        .mockResolvedValueOnce({
+          data: options.insertResult?.data ?? { id: "refund-id-xyz" },
+          error: options.insertResult?.error ?? null,
+        })
+
+      // .from() queue — consumed in call order. Non-thenable calls return
+      // mockSupabase so the chain can still call .single(), .insert(), etc.
+      const calls: unknown[] = [
+        // 1. idempotency check
+        mockThenableResult(options.existingByIdempotencyKey ?? [], null),
+        // 2. orders fetch (uses mockSupabase.single)
+        mockSupabase,
+        // 3. existing refunds sum
+        mockThenableResult(options.existingRefunds ?? [], null),
+      ]
+      if (options.includeAdjustmentQueries) {
+        // 4. order_items fetch
+        calls.push(mockThenableResult(options.orderItems ?? [], null))
+        // 5. inventory_log prior returns
+        calls.push(mockThenableResult(options.priorReturns ?? [], null))
+      }
+      // N. order_refunds insert (uses mockSupabase.single)
+      calls.push(mockSupabase)
+
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      }) as any
+    }
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1858,63 +1922,113 @@ describe("admin actions", () => {
         recordRefund(validOrderId, {
           refundAmount: 1000,
           refundReason: "Customer withdrawal",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Unauthorized")
     })
 
-    it("rejects invalid UUID", async () => {
+    it("rejects invalid order UUID", async () => {
       const { recordRefund } = await import("@/app/actions/admin")
-
       await expect(
         recordRefund("bad-id", {
           refundAmount: 1000,
           refundReason: "Test",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Невалиден формат на поръчка")
     })
 
+    it("rejects invalid clientIdempotencyKey UUID", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: "not-a-uuid",
+        }),
+      ).rejects.toThrow("Невалиден idempotency key")
+    })
+
     it("rejects non-positive refund amount", async () => {
       const { recordRefund } = await import("@/app/actions/admin")
-
       await expect(
         recordRefund(validOrderId, {
           refundAmount: 0,
           refundReason: "Test",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("положително цяло число")
     })
 
     it("rejects empty refund reason", async () => {
       const { recordRefund } = await import("@/app/actions/admin")
-
       await expect(
         recordRefund(validOrderId, {
           refundAmount: 1000,
           refundReason: "  ",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Причината за възстановяване е задължителна")
     })
 
     it("rejects invalid refund method", async () => {
       const { recordRefund } = await import("@/app/actions/admin")
-
       await expect(
         recordRefund(validOrderId, {
           refundAmount: 1000,
           refundReason: "Test",
           refundMethod: "cash" as any,
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Невалиден метод на възстановяване")
     })
 
+    it("rejects stripe method without stripe refund ID", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("Stripe refund ID е задължителен")
+    })
+
+    it("rejects malformed stripe refund ID", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          stripeRefundId: "not-a-stripe-id",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("Невалиден формат на Stripe refund ID")
+    })
+
+    it("rejects stripe refund ID on bank_transfer method", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          stripeRefundId: "re_abc123",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("нямат Stripe refund ID")
+    })
+
     it("rejects when order not paid", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: null, total_amount: 5000 },
-        error: null,
+      setupRecordRefundMocks({
+        order: { id: validOrderId, paid_at: null, total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
       })
 
       const { recordRefund } = await import("@/app/actions/admin")
@@ -1922,15 +2036,33 @@ describe("admin actions", () => {
         recordRefund(validOrderId, {
           refundAmount: 1000,
           refundReason: "Test",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("неплатена поръчка")
     })
 
-    it("rejects refund amount exceeding total", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false },
-        error: null,
+    it("rejects Stripe refund when order has no Stripe PaymentIntent", async () => {
+      setupRecordRefundMocks({
+        order: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Customer withdrawal",
+          refundMethod: "stripe",
+          stripeRefundId: "re_abc123",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("няма Stripe платеж")
+    })
+
+    it("rejects refund amount exceeding remaining balance", async () => {
+      setupRecordRefundMocks({
+        order: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        existingRefunds: [],
       })
 
       const { recordRefund } = await import("@/app/actions/admin")
@@ -1938,90 +2070,229 @@ describe("admin actions", () => {
         recordRefund(validOrderId, {
           refundAmount: 6000,
           refundReason: "Test",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
-      ).rejects.toThrow("не може да надвишава")
+      ).rejects.toThrow("остатъка")
     })
 
-    it("rejects Stripe refund when order has no Stripe PaymentIntent", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
-        error: null,
+    it("rejects when sum of existing + new refund exceeds total", async () => {
+      setupRecordRefundMocks({
+        order: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        existingRefunds: [{ amount_cents: 3000 }, { amount_cents: 1500 }],
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000, // 3000 + 1500 + 1000 = 5500 > 5000
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("остатъка")
+    })
+
+    it("requires creditNoteRef when invoice was issued", async () => {
+      setupRecordRefundMocks({
+        order: {
+          id: validOrderId,
+          paid_at: "2026-04-01T00:00:00Z",
+          total_amount: 5000,
+          needs_invoice: true,
+          invoice_number: "INV-001",
+          stripe_payment_intent_id: "pi_test",
+        },
+        existingRefunds: [],
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Customer withdrawal",
+          refundMethod: "stripe",
+          stripeRefundId: "re_abc123",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("кредитно известие")
+    })
+
+    it("records bank_transfer refund successfully with client key", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const insertSpy = vi.fn(() => mockSupabase)
+      mockSupabase.insert = insertSpy
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      const result = await recordRefund(validOrderId, {
+        refundAmount: 5000,
+        refundReason: "14-day withdrawal",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
+      })
+
+      expect(result).toEqual({ success: true, refundId: "refund-id-xyz", inventoryMovements: 0 })
+      expect(insertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          order_id: validOrderId,
+          amount_cents: 5000,
+          method: "bank_transfer",
+          source: "admin_ui",
+          reason: "14-day withdrawal",
+          stripe_refund_id: null,
+          client_idempotency_key: validClientKey,
+        }),
+      )
+    })
+
+    it("records stripe refund successfully with refund ID", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const insertSpy = vi.fn(() => mockSupabase)
+      mockSupabase.insert = insertSpy
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await recordRefund(validOrderId, {
+        refundAmount: 5000,
+        refundReason: "14-day withdrawal",
+        refundMethod: "stripe",
+        stripeRefundId: "re_1AbCdEfGh",
+        clientIdempotencyKey: validClientKey,
+      })
+
+      expect(insertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "stripe",
+          stripe_refund_id: "re_1AbCdEfGh",
+          source: "admin_ui",
+          client_idempotency_key: validClientKey,
+        }),
+      )
+    })
+
+    it("idempotent retry returns existing refund without re-inserting", async () => {
+      setupRecordRefundMocks({
+        existingByIdempotencyKey: [{ id: "already-saved-id", order_id: validOrderId }],
+      })
+      const insertSpy = vi.fn(() => mockSupabase)
+      mockSupabase.insert = insertSpy
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      const result = await recordRefund(validOrderId, {
+        refundAmount: 5000,
+        refundReason: "14-day withdrawal",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
+      })
+
+      expect(result).toEqual({
+        success: true,
+        refundId: "already-saved-id",
+        inventoryMovements: 0,
+      })
+      // No insert on order_refunds since row already exists
+      expect(insertSpy).not.toHaveBeenCalled()
+    })
+
+    it("rejects idempotency key that belongs to a different order", async () => {
+      setupRecordRefundMocks({
+        existingByIdempotencyKey: [{ id: "some-id", order_id: "00000000-0000-0000-0000-000000000001" }],
       })
 
       const { recordRefund } = await import("@/app/actions/admin")
       await expect(
         recordRefund(validOrderId, {
           refundAmount: 1000,
-          refundReason: "Customer withdrawal",
-          refundMethod: "stripe",
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
         }),
-      ).rejects.toThrow("няма Stripe платеж")
+      ).rejects.toThrow("друга поръчка")
     })
 
-    it("requires creditNoteRef when invoice was issued", async () => {
+    it("recovers existing refund ID when 23505 from concurrent retry", async () => {
+      // First idempotency lookup returns empty (race: other client not yet committed).
+      // Insert throws 23505. We re-query by client_idempotency_key and find the row.
+      const recoveredRows = [{ id: "recovered-id", order_id: validOrderId }]
+      const defaultOrder = {
+        id: validOrderId,
+        paid_at: "2026-04-01T00:00:00Z",
+        delivered_at: null,
+        total_amount: 5000,
+        needs_invoice: false,
+        invoice_number: null,
+        stripe_payment_intent_id: "pi_test",
+      }
+      mockSupabase.single.mockResolvedValueOnce({ data: defaultOrder, error: null })
       mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: true, invoice_number: "INV-001", stripe_payment_intent_id: "pi_test" },
-        error: null,
+        data: null,
+        error: { code: "23505", message: "duplicate key on client_idempotency_key" },
       })
-
-      const { recordRefund } = await import("@/app/actions/admin")
-      await expect(
-        recordRefund(validOrderId, {
-          refundAmount: 5000,
-          refundReason: "Customer withdrawal",
-          refundMethod: "stripe",
-        }),
-      ).rejects.toThrow("кредитно известие")
-    })
-
-    it("records refund successfully", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: "pi_test" },
-        error: null,
-      })
+      const calls: unknown[] = [
+        mockThenableResult([], null),                       // 1. idempotency check (empty)
+        mockSupabase,                                        // 2. orders fetch
+        mockThenableResult([], null),                        // 3. sum
+        mockSupabase,                                        // 4. insert (fails 23505)
+        mockThenableResult(recoveredRows, null),             // 5. recovery fetch
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      }) as any
 
       const { recordRefund } = await import("@/app/actions/admin")
       const result = await recordRefund(validOrderId, {
-        refundAmount: 5000,
-        refundReason: "14-day withdrawal",
-        refundMethod: "stripe",
+        refundAmount: 1000,
+        refundReason: "Test",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
       })
-
-      expect(result).toEqual({ success: true })
-      expect(mockSupabase.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          refund_amount: 5000,
-          refund_reason: "14-day withdrawal",
-          refund_method: "stripe",
-          refunded_at: expect.any(String),
-        }),
-      )
+      expect(result.refundId).toBe("recovered-id")
     })
 
-    it("rejects when already refunded (idempotency)", async () => {
-      mockSupabase.single.mockResolvedValueOnce({
-        data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: "pi_test" },
-        error: null,
-      })
-      const updateChain = {
-        eq: vi.fn(() => updateChain),
-        is: vi.fn(() => updateChain),
-        select: vi.fn(() => updateChain),
-        then(resolve: (v: unknown) => void) {
-          resolve({ data: [], error: null })
-        },
+    it("translates 23505 with no idempotency-key match to duplicate-stripe-refund error", async () => {
+      // Insert fails 23505 (presumably on stripe_refund_id) but recovery by
+      // client_idempotency_key returns empty — meaning the other unique
+      // index fired. Surface the Stripe-specific error.
+      const defaultOrder = {
+        id: validOrderId,
+        paid_at: "2026-04-01T00:00:00Z",
+        delivered_at: null,
+        total_amount: 5000,
+        needs_invoice: false,
+        invoice_number: null,
+        stripe_payment_intent_id: "pi_test",
       }
-      mockSupabase.update = vi.fn(() => updateChain)
+      mockSupabase.single.mockResolvedValueOnce({ data: defaultOrder, error: null })
+      mockSupabase.single.mockResolvedValueOnce({
+        data: null,
+        error: { code: "23505", message: "duplicate key on stripe_refund_id" },
+      })
+      const calls: unknown[] = [
+        mockThenableResult([], null),
+        mockSupabase,
+        mockThenableResult([], null),
+        mockSupabase,
+        mockThenableResult([], null),  // recovery finds nothing
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      }) as any
 
       const { recordRefund } = await import("@/app/actions/admin")
       await expect(
         recordRefund(validOrderId, {
-          refundAmount: 5000,
+          refundAmount: 1000,
           refundReason: "Test",
           refundMethod: "stripe",
+          stripeRefundId: "re_abc123",
+          clientIdempotencyKey: validClientKey,
         }),
-      ).rejects.toThrow("Възстановяването вече е записано")
+      ).rejects.toThrow("вече е записано")
     })
 
     it("rejects future refundedAt date", async () => {
@@ -2030,10 +2301,277 @@ describe("admin actions", () => {
         recordRefund(validOrderId, {
           refundAmount: 1000,
           refundReason: "Test",
-          refundMethod: "stripe",
+          refundMethod: "bank_transfer",
           refundedAt: "2099-01-01",
+          clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("не може да е в бъдещето")
+    })
+
+    // ─── Inventory adjustment coverage ───────────────────────────────────
+
+    it("rejects inventory adjustment with non-positive quantity", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
+          inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 0, disposition: "sellable" }],
+        }),
+      ).rejects.toThrow("положително цяло число")
+    })
+
+    it("rejects invalid disposition", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
+          inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "bogus" as any }],
+        }),
+      ).rejects.toThrow("Невалидно разпореждане")
+    })
+
+    it("rejects duplicate (sku, disposition) pairs in adjustments", async () => {
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
+          inventoryAdjustments: [
+            { sku: "EGO-DC-12", quantity: 1, disposition: "sellable" },
+            { sku: "EGO-DC-12", quantity: 1, disposition: "sellable" },
+          ],
+        }),
+      ).rejects.toThrow("Дублиран запис")
+    })
+
+    it("rejects adjustment for SKU not in the order", async () => {
+      setupRecordRefundMocks({
+        existingRefunds: [],
+        includeAdjustmentQueries: true,
+        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
+        priorReturns: [],
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
+          inventoryAdjustments: [{ sku: "EGO-WCR-12", quantity: 1, disposition: "sellable" }],
+        }),
+      ).rejects.toThrow("не е част от тази поръчка")
+    })
+
+    it("rejects adjustment that would over-restock across prior returns", async () => {
+      setupRecordRefundMocks({
+        existingRefunds: [],
+        includeAdjustmentQueries: true,
+        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
+        priorReturns: [{ sku: "EGO-DC-12", quantity: 2, type: "return_in" }],
+      })
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 1000,
+          refundReason: "Test",
+          refundMethod: "bank_transfer",
+          clientIdempotencyKey: validClientKey,
+          inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "sellable" }],
+        }),
+      ).rejects.toThrow("повече бройки от поръчаните")
+    })
+
+    it("inserts return_in inventory row for sellable adjustment", async () => {
+      setupRecordRefundMocks({
+        existingRefunds: [],
+        includeAdjustmentQueries: true,
+        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
+        priorReturns: [],
+      })
+      // Capture inventory_log inserts.
+      const insertCalls: Record<string, unknown>[] = []
+      mockSupabase.insert = vi.fn((row: unknown) => {
+        insertCalls.push(row as Record<string, unknown>)
+        return mockSupabase
+      }) as any
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      const result = await recordRefund(validOrderId, {
+        refundAmount: 1000,
+        refundReason: "Customer returned unopened",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
+        inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "sellable" }],
+      })
+
+      expect(result.inventoryMovements).toBe(1)
+      // Two inserts: order_refunds + one inventory_log
+      expect(insertCalls.length).toBe(2)
+      const invRow = insertCalls[1]
+      expect(invRow).toMatchObject({
+        sku: "EGO-DC-12",
+        type: "return_in",
+        quantity: 1,
+        order_id: validOrderId,
+        reference_type: "return",
+        idempotency_key: `${validClientKey}-EGO-DC-12-sellable`,
+      })
+      expect(invRow.notes).toBeNull()
+    })
+
+    it("inserts damaged inventory row with required notes", async () => {
+      setupRecordRefundMocks({
+        existingRefunds: [],
+        includeAdjustmentQueries: true,
+        orderItems: [{ sku: "EGO-DC-12", quantity: 3 }],
+        priorReturns: [],
+      })
+      const insertCalls: Record<string, unknown>[] = []
+      mockSupabase.insert = vi.fn((row: unknown) => {
+        insertCalls.push(row as Record<string, unknown>)
+        return mockSupabase
+      }) as any
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await recordRefund(validOrderId, {
+        refundAmount: 1000,
+        refundReason: "Opened on arrival",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
+        inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "damaged" }],
+      })
+
+      const damagedRow = insertCalls[1]
+      expect(damagedRow).toMatchObject({
+        type: "damaged",
+        reference_type: "return",
+      })
+      // chk_inventory_log_damaged requires non-empty notes
+      expect(typeof damagedRow.notes).toBe("string")
+      expect(damagedRow.notes).toContain("Повреден при връщане")
+    })
+
+    it("treats 23505 on inventory insert as idempotent (no throw)", async () => {
+      setupRecordRefundMocks({
+        existingRefunds: [],
+        includeAdjustmentQueries: true,
+        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
+        priorReturns: [],
+      })
+
+      // inventory_log insert fails with 23505 — a retry of the same refund.
+      let insertCount = 0
+      mockSupabase.insert = vi.fn(() => {
+        insertCount++
+        if (insertCount === 1) {
+          // order_refunds insert — handled elsewhere via single()
+          return mockSupabase
+        }
+        // inventory_log insert path — simulate the 23505 by returning
+        // an error directly on the chain. Since the server action awaits
+        // the whole chain and destructures .error, shim via a thenable.
+        return {
+          then(resolve: (v: unknown) => void) {
+            resolve({ error: { code: "23505", message: "dup idempotency key" } })
+          },
+        } as any
+      }) as any
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      const result = await recordRefund(validOrderId, {
+        refundAmount: 1000,
+        refundReason: "Retry",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
+        inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "sellable" }],
+      })
+
+      // Insert was attempted, but since it collided, movement count = 0
+      expect(result.success).toBe(true)
+      expect(result.inventoryMovements).toBe(0)
+    })
+  })
+
+  describe("updateRefundAnnotation", () => {
+    const validRefundId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { updateRefundAnnotation } = await import("@/app/actions/admin")
+
+      await expect(
+        updateRefundAnnotation(validRefundId, { reason: "new reason" }),
+      ).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { updateRefundAnnotation } = await import("@/app/actions/admin")
+
+      await expect(
+        updateRefundAnnotation("bad-id", { reason: "r" }),
+      ).rejects.toThrow("Невалиден формат на възстановяване")
+    })
+
+    it("rejects empty reason when reason is being set", async () => {
+      const { updateRefundAnnotation } = await import("@/app/actions/admin")
+
+      await expect(
+        updateRefundAnnotation(validRefundId, { reason: "   " }),
+      ).rejects.toThrow("задължителна")
+    })
+
+    it("rejects when no fields supplied", async () => {
+      const { updateRefundAnnotation } = await import("@/app/actions/admin")
+
+      await expect(
+        updateRefundAnnotation(validRefundId, {}),
+      ).rejects.toThrow("Няма промени")
+    })
+
+    it("updates reason and creditNoteRef", async () => {
+      const updateSpy = vi.fn(() => ({
+        eq: vi.fn(() => ({
+          select: vi.fn(() => Promise.resolve({ data: [{ id: validRefundId }], error: null })),
+        })),
+      }))
+      mockSupabase.update = updateSpy as any
+
+      const { updateRefundAnnotation } = await import("@/app/actions/admin")
+      const result = await updateRefundAnnotation(validRefundId, {
+        reason: "Customer exchanged for different flavor",
+        creditNoteRef: "CN-2026-0042",
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(updateSpy).toHaveBeenCalledWith({
+        reason: "Customer exchanged for different flavor",
+        credit_note_ref: "CN-2026-0042",
+      })
+    })
+
+    it("clears creditNoteRef when given empty string", async () => {
+      const updateSpy = vi.fn(() => ({
+        eq: vi.fn(() => ({
+          select: vi.fn(() => Promise.resolve({ data: [{ id: validRefundId }], error: null })),
+        })),
+      }))
+      mockSupabase.update = updateSpy as any
+
+      const { updateRefundAnnotation } = await import("@/app/actions/admin")
+      await updateRefundAnnotation(validRefundId, { creditNoteRef: "" })
+
+      expect(updateSpy).toHaveBeenCalledWith({ credit_note_ref: null })
     })
   })
 

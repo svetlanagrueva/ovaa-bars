@@ -23,6 +23,81 @@ function alertAdmin(subject: string, body: string) {
   })
 }
 
+// Idempotent upsert of a Stripe Refund into order_refunds.
+// Natural key: stripe_refund_id (unique partial index). First arrival wins,
+// subsequent arrivals (retries, cross-event overlap) are no-ops.
+async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
+  if (refund.status !== "succeeded") {
+    // pending/failed/canceled refunds don't get recorded — we only track
+    // money that actually moved.
+    return
+  }
+
+  const paymentIntentId = typeof refund.payment_intent === "string"
+    ? refund.payment_intent
+    : refund.payment_intent?.id ?? null
+  if (!paymentIntentId) {
+    console.error(`Refund ${refund.id} has no payment_intent`)
+    return
+  }
+
+  const supabase = await createClient()
+
+  // Fast path: if the Stripe refund ID is already in our table, do nothing.
+  // Covers the admin-UI-then-webhook ordering — admin recorded the refund
+  // first with the Stripe ID, webhook arrival has nothing to add.
+  const { data: existing } = await supabase
+    .from("order_refunds")
+    .select("id, order_id")
+    .eq("stripe_refund_id", refund.id)
+    .maybeSingle()
+  if (existing) return
+
+  // Locate the order. Stripe is our source of the refund, but we need the
+  // local order to attach it to.
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("stripe_payment_intent_id", paymentIntentId)
+    .single()
+
+  if (!order) {
+    console.error(`No order found for payment intent ${paymentIntentId} (refund ${refund.id})`)
+    return
+  }
+
+  const { error: insertError } = await supabase
+    .from("order_refunds")
+    .insert({
+      order_id: order.id,
+      stripe_refund_id: refund.id,
+      amount_cents: refund.amount,
+      method: "stripe",
+      source: "stripe_webhook",
+      reason: refund.reason ?? "Stripe webhook: refund recorded from gateway event",
+      recorded_by: "stripe-webhook",
+      refunded_at: new Date(refund.created * 1000).toISOString(),
+    })
+
+  if (insertError) {
+    // 23505 on stripe_refund_id means a concurrent upsert beat us. That's
+    // the idempotent success case; treat as handled.
+    if (insertError.code !== "23505") {
+      console.error(`Failed to insert order_refunds row for refund ${refund.id}:`, sanitizeError(insertError))
+    }
+    return
+  }
+
+  alertAdmin(
+    `Stripe refund recorded — order ${String(order.id).slice(0, 8)}`,
+    `A refund of ${(refund.amount / 100).toFixed(2)} EUR was recorded for order ${order.id}.\n` +
+      `Payment intent: ${paymentIntentId}\n` +
+      `Stripe refund: ${refund.id}\n` +
+      `Reason (gateway): ${refund.reason ?? "n/a"}\n\n` +
+      `Open the order in the admin panel to add the internal reason and credit-note reference.`,
+  )
+}
+
 export async function POST(request: Request) {
   const body = await request.text()
   const signature = request.headers.get("stripe-signature")
@@ -150,60 +225,24 @@ export async function POST(request: Request) {
     sendOrderConfirmationEmail(order)
   }
 
-  // ─── charge.refunded ────────────────────────────────────────────────────
-  // Fires when a refund is issued against a charge — whether via the admin UI
-  // (which also calls recordRefund), via the Stripe dashboard, or as a
-  // chargeback-driven refund. Idempotent: if refunded_at is already set we
-  // only ensure the outcome event is recorded once.
+  // ─── refund.created / charge.refunded ───────────────────────────────────
+  // Either event signals a refund. refund.created is the cleaner payload —
+  // it carries the full Refund object. charge.refunded is handled as a
+  // fallback for deployments subscribed to the older event; both converge
+  // on the same upsertRefund() path, idempotent via stripe_refund_id.
+  if (event.type === "refund.created" || event.type === "refund.updated") {
+    const refund = event.data.object as Stripe.Refund
+    await upsertRefundFromStripe(refund)
+  }
+
   if (event.type === "charge.refunded") {
     const charge = event.data.object as Stripe.Charge
-    const paymentIntentId = typeof charge.payment_intent === "string"
-      ? charge.payment_intent
-      : charge.payment_intent?.id ?? null
-
-    if (paymentIntentId) {
-      const supabase = await createClient()
-
-      // Idempotent population of refund_* columns. Only the first refund wins
-      // (guarded by chk_refund_method_stripe_requires_pi + .is(refunded_at, null)).
-      const { data: updated } = await supabase
-        .from("orders")
-        .update({
-          refunded_at: new Date().toISOString(),
-          refund_amount: charge.amount_refunded,
-          refund_method: "stripe",
-          refund_reason: "Stripe webhook: refund issued outside the admin UI",
-        })
-        .eq("stripe_payment_intent_id", paymentIntentId)
-        .is("refunded_at", null)
-        .select("id, total_amount")
-
-      if (updated && updated.length > 0) {
-        const order = updated[0]
-        const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
-          p_order_id: order.id,
-          p_outcome_type: "external_refund",
-          p_payload: {
-            charge_id: charge.id,
-            payment_intent_id: paymentIntentId,
-            amount_refunded: charge.amount_refunded,
-            order_total: order.total_amount,
-            reason: charge.refunds?.data?.[0]?.reason ?? null,
-          },
-          p_actor: "stripe-webhook",
-        })
-        if (outcomeErr) {
-          console.error(`Failed to record external_refund outcome for PI ${paymentIntentId}:`, sanitizeError(outcomeErr))
-        }
-
-        alertAdmin(
-          `Stripe refund issued — order ${String(order.id).slice(0, 8)}`,
-          `A refund of ${(charge.amount_refunded / 100).toFixed(2)} EUR was issued for order ${order.id}.\n` +
-            `Payment intent: ${paymentIntentId}\n` +
-            `Charge: ${charge.id}\n\n` +
-            `Refund was recorded automatically. Review the order in the admin panel.`,
-        )
-      }
+    // On newer Stripe API versions charge.refunds is not auto-expanded.
+    // List refunds explicitly and ingest each one. Upsert is idempotent, so
+    // overlap with refund.created is safe.
+    const refunds = await stripe.refunds.list({ charge: charge.id, limit: 10 })
+    for (const refund of refunds.data) {
+      await upsertRefundFromStripe(refund)
     }
   }
 

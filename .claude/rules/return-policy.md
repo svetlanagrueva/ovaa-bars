@@ -58,5 +58,5 @@ The EU Online Dispute Resolution platform (ec.europa.eu/consumers/odr) was shut 
 - ~~14-day refund clock tracking~~ — DONE: informational countdown in admin order detail
 - ~~Complaints register~~ — DONE: `complaints` table with auto-generated refs, defect description, customer demand (ZZP Art. 127)
 - Fiscal handling: bank transfer refunds don't trigger storno; cash refunds would need storno process (НАП)
-- ~~Refund tracking~~ — DONE: `refunded_at`, `refund_amount`, `refund_reason`, `refund_method`, `credit_note_ref` + admin UI
+- ~~Refund tracking~~ — DONE: `order_refunds` child table (many refunds per order) + admin UI with inline annotation editing. Natural idempotency via `stripe_refund_id`; webhook and admin UI can both produce rows without colliding.
 - ~~Inventory expansion~~ — DONE: `recordStockMovement()` for B2B, samples, damage, returns, adjustments with document linkage

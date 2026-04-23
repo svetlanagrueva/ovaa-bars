@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -64,8 +64,17 @@ export default function AdminOrderDetailPage({
   const [refundMethod, setRefundMethod] = useState<"stripe" | "bank_transfer">("stripe")
   const [refundDate, setRefundDate] = useState("")
   const [refundCreditNote, setRefundCreditNote] = useState("")
+  const [refundStripeId, setRefundStripeId] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
   const [refundSaved, setRefundSaved] = useState(false)
+  // One UUID per form submission — used as client_idempotency_key on the
+  // refund row and baked into deterministic keys for inventory_log inserts.
+  // Regenerated after every successful save so the next refund gets a fresh key.
+  const [refundClientKey, setRefundClientKey] = useState<string>(() => crypto.randomUUID())
+  // Per-SKU inventory disposition on return. Keyed by sku.
+  // qty = "" means no return; disposition defaults to "sellable" when qty > 0.
+  const [returnQty, setReturnQty] = useState<Record<string, string>>({})
+  const [returnDisposition, setReturnDisposition] = useState<Record<string, "sellable" | "damaged">>({})
 
   // Complaint state
   const [complaints, setComplaints] = useState<Complaint[]>([])
@@ -425,34 +434,31 @@ export default function AdminOrderDetailPage({
         </Card>
       )}
 
-      {/* Refund status card */}
-      {order.refunded_at && (
+      {/* Refunds list */}
+      {order.refunds.length > 0 && (
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle className="text-base">Възстановяване</CardTitle>
+            <CardTitle className="text-base">Възстановявания</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-blue-900">
-              Възстановено на {new Date(order.refunded_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-            </div>
-            {order.refund_amount != null && (
-              <div>
-                <span className="text-muted-foreground">Сума:</span>{" "}
-                <span className="font-medium">{formatPrice(order.refund_amount)}</span>
-                {order.refund_amount !== order.total_amount && (
-                  <span className="ml-2 text-xs text-muted-foreground">(частично)</span>
-                )}
-              </div>
-            )}
-            {order.refund_method && (
-              <div><span className="text-muted-foreground">Метод:</span> {order.refund_method === "stripe" ? "Stripe" : "Банков превод"}</div>
-            )}
-            {order.refund_reason && (
-              <div><span className="text-muted-foreground">Причина:</span> {order.refund_reason}</div>
-            )}
-            {order.credit_note_ref && (
-              <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{order.credit_note_ref}</span></div>
-            )}
+          <CardContent className="space-y-3 text-sm">
+            {(() => {
+              const totalRefunded = order.refunds.reduce((sum, r) => sum + r.amount_cents, 0)
+              const fullyRefunded = totalRefunded >= order.total_amount
+              return (
+                <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-blue-900">
+                  {fullyRefunded ? "Изцяло възстановена" : "Частично възстановена"}:{" "}
+                  <span className="font-medium">{formatPrice(totalRefunded)}</span>
+                  {" / "}
+                  <span>{formatPrice(order.total_amount)}</span>
+                </div>
+              )
+            })()}
+            {order.refunds.map((r) => (
+              <RefundRow key={r.id} refund={r} onSaved={async () => {
+                const refreshed = await getOrder(id)
+                setOrder(refreshed)
+              }} />
+            ))}
           </CardContent>
         </Card>
       )}
@@ -475,7 +481,11 @@ export default function AdminOrderDetailPage({
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
-                { label: "Възстановяване", date: order.refunded_at, detail: order.refund_amount != null ? `${formatPrice(order.refund_amount)} (${order.refund_method === "stripe" ? "Stripe" : "Банков превод"})` : undefined },
+                ...order.refunds.map((r) => ({
+                  label: "Възстановяване",
+                  date: r.refunded_at,
+                  detail: `${formatPrice(r.amount_cents)} (${r.method === "stripe" ? "Stripe" : "Банков превод"})`,
+                })),
                 ...complaints.filter(c => c.reported_at).map(c => ({ label: "Рекламация", date: c.reported_at, detail: `#${c.complaint_ref}` })),
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
                 ...order.admin_notes.map((note) => ({
@@ -956,95 +966,195 @@ export default function AdminOrderDetailPage({
             </div>
           )}
 
-          {/* Refund form — visible when paid but not yet refunded */}
-          {order.paid_at && !order.refunded_at && (
-            <div className="space-y-3 border-t pt-4 mt-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Възстановяване на сума</p>
-              {order.delivered_at && (() => {
-                const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
-                const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-                return (
-                  <div className={`rounded-md px-3 py-2 text-sm ${
-                    daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
-                    : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
-                    : "border border-border bg-secondary text-foreground"
-                  }`}>
-                    {daysLeft <= 0
-                      ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
-                      : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
-                    }
-                  </div>
-                )
-              })()}
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
-                  <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => { setRefundDate(e.target.value); setRefundSaved(false) }} className="h-8" />
+          {/* Refund form — visible when paid and remaining balance > 0 */}
+          {(() => {
+            const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+            const remainingCents = order.total_amount - alreadyRefunded
+            if (!order.paid_at) return null
+            return (
+              <div className="space-y-3 border-t pt-4 mt-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Запиши възстановяване</p>
+                  <p className="text-xs text-muted-foreground">
+                    Остава за възстановяване: <span className="font-medium text-foreground">{formatPrice(remainingCents)}</span>
+                  </p>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
-                  <Input type="number" step="0.01" min="0.01" placeholder={(order.total_amount / 100).toFixed(2)} value={refundAmount} onChange={(e) => { setRefundAmount(e.target.value); setRefundSaved(false) }} className="h-8" />
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
-                  <select value={refundMethod} onChange={(e) => { setRefundMethod(e.target.value as "stripe" | "bank_transfer"); setRefundSaved(false) }} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
-                    <option value="stripe">Stripe</option>
-                    <option value="bank_transfer">Банков превод</option>
-                  </select>
-                </div>
-                {order.needs_invoice && order.invoice_number && (
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-                    <Input value={refundCreditNote} onChange={(e) => { setRefundCreditNote(e.target.value); setRefundSaved(false) }} placeholder="Задължително" className="h-8" maxLength={100} />
-                  </div>
+                {remainingCents <= 0 && (
+                  <p className="text-xs text-muted-foreground">Цялата сума по поръчката е възстановена.</p>
+                )}
+                {remainingCents > 0 && (
+                  <>
+                    {order.delivered_at && (() => {
+                      const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
+                      const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                      return (
+                        <div className={`rounded-md px-3 py-2 text-sm ${
+                          daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
+                          : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
+                          : "border border-border bg-secondary text-foreground"
+                        }`}>
+                          {daysLeft <= 0
+                            ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
+                            : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
+                          }
+                        </div>
+                      )
+                    })()}
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
+                        <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => { setRefundDate(e.target.value); setRefundSaved(false) }} className="h-8" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                        <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => { setRefundAmount(e.target.value); setRefundSaved(false) }} className="h-8" />
+                      </div>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
+                        <select value={refundMethod} onChange={(e) => { setRefundMethod(e.target.value as "stripe" | "bank_transfer"); setRefundSaved(false) }} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                          <option value="stripe">Stripe</option>
+                          <option value="bank_transfer">Банков превод</option>
+                        </select>
+                      </div>
+                      {order.needs_invoice && order.invoice_number && (
+                        <div>
+                          <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+                          <Input value={refundCreditNote} onChange={(e) => { setRefundCreditNote(e.target.value); setRefundSaved(false) }} placeholder="Задължително" className="h-8" maxLength={100} />
+                        </div>
+                      )}
+                    </div>
+                    {refundMethod === "stripe" && (
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID (от Stripe Dashboard)</label>
+                        <Input value={refundStripeId} onChange={(e) => { setRefundStripeId(e.target.value); setRefundSaved(false) }} placeholder="re_..." className="h-8 font-mono" maxLength={100} />
+                      </div>
+                    )}
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
+                      <Input value={refundReason} onChange={(e) => { setRefundReason(e.target.value); setRefundSaved(false) }} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+                    </div>
+
+                    {/* Per-line return + disposition. Inserts matching
+                        `return_in` / `damaged` inventory_log rows linked to
+                        the refund via reference_type='return', reference_id=<refund.id>. */}
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Връщане на стока (незадължително)</p>
+                      <p className="mb-2 text-[11px] text-muted-foreground">Ако артикул се връща физически, отбележете количеството и в какво състояние е. Нулеви стойности не създават движение в склада.</p>
+                      <div className="space-y-2">
+                        {order.items.map((item) => {
+                          const maxReturn = item.quantity
+                          const qtyStr = returnQty[item.sku] ?? ""
+                          const disposition = returnDisposition[item.sku] ?? "sellable"
+                          return (
+                            <div key={item.sku} className="flex items-center gap-2 text-sm">
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate">{item.productName}</div>
+                                <div className="text-[11px] text-muted-foreground">Поръчани: {item.quantity} · <span className="font-mono">{item.sku}</span></div>
+                              </div>
+                              <Input
+                                type="number"
+                                min="0"
+                                max={maxReturn}
+                                step="1"
+                                placeholder="0"
+                                value={qtyStr}
+                                onChange={(e) => {
+                                  setReturnQty({ ...returnQty, [item.sku]: e.target.value })
+                                  setRefundSaved(false)
+                                }}
+                                className="h-8 w-20"
+                              />
+                              <select
+                                value={disposition}
+                                onChange={(e) => {
+                                  setReturnDisposition({
+                                    ...returnDisposition,
+                                    [item.sku]: e.target.value as "sellable" | "damaged",
+                                  })
+                                  setRefundSaved(false)
+                                }}
+                                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                              >
+                                <option value="sellable">Годен за продажба</option>
+                                <option value="damaged">Негоден (брак)</option>
+                              </select>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
+                        setRefundLoading(true)
+                        setActionError("")
+                        try {
+                          const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
+                          const amountCents = Math.round(amountFloat * 100)
+                          // Build inventoryAdjustments from per-line form state.
+                          const inventoryAdjustments = order.items
+                            .map((item) => {
+                              const qtyStr = returnQty[item.sku] ?? ""
+                              const qty = qtyStr ? parseInt(qtyStr, 10) : 0
+                              if (!qty || qty < 1) return null
+                              return {
+                                sku: item.sku,
+                                quantity: qty,
+                                disposition: returnDisposition[item.sku] ?? "sellable",
+                              }
+                            })
+                            .filter((adj): adj is NonNullable<typeof adj> => adj !== null)
+
+                          await recordRefund(id, {
+                            refundAmount: amountCents,
+                            refundReason: refundReason.trim(),
+                            refundMethod,
+                            refundedAt: refundDate || undefined,
+                            creditNoteRef: refundCreditNote.trim() || undefined,
+                            stripeRefundId: refundMethod === "stripe" ? refundStripeId.trim() : undefined,
+                            clientIdempotencyKey: refundClientKey,
+                            inventoryAdjustments: inventoryAdjustments.length > 0 ? inventoryAdjustments : undefined,
+                          })
+                          const updated = await getOrder(id)
+                          setOrder(updated)
+                          setRefundSaved(true)
+                          setRefundAmount("")
+                          setRefundReason("")
+                          setRefundCreditNote("")
+                          setRefundStripeId("")
+                          setReturnQty({})
+                          setReturnDisposition({})
+                          // Fresh client key for the next refund. Same UUID must
+                          // never re-submit — that'd resolve to the just-saved refund.
+                          setRefundClientKey(crypto.randomUUID())
+                        } catch (err) {
+                          setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
+                        } finally {
+                          setRefundLoading(false)
+                        }
+                      }}>
+                        {refundLoading ? "Записване..." : "Запиши възстановяване"}
+                      </Button>
+                      {refundSaved && <span className="text-xs text-muted-foreground">Записано</span>}
+                    </div>
+                    {order.payment_method === "card" && (
+                      <p className="text-xs text-muted-foreground">
+                        Издайте възстановяване в{" "}
+                        <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
+                        {", копирайте refund ID (re_...) и го попълнете тук. Ако webhook вече е записал възстановяването, редактирайте го от списъка по-горе."}
+                      </p>
+                    )}
+                    {order.payment_method === "cod" && (
+                      <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">За връщане на стока в наличност или бракуване, използвайте <a href="/admin/inventory" className="underline">Движение на склад</a>.</p>
+                  </>
                 )}
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
-                <Input value={refundReason} onChange={(e) => { setRefundReason(e.target.value); setRefundSaved(false) }} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
-              </div>
-              <div className="flex items-center gap-3">
-                <Button size="sm" disabled={refundLoading || !refundReason.trim()} onClick={async () => {
-                  setRefundLoading(true)
-                  setActionError("")
-                  try {
-                    const amountFloat = refundAmount ? parseFloat(refundAmount) : order.total_amount / 100
-                    const amountCents = Math.round(amountFloat * 100)
-                    await recordRefund(id, {
-                      refundAmount: amountCents,
-                      refundReason: refundReason.trim(),
-                      refundMethod,
-                      refundedAt: refundDate || undefined,
-                      creditNoteRef: refundCreditNote.trim() || undefined,
-                    })
-                    const updated = await getOrder(id)
-                    setOrder(updated)
-                    setRefundSaved(true)
-                  } catch (err) {
-                    setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
-                  } finally {
-                    setRefundLoading(false)
-                  }
-                }}>
-                  {refundLoading ? "Записване..." : "Запиши възстановяване"}
-                </Button>
-                {refundSaved && <span className="text-xs text-muted-foreground">Записано</span>}
-              </div>
-              {order.payment_method === "card" && (
-                <p className="text-xs text-muted-foreground">
-                  Издайте възстановяване в{" "}
-                  <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
-                  {" "}и след това запишете тук.
-                </p>
-              )}
-              {order.payment_method === "cod" && (
-                <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
-              )}
-              <p className="text-xs text-muted-foreground">За връщане на стока в наличност или бракуване, използвайте <a href="/admin/inventory" className="underline">Движение на склад</a>.</p>
-            </div>
-          )}
+            )
+          })()}
 
           {/* Complaints section */}
           <div className="space-y-3 border-t pt-4 mt-4">
@@ -1303,6 +1413,103 @@ export default function AdminOrderDetailPage({
             </p>
             <Button className="mt-5 w-full" onClick={() => setShipmentSuccess(null)}>
               Разбрах
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// One row in the refunds list. Lets admin edit reason + credit_note_ref on
+// a saved refund — typically used to annotate webhook-created rows after
+// the Stripe event lands ahead of the admin.
+function RefundRow({ refund, onSaved }: { refund: OrderRefund; onSaved: () => Promise<void> | void }) {
+  const [editing, setEditing] = useState(false)
+  const [reason, setReason] = useState(refund.reason ?? "")
+  const [creditNote, setCreditNote] = useState(refund.credit_note_ref ?? "")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  return (
+    <div className="rounded-md border border-border p-3 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div>
+            <span className="font-medium">{formatPrice(refund.amount_cents)}</span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              {refund.method === "stripe" ? "Stripe" : "Банков превод"}
+            </span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              {refund.source === "stripe_webhook" ? "(webhook)" : "(админ)"}
+            </span>
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {new Date(refund.refunded_at).toLocaleDateString("bg-BG", {
+              day: "2-digit", month: "2-digit", year: "numeric",
+              hour: "2-digit", minute: "2-digit",
+            })}
+            {refund.stripe_refund_id && (
+              <span className="ml-2 font-mono">{refund.stripe_refund_id}</span>
+            )}
+          </div>
+        </div>
+        {!editing && (
+          <Button size="sm" variant="outline" onClick={() => { setEditing(true); setError("") }}>
+            Редактирай
+          </Button>
+        )}
+      </div>
+      {!editing && (
+        <div className="mt-2 space-y-1 text-xs">
+          {refund.reason && (
+            <div><span className="text-muted-foreground">Причина:</span> {refund.reason}</div>
+          )}
+          {refund.credit_note_ref && (
+            <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{refund.credit_note_ref}</span></div>
+          )}
+          {!refund.reason && !refund.credit_note_ref && (
+            <div className="text-muted-foreground italic">Няма анотации — редактирайте, за да добавите.</div>
+          )}
+        </div>
+      )}
+      {editing && (
+        <div className="mt-3 space-y-2">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+            <Input value={creditNote} onChange={(e) => setCreditNote(e.target.value)} placeholder="Незадължително" className="h-8" maxLength={100} />
+          </div>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+          <div className="flex items-center gap-2">
+            <Button size="sm" disabled={saving} onClick={async () => {
+              setSaving(true)
+              setError("")
+              try {
+                await updateRefundAnnotation(refund.id, {
+                  reason,
+                  creditNoteRef: creditNote,
+                })
+                setEditing(false)
+                await onSaved()
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Грешка при запис")
+              } finally {
+                setSaving(false)
+              }
+            }}>
+              {saving ? "Записване..." : "Запиши"}
+            </Button>
+            <Button size="sm" variant="outline" disabled={saving} onClick={() => {
+              setReason(refund.reason ?? "")
+              setCreditNote(refund.credit_note_ref ?? "")
+              setEditing(false)
+              setError("")
+            }}>
+              Отказ
             </Button>
           </div>
         </div>
