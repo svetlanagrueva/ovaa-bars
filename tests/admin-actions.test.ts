@@ -2656,13 +2656,16 @@ describe("admin actions", () => {
       ).rejects.toThrow("може да се докладва само след изпращане")
     })
 
-    it("records delivery_refused on a shipped order", async () => {
+    it("records delivery_refused on a shipped order (outcome-only, no refund)", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, status: "shipped" },
         error: null,
       })
-      const rpcSpy = vi.fn(() => Promise.resolve({ data: null, error: null }))
-      mockSupabase.rpc = rpcSpy
+      // Typed two-arg rpc mock so .mock.calls[i][0|1] is tuple-indexable.
+      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
+        Promise.resolve({ data: null, error: null }),
+      )
+      mockSupabase.rpc = rpcSpy as never
 
       const { recordOrderOutcome } = await import("@/app/actions/admin")
       const result = await recordOrderOutcome(validOrderId, {
@@ -2671,18 +2674,247 @@ describe("admin actions", () => {
         courierRef: "RETURN-ABC",
       })
 
-      expect(result).toEqual({ success: true })
-      // First RPC: record_order_outcome
+      expect(result.success).toBe(true)
+      expect(result.refundId).toBeUndefined()
+      expect(result.inventoryMovements).toBeUndefined()
+
+      // First RPC: record_order_outcome (payload does NOT carry refund_id)
       expect(rpcSpy).toHaveBeenNthCalledWith(1, "record_order_outcome", expect.objectContaining({
         p_order_id: validOrderId,
         p_outcome_type: "delivery_refused",
         p_payload: expect.objectContaining({ note: expect.stringContaining("Customer refused") }),
       }))
-      // Second RPC: add_admin_note (the bridge summary)
+      const firstArgs = rpcSpy.mock.calls[0] as [string, { p_payload: Record<string, unknown> }]
+      expect(firstArgs[1].p_payload).not.toHaveProperty("refund_id")
+
+      // Second RPC: add_admin_note
       expect(rpcSpy).toHaveBeenNthCalledWith(2, "add_admin_note", expect.objectContaining({
         p_order_id: validOrderId,
         p_text: expect.stringContaining("Отказана доставка"),
       }))
+    })
+
+    it("rejects refund payload without clientIdempotencyKey", async () => {
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+      await expect(
+        recordOrderOutcome(validOrderId, {
+          outcomeType: "package_lost",
+          note: "Courier claim filed for lost package",
+          courierRef: "CLAIM-42",
+          refund: {
+            refundAmount: 1000,
+            refundReason: "Lost in transit",
+            refundMethod: "bank_transfer",
+          },
+          // clientIdempotencyKey intentionally omitted
+        }),
+      ).rejects.toThrow("idempotency key")
+    })
+
+    it("records package_lost + bundled bank-transfer refund", async () => {
+      const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+      // DB-call sequence (recordOrderOutcome validates status FIRST, then
+      // delegates to recordRefund):
+      //   1. orders .single()                               — outcome status check
+      //   2. order_refunds .eq(client_idempotency_key)      — refund idempotency (thenable)
+      //   3. orders .single()                               — refund's order fetch
+      //   4. order_refunds .eq(order_id)                    — sum query (thenable)
+      //   5. order_refunds .insert().select().single()      — refund insert
+      //   6. rpc("record_order_outcome", …)
+      //   7. rpc("add_admin_note", …)
+      mockSupabase.single
+        .mockResolvedValueOnce({ data: { id: validOrderId, status: "shipped" }, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: validOrderId,
+            paid_at: "2026-04-01T00:00:00Z",
+            delivered_at: null,
+            total_amount: 5000,
+            needs_invoice: false,
+            invoice_number: null,
+            stripe_payment_intent_id: "pi_test",
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: { id: "refund-xyz" }, error: null })
+
+      const calls: unknown[] = [
+        mockSupabase,                               // 1. orders (outcome status)
+        mockThenableResult([], null),               // 2. idempotency lookup
+        mockSupabase,                               // 3. orders (refund order fetch)
+        mockThenableResult([], null),               // 4. sum
+        mockSupabase,                               // 5. order_refunds insert chain
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
+        Promise.resolve({ data: null, error: null }),
+      )
+      mockSupabase.rpc = rpcSpy as never
+
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+      const result = await recordOrderOutcome(validOrderId, {
+        outcomeType: "package_lost",
+        note: "Speedy confirmed package is lost; refund customer",
+        courierRef: "CLAIM-42",
+        clientIdempotencyKey: validClientKey,
+        refund: {
+          refundAmount: 5000,
+          refundReason: "Lost in transit",
+          refundMethod: "bank_transfer",
+        },
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.refundId).toBe("refund-xyz")
+      expect(result.inventoryMovements).toBe(0)
+
+      const outcomeCallIdx = rpcSpy.mock.calls.findIndex((c) => c[0] === "record_order_outcome")
+      expect(outcomeCallIdx).toBeGreaterThanOrEqual(0)
+      const outcomeArgs = rpcSpy.mock.calls[outcomeCallIdx] as [string, { p_payload: Record<string, unknown> }]
+      expect(outcomeArgs[1].p_payload).toMatchObject({ refund_id: "refund-xyz" })
+
+      const noteCallIdx = rpcSpy.mock.calls.findIndex((c) => c[0] === "add_admin_note")
+      expect(noteCallIdx).toBeGreaterThanOrEqual(0)
+      const noteArgs = rpcSpy.mock.calls[noteCallIdx] as [string, { p_text: string }]
+      expect(noteArgs[1].p_text).toContain("възст. 50.00 лв")
+    })
+
+    it("passes inventoryAdjustments through to recordRefund on returned outcome", async () => {
+      const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+      mockSupabase.single
+        .mockResolvedValueOnce({ data: { id: validOrderId, status: "delivered" }, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: validOrderId,
+            paid_at: "2026-04-01T00:00:00Z",
+            delivered_at: null,
+            total_amount: 5000,
+            needs_invoice: false,
+            invoice_number: null,
+            stripe_payment_intent_id: "pi_test",
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: { id: "refund-ret" }, error: null })
+
+      const calls: unknown[] = [
+        mockSupabase,                                                       // 1. orders (outcome status)
+        mockThenableResult([], null),                                       // 2. idempotency
+        mockSupabase,                                                       // 3. orders (refund order fetch)
+        mockThenableResult([], null),                                       // 4. sum
+        mockThenableResult([{ sku: "EGO-DC-12", quantity: 2 }], null),      // 5. order_items (adjustment validation)
+        mockThenableResult([], null),                                       // 6. prior returns
+        mockSupabase,                                                       // 7. order_refunds insert
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      // Capture inserts to verify inventory_log rows were written.
+      const inserts: Record<string, unknown>[] = []
+      mockSupabase.insert = vi.fn((row: unknown) => {
+        inserts.push(row as Record<string, unknown>)
+        return mockSupabase
+      }) as never
+
+      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
+        Promise.resolve({ data: null, error: null }),
+      )
+      mockSupabase.rpc = rpcSpy as never
+
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+      const result = await recordOrderOutcome(validOrderId, {
+        outcomeType: "returned",
+        note: "Customer returned both bars unopened; refund full",
+        returnRef: "RET-2026-01",
+        condition: "sellable",
+        clientIdempotencyKey: validClientKey,
+        refund: {
+          refundAmount: 1000,
+          refundReason: "14-day withdrawal",
+          refundMethod: "bank_transfer",
+          inventoryAdjustments: [
+            { sku: "EGO-DC-12", quantity: 1, disposition: "sellable" },
+          ],
+        },
+      })
+
+      expect(result.inventoryMovements).toBe(1)
+      // Two insert calls: order_refunds + inventory_log (return_in)
+      expect(inserts.length).toBe(2)
+      expect(inserts[1]).toMatchObject({
+        sku: "EGO-DC-12",
+        type: "return_in",
+        quantity: 1,
+        reference_type: "return",
+        idempotency_key: `${validClientKey}-EGO-DC-12-sellable`,
+      })
+    })
+
+    it("refund validation failure aborts outcome (no outcome event on validation error)", async () => {
+      const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+      // Status check passes (shipped), but the refund's paid_at check fails.
+      mockSupabase.single
+        .mockResolvedValueOnce({ data: { id: validOrderId, status: "shipped" }, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: validOrderId,
+            paid_at: null, // unpaid → recordRefund rejects here
+            total_amount: 5000,
+            needs_invoice: false,
+            stripe_payment_intent_id: null,
+          },
+          error: null,
+        })
+
+      const calls: unknown[] = [
+        mockSupabase,                  // 1. outcome status check
+        mockThenableResult([], null),  // 2. idempotency
+        mockSupabase,                  // 3. orders (refund fetch — paid_at=null, throws)
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
+        Promise.resolve({ data: null, error: null }),
+      )
+      mockSupabase.rpc = rpcSpy as never
+
+      const { recordOrderOutcome } = await import("@/app/actions/admin")
+      await expect(
+        recordOrderOutcome(validOrderId, {
+          outcomeType: "package_lost",
+          note: "Refund customer for lost parcel",
+          courierRef: "CLAIM-99",
+          clientIdempotencyKey: validClientKey,
+          refund: {
+            refundAmount: 1000,
+            refundReason: "Lost",
+            refundMethod: "bank_transfer",
+          },
+        }),
+      ).rejects.toThrow("неплатена поръчка")
+
+      // The outcome event must NOT have been recorded, so the audit log
+      // doesn't reference a refund that was never created.
+      const outcomeCallIdx = rpcSpy.mock.calls.findIndex((c) => c[0] === "record_order_outcome")
+      expect(outcomeCallIdx).toBe(-1)
     })
   })
 

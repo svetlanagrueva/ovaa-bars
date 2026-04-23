@@ -99,6 +99,17 @@ export default function AdminOrderDetailPage({
   const [outcomeCondition, setOutcomeCondition] = useState<"sellable" | "damaged" | "">("")
   const [outcomeLoading, setOutcomeLoading] = useState(false)
   const [outcomeSaved, setOutcomeSaved] = useState(false)
+  // Optional linked refund on the same outcome submission.
+  const [outcomeRefundEnabled, setOutcomeRefundEnabled] = useState(false)
+  const [outcomeRefundAmount, setOutcomeRefundAmount] = useState("")
+  const [outcomeRefundMethod, setOutcomeRefundMethod] = useState<"stripe" | "bank_transfer">("bank_transfer")
+  const [outcomeRefundStripeId, setOutcomeRefundStripeId] = useState("")
+  const [outcomeRefundCreditNote, setOutcomeRefundCreditNote] = useState("")
+  // Per-line inventory adjustments carried on the linked refund.
+  // qty = "" → no return for that SKU; disposition defaults to match
+  // outcome.condition when the outcome is 'returned'.
+  const [outcomeReturnQty, setOutcomeReturnQty] = useState<Record<string, string>>({})
+  const [outcomeClientKey, setOutcomeClientKey] = useState<string>(() => crypto.randomUUID())
 
   useEffect(() => {
     getOrder(id)
@@ -1354,16 +1365,197 @@ export default function AdminOrderDetailPage({
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
 
+              {/* Optional linked refund — records a refund row + inventory
+                  movements in the same server action. For 'returned', the
+                  per-line dispositions auto-match outcomeCondition. */}
+              {outcomeType && (() => {
+                const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+                const remainingCents = order.total_amount - alreadyRefunded
+                const canRefund = remainingCents > 0
+                const disposition: "sellable" | "damaged" =
+                  outcomeType === "returned" && outcomeCondition === "sellable"
+                    ? "sellable"
+                    : "damaged"
+                return (
+                  <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                    <label className="flex items-center gap-2 text-xs font-medium">
+                      <input
+                        type="checkbox"
+                        checked={outcomeRefundEnabled}
+                        disabled={!canRefund}
+                        onChange={(e) => setOutcomeRefundEnabled(e.target.checked)}
+                      />
+                      Също запиши възстановяване
+                      {!canRefund && (
+                        <span className="ml-2 text-muted-foreground">
+                          (цялата сума вече е възстановена)
+                        </span>
+                      )}
+                    </label>
+                    {outcomeRefundEnabled && canRefund && (
+                      <div className="mt-3 space-y-2">
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              max={(remainingCents / 100).toFixed(2)}
+                              placeholder={(remainingCents / 100).toFixed(2)}
+                              value={outcomeRefundAmount}
+                              onChange={(e) => setOutcomeRefundAmount(e.target.value)}
+                              className="h-8"
+                            />
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              Остатък: {formatPrice(remainingCents)}
+                            </p>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
+                            <select
+                              value={outcomeRefundMethod}
+                              onChange={(e) => setOutcomeRefundMethod(e.target.value as "stripe" | "bank_transfer")}
+                              className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                            >
+                              <option value="bank_transfer">Банков превод</option>
+                              <option value="stripe">Stripe</option>
+                            </select>
+                          </div>
+                        </div>
+                        {outcomeRefundMethod === "stripe" && (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID</label>
+                            <Input
+                              value={outcomeRefundStripeId}
+                              onChange={(e) => setOutcomeRefundStripeId(e.target.value)}
+                              placeholder="re_..."
+                              className="h-8 font-mono"
+                              maxLength={100}
+                            />
+                          </div>
+                        )}
+                        {order.needs_invoice && order.invoice_number && (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+                            <Input
+                              value={outcomeRefundCreditNote}
+                              onChange={(e) => setOutcomeRefundCreditNote(e.target.value)}
+                              placeholder="Задължително (издадена фактура)"
+                              className="h-8"
+                              maxLength={100}
+                            />
+                          </div>
+                        )}
+                        {/* Per-line inventory — only shown for outcome types
+                            where physical return of goods is the norm. */}
+                        {(outcomeType === "returned" || outcomeType === "recalled") && (
+                          <div className="rounded-md border border-border/40 p-2">
+                            <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                              Връщане на стока в склад
+                              {outcomeType === "returned" && outcomeCondition && (
+                                <span className="ml-2 text-muted-foreground normal-case">
+                                  ({outcomeCondition === "sellable" ? "ще се върнат годни" : "ще се отпишат като брак"})
+                                </span>
+                              )}
+                              {outcomeType === "recalled" && (
+                                <span className="ml-2 text-muted-foreground normal-case">(ще се отпишат като брак)</span>
+                              )}
+                            </p>
+                            <div className="space-y-1">
+                              {order.items.map((item) => {
+                                const qtyStr = outcomeReturnQty[item.sku] ?? ""
+                                return (
+                                  <div key={item.sku} className="flex items-center gap-2 text-xs">
+                                    <div className="min-w-0 flex-1 truncate">
+                                      {item.productName}
+                                      <span className="ml-2 text-muted-foreground">({item.quantity} поръчани)</span>
+                                    </div>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      max={item.quantity}
+                                      step="1"
+                                      placeholder="0"
+                                      value={qtyStr}
+                                      onChange={(e) =>
+                                        setOutcomeReturnQty({ ...outcomeReturnQty, [item.sku]: e.target.value })
+                                      }
+                                      className="h-7 w-16"
+                                    />
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              Разпореждането по подразбиране:{" "}
+                              <span className="font-medium">
+                                {disposition === "sellable" ? "годен за продажба" : "негоден (брак)"}
+                              </span>
+                            </p>
+                          </div>
+                        )}
+                        {outcomeType === "package_lost" && (
+                          <p className="text-[11px] text-muted-foreground">
+                            За изгубена пратка няма физическо връщане в склада — възстановява се само сумата.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
               <Button
                 size="sm"
                 variant="outline"
-                disabled={outcomeLoading || !outcomeType || outcomeNote.trim().length < 10}
+                disabled={outcomeLoading || !outcomeType || outcomeNote.trim().length < 10 || (outcomeRefundEnabled && outcomeRefundMethod === "stripe" && !outcomeRefundStripeId.trim())}
                 onClick={async () => {
                   if (!outcomeType) return
                   setOutcomeLoading(true)
                   setOutcomeSaved(false)
                   setActionError("")
                   try {
+                    // Build optional refund payload + inventory adjustments.
+                    let refundPayload: Parameters<typeof recordOrderOutcome>[1]["refund"] = undefined
+                    if (outcomeRefundEnabled) {
+                      const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+                      const remainingCents = order.total_amount - alreadyRefunded
+                      const amountFloat = outcomeRefundAmount ? parseFloat(outcomeRefundAmount) : remainingCents / 100
+                      const amountCents = Math.round(amountFloat * 100)
+
+                      // Per-line adjustments (only for outcome types where
+                      // physical return is expected). Disposition is derived
+                      // from outcome type + condition for clarity.
+                      const disposition: "sellable" | "damaged" =
+                        outcomeType === "returned" && outcomeCondition === "sellable"
+                          ? "sellable"
+                          : "damaged"
+                      const adjustments =
+                        outcomeType === "returned" || outcomeType === "recalled"
+                          ? order.items
+                              .map((item) => {
+                                const qtyStr = outcomeReturnQty[item.sku] ?? ""
+                                const qty = qtyStr ? parseInt(qtyStr, 10) : 0
+                                if (!qty || qty < 1) return null
+                                return { sku: item.sku, quantity: qty, disposition }
+                              })
+                              .filter((a): a is NonNullable<typeof a> => a !== null)
+                          : []
+
+                      refundPayload = {
+                        refundAmount: amountCents,
+                        // Outcome note is structured enough to use as the
+                        // refund reason — avoids making the admin type twice.
+                        refundReason: `[${outcomeType}] ${outcomeNote.trim()}`.slice(0, 1000),
+                        refundMethod: outcomeRefundMethod,
+                        stripeRefundId:
+                          outcomeRefundMethod === "stripe" ? outcomeRefundStripeId.trim() : undefined,
+                        creditNoteRef: outcomeRefundCreditNote.trim() || undefined,
+                        inventoryAdjustments: adjustments.length > 0 ? adjustments : undefined,
+                      }
+                    }
+
                     await recordOrderOutcome(id, {
                       outcomeType,
                       note: outcomeNote.trim(),
@@ -1372,6 +1564,8 @@ export default function AdminOrderDetailPage({
                       recallRef: outcomeRecallRef.trim() || undefined,
                       recallReason: outcomeRecallReason.trim() || undefined,
                       condition: outcomeCondition || undefined,
+                      refund: refundPayload,
+                      clientIdempotencyKey: outcomeRefundEnabled ? outcomeClientKey : undefined,
                     })
                     setOutcomeSaved(true)
                     setOutcomeType("")
@@ -1381,7 +1575,16 @@ export default function AdminOrderDetailPage({
                     setOutcomeRecallRef("")
                     setOutcomeRecallReason("")
                     setOutcomeCondition("")
-                    // Reload order so the new admin note shows in the timeline.
+                    setOutcomeRefundEnabled(false)
+                    setOutcomeRefundAmount("")
+                    setOutcomeRefundStripeId("")
+                    setOutcomeRefundCreditNote("")
+                    setOutcomeReturnQty({})
+                    // New UUID for the next submission so retries of THIS
+                    // submission resolve idempotently to the just-created
+                    // refund rather than starting a new one.
+                    setOutcomeClientKey(crypto.randomUUID())
+                    // Reload order so the new admin note + refund show in the timeline.
                     const refreshed = await getOrder(id)
                     setOrder(refreshed)
                   } catch (err) {

@@ -1410,6 +1410,17 @@ export async function updateRefundAnnotation(
 // The main order status is NOT rewound — per the three-layer design
 // (status / refund / inventory + outcome events), post-shipment exceptions
 // are recorded alongside the status, not in place of it.
+//
+// Optional linked actions — when the admin knows upfront that an outcome
+// requires money and/or stock movement, the same call can also record a
+// refund (which in turn can carry inventoryAdjustments). All three writes
+// share the same clientIdempotencyKey so a retry collapses to no-ops:
+//   1. refund row (idempotent via client_idempotency_key)
+//   2. inventory_log rows (idempotent via deterministic derived keys)
+//   3. outcome event (appended even on retry — cheap, harmless; the
+//      payload is enriched with the refund_id returned from step 1)
+// Outcome-only flows (admin logs delivery_refused but the parcel hasn't
+// come back yet) stay supported: omit `refund`, nothing changes.
 
 const OUTCOME_TYPES = ["delivery_refused", "package_lost", "returned", "recalled"] as const
 type OutcomeType = (typeof OUTCOME_TYPES)[number]
@@ -1435,8 +1446,23 @@ export async function recordOrderOutcome(
     expectedReturnAt?: string
     confirmedLostAt?: string
     receivedAt?: string
+    // Optional linked refund. When provided, a refund row is recorded
+    // before the outcome event and its id is included in the outcome
+    // payload for cross-reference. inventoryAdjustments ride along on
+    // the refund (same wiring as admin-UI refund flow). Required:
+    // clientIdempotencyKey (shared across refund + derived inventory keys).
+    refund?: {
+      refundAmount: number
+      refundReason: string
+      refundMethod: "stripe" | "bank_transfer"
+      refundedAt?: string
+      creditNoteRef?: string
+      stripeRefundId?: string
+      inventoryAdjustments?: RefundInventoryAdjustment[]
+    }
+    clientIdempotencyKey?: string
   },
-): Promise<{ success: true }> {
+): Promise<{ success: true; refundId?: string; inventoryMovements?: number }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1474,6 +1500,12 @@ export async function recordOrderOutcome(
     if (!recallReason) throw new Error("Причината за изтегляне е задължителна")
   }
 
+  // If a refund is being recorded alongside, the client must supply the
+  // idempotency key up-front — it's shared across refund + inventory writes.
+  if (data.refund && !data.clientIdempotencyKey) {
+    throw new Error("Липсва idempotency key за възстановяването")
+  }
+
   // Date validation helpers (ISO or YYYY-MM-DD).
   const parseOptionalDate = (value: string | undefined, label: string): string | null => {
     if (!value) return null
@@ -1500,6 +1532,29 @@ export async function recordOrderOutcome(
     throw new Error(`Това събитие може да се докладва само след изпращане (текущ статус: ${order.status})`)
   }
 
+  // Step 1: if a refund is requested, record it first. Do it before the
+  // outcome event so the outcome payload can reference the refund_id.
+  // recordRefund handles its own inventory_log inserts via adjustments.
+  // A validation failure inside recordRefund bubbles up before we pollute
+  // the audit log with an outcome event referencing a non-existent refund.
+  let refundId: string | undefined
+  let inventoryMovements: number | undefined
+  if (data.refund) {
+    const refundResult = await recordRefund(orderId, {
+      refundAmount: data.refund.refundAmount,
+      refundReason: data.refund.refundReason,
+      refundMethod: data.refund.refundMethod,
+      refundedAt: data.refund.refundedAt,
+      creditNoteRef: data.refund.creditNoteRef,
+      stripeRefundId: data.refund.stripeRefundId,
+      clientIdempotencyKey: data.clientIdempotencyKey!,
+      inventoryAdjustments: data.refund.inventoryAdjustments,
+    })
+    refundId = refundResult.refundId
+    inventoryMovements = refundResult.inventoryMovements
+  }
+
+  // Step 2: record the outcome event.
   const payload: Record<string, unknown> = { note: trimmedNote }
   if (courierRef) payload.courier_ref = courierRef
   if (returnRef) payload.return_ref = returnRef
@@ -1509,6 +1564,8 @@ export async function recordOrderOutcome(
   if (expectedReturnAt) payload.expected_return_at = expectedReturnAt
   if (confirmedLostAt) payload.confirmed_lost_at = confirmedLostAt
   if (receivedAt) payload.received_at = receivedAt
+  if (refundId) payload.refund_id = refundId
+  if (inventoryMovements !== undefined) payload.inventory_movements_count = inventoryMovements
 
   const { error: rpcError } = await supabase.rpc("record_order_outcome", {
     p_order_id: orderId,
@@ -1518,12 +1575,16 @@ export async function recordOrderOutcome(
   })
   if (rpcError) {
     console.error("Failed to record order outcome:", rpcError)
+    // The refund (if any) is already persisted — throwing here would leave
+    // it orphaned from the outcome event. We still throw so the admin UI
+    // surfaces the failure; the refund timeline entry ('refunded' audit
+    // event from the AFTER INSERT trigger) documents that money moved.
     throw new Error("Грешка при записване на събитие")
   }
 
-  // Bridge to the existing timeline until the admin-panel timeline reads from
-  // order_audit_events directly (separate review item). A human-readable
-  // summary as an admin note makes the outcome visible immediately.
+  // Step 3: bridge to the existing timeline until it reads order_audit_events
+  // directly. Human-readable summary as an admin note makes the outcome
+  // visible immediately, now also noting the linked refund amount.
   const summaryParts: string[] = [OUTCOME_LABELS[data.outcomeType]]
   if (data.outcomeType === "returned" && data.condition) {
     summaryParts.push(data.condition === "sellable" ? "годно" : "негодно")
@@ -1531,6 +1592,9 @@ export async function recordOrderOutcome(
   if (returnRef) summaryParts.push(`реф. ${returnRef}`)
   if (recallRef) summaryParts.push(`реф. ${recallRef}`)
   if (courierRef) summaryParts.push(`куриер ${courierRef}`)
+  if (data.refund) {
+    summaryParts.push(`възст. ${(data.refund.refundAmount / 100).toFixed(2)} лв`)
+  }
   const summaryHeader = summaryParts.join(" — ")
   const noteBody = recallReason ? `${recallReason}\n\n${trimmedNote}` : trimmedNote
   const fullNote = `[${summaryHeader}] ${noteBody}`
@@ -1544,7 +1608,7 @@ export async function recordOrderOutcome(
     console.error("Failed to append admin note for outcome:", noteError)
   }
 
-  return { success: true }
+  return { success: true, refundId, inventoryMovements }
 }
 
 export async function recordComplaint(
