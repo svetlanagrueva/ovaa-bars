@@ -1015,26 +1015,27 @@ export async function recordCodSettlement(
 
 // ─── Refund tracking ─────────────────────────────────────────────────────────
 // Refunds live in the order_refunds child table (one row per refund, many per
-// order). Idempotency for webhook-originated rows is via UNIQUE
-// stripe_refund_id; admin-originated Stripe refunds supply the same ID so
-// either arrival order results in exactly one row.
+// order). Single-responsibility: recordRefund writes ONLY to order_refunds.
+// Stock movements linked to a refund are recorded by a separate server action
+// (recordStockMovement) — the UI orchestrates the "refund → stock outcome"
+// flow as two explicit steps, preserving the three-layer separation:
+//   refund = money     (recordRefund writes here)
+//   inventory = goods  (recordStockMovement writes here, with
+//                       reference_type='return', reference_id=<refund.id>)
+//   outcome = audit    (recordOrderOutcome writes here, separately)
 //
-// Phase 1 (current): admin issues Stripe refunds in the Stripe dashboard, then
-// records them here with the Stripe refund ID. COD refunds are bank-transfer
-// only, no gateway ID. The webhook creates rows the admin hasn't recorded yet
-// and admin can annotate afterward (reason, credit_note_ref) via
-// updateRefundAnnotation.
+// Idempotency for webhook-originated rows is via UNIQUE stripe_refund_id;
+// admin-originated refunds supply a client_idempotency_key so a retry
+// re-resolves to the same row without double-insert.
 //
-// Phase 2: the admin UI will call stripe.refunds.create() directly and insert
-// the row synchronously — same table, same shape, no schema change needed.
-
-export type RefundDisposition = "sellable" | "damaged"
-
-export interface RefundInventoryAdjustment {
-  sku: string
-  quantity: number
-  disposition: RefundDisposition
-}
+// Phase 1 (current): admin issues Stripe refunds in the Stripe dashboard,
+// then records them here with the Stripe refund ID. COD refunds are
+// bank-transfer only, no gateway ID. The webhook creates rows the admin
+// hasn't recorded yet and admin can annotate afterward (reason,
+// credit_note_ref) via updateRefundAnnotation.
+//
+// Phase 2: the admin UI will call stripe.refunds.create() directly and
+// insert the row synchronously — same table, same shape, no schema change.
 
 export async function recordRefund(
   orderId: string,
@@ -1046,9 +1047,8 @@ export async function recordRefund(
     creditNoteRef?: string
     stripeRefundId?: string
     clientIdempotencyKey: string
-    inventoryAdjustments?: RefundInventoryAdjustment[]
   },
-): Promise<{ success: true; refundId: string; inventoryMovements: number }> {
+): Promise<{ success: true; refundId: string }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1108,33 +1108,10 @@ export async function recordRefund(
     refundedAtValue = new Date().toISOString()
   }
 
-  // Validate inventory adjustments shape (cross-SKU checks happen after we
-  // fetch order_items so we can verify SKU membership + quantity bounds).
-  const adjustments = data.inventoryAdjustments ?? []
-  const seenPairs = new Set<string>()
-  for (const adj of adjustments) {
-    if (!adj.sku || typeof adj.sku !== "string") {
-      throw new Error("SKU е задължителен за движение на склад")
-    }
-    if (!Number.isInteger(adj.quantity) || adj.quantity < 1) {
-      throw new Error(`Количеството за SKU ${adj.sku} трябва да е положително цяло число`)
-    }
-    if (adj.disposition !== "sellable" && adj.disposition !== "damaged") {
-      throw new Error(`Невалидно разпореждане за SKU ${adj.sku}`)
-    }
-    const key = `${adj.sku}::${adj.disposition}`
-    if (seenPairs.has(key)) {
-      throw new Error(`Дублиран запис за SKU ${adj.sku} с разпореждане ${adj.disposition}`)
-    }
-    seenPairs.add(key)
-  }
-
   const supabase = await createClient()
 
   // Fast-path idempotency: if a refund with this client_idempotency_key
-  // exists, this is a retry. Return the existing ID without re-inserting
-  // (the inventory inserts below still re-run, but are themselves
-  // idempotent via deterministic idempotency_key values).
+  // exists, this is a retry. Return the existing ID without re-inserting.
   const { data: existingRefunds, error: existingError } = await supabase
     .from("order_refunds")
     .select("id, order_id")
@@ -1144,206 +1121,102 @@ export async function recordRefund(
     throw new Error("Грешка при проверка на idempotency")
   }
 
-  let refundId: string
-  let refundInserted = false
-
   if (existingRefunds && existingRefunds.length > 0) {
     const existing = existingRefunds[0]
     if (existing.order_id !== orderId) {
       throw new Error("Idempotency key принадлежи на друга поръчка")
     }
-    refundId = existing.id
-  } else {
-    // No existing row — run full validation + insert.
-    const { data: order, error: fetchError } = await supabase
-      .from("orders")
-      .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, stripe_payment_intent_id")
-      .eq("id", orderId)
-      .single()
+    return { success: true, refundId: existing.id }
+  }
 
-    if (fetchError || !order) throw new Error("Поръчката не е намерена")
-    if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
-    if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
-      throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
-    }
+  // No existing row — run full validation + insert.
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, stripe_payment_intent_id")
+    .eq("id", orderId)
+    .single()
 
-    // Sum existing refunds for friendly overshoot message (trigger is backstop).
-    const { data: sumRows, error: sumError } = await supabase
-      .from("order_refunds")
-      .select("amount_cents")
-      .eq("order_id", orderId)
-    if (sumError) {
-      console.error("Failed to fetch existing refunds:", sumError)
-      throw new Error("Грешка при проверка на предишни възстановявания")
-    }
-    const alreadyRefunded = (sumRows ?? []).reduce(
-      (sum, r) => sum + (r.amount_cents ?? 0),
-      0,
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
+  if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
+    throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
+  }
+
+  // Sum existing refunds for friendly overshoot message (trigger is backstop).
+  const { data: sumRows, error: sumError } = await supabase
+    .from("order_refunds")
+    .select("amount_cents")
+    .eq("order_id", orderId)
+  if (sumError) {
+    console.error("Failed to fetch existing refunds:", sumError)
+    throw new Error("Грешка при проверка на предишни възстановявания")
+  }
+  const alreadyRefunded = (sumRows ?? []).reduce(
+    (sum, r) => sum + (r.amount_cents ?? 0),
+    0,
+  )
+  if (alreadyRefunded + data.refundAmount > order.total_amount) {
+    const remaining = order.total_amount - alreadyRefunded
+    throw new Error(
+      `Сумата за възстановяване не може да надвишава остатъка по поръчката (${(remaining / 100).toFixed(2)} лв)`,
     )
-    if (alreadyRefunded + data.refundAmount > order.total_amount) {
-      const remaining = order.total_amount - alreadyRefunded
-      throw new Error(
-        `Сумата за възстановяване не може да надвишава остатъка по поръчката (${(remaining / 100).toFixed(2)} лв)`,
-      )
-    }
+  }
 
-    // Validate refundedAt not before delivered_at
-    if (order.delivered_at && data.refundedAt) {
-      const deliveredDate = new Date(order.delivered_at)
-      const refundDate = new Date(data.refundedAt)
-      if (refundDate < deliveredDate) {
-        throw new Error("Датата на възстановяване не може да е преди датата на доставка")
-      }
-    }
-
-    // Conditional credit_note_ref validation: invoice issued → credit note required
-    if (order.needs_invoice && order.invoice_number && !trimmedCreditNote) {
-      throw new Error("За поръчка с издадена фактура е необходима референция на кредитно известие")
-    }
-    // If no invoice was issued, silently drop credit_note_ref (not an error).
-    const creditNoteRefForInsert =
-      order.needs_invoice && order.invoice_number ? trimmedCreditNote : null
-
-    // Cross-SKU validation for adjustments — fetch order items + prior
-    // returns to bound total returned per SKU.
-    if (adjustments.length > 0) {
-      const { data: orderItems, error: itemsErr } = await supabase
-        .from("order_items")
-        .select("sku, quantity")
-        .eq("order_id", orderId)
-      if (itemsErr || !orderItems) {
-        console.error("Failed to load order items for adjustment validation:", itemsErr)
-        throw new Error("Грешка при проверка на артикулите")
-      }
-      const orderedBySku = new Map<string, number>()
-      for (const item of orderItems) {
-        orderedBySku.set(item.sku, (orderedBySku.get(item.sku) ?? 0) + item.quantity)
-      }
-      for (const adj of adjustments) {
-        if (!orderedBySku.has(adj.sku)) {
-          throw new Error(`SKU ${adj.sku} не е част от тази поръчка`)
-        }
-      }
-
-      const { data: priorReturns, error: priorErr } = await supabase
-        .from("inventory_log")
-        .select("sku, quantity, type")
-        .eq("order_id", orderId)
-        .in("type", ["return_in", "damaged"])
-      if (priorErr) {
-        console.error("Failed to load prior returns:", priorErr)
-        throw new Error("Грешка при проверка на предишни връщания")
-      }
-      const priorBySku = new Map<string, number>()
-      for (const r of priorReturns ?? []) {
-        priorBySku.set(r.sku, (priorBySku.get(r.sku) ?? 0) + (r.quantity as number))
-      }
-
-      const thisBatchBySku = new Map<string, number>()
-      for (const adj of adjustments) {
-        thisBatchBySku.set(adj.sku, (thisBatchBySku.get(adj.sku) ?? 0) + adj.quantity)
-      }
-      for (const [sku, thisQty] of thisBatchBySku) {
-        const ordered = orderedBySku.get(sku) ?? 0
-        const prior = priorBySku.get(sku) ?? 0
-        if (prior + thisQty > ordered) {
-          throw new Error(
-            `Не може да се върнат повече бройки от поръчаните за SKU ${sku} (поръчани ${ordered}, вече върнати ${prior}, опит за връщане сега ${thisQty})`,
-          )
-        }
-      }
-    }
-
-    const { data: inserted, error: insertError } = await supabase
-      .from("order_refunds")
-      .insert({
-        order_id: orderId,
-        stripe_refund_id: trimmedStripeRefundId,
-        amount_cents: data.refundAmount,
-        method: data.refundMethod,
-        source: "admin_ui",
-        reason: trimmedReason,
-        credit_note_ref: creditNoteRefForInsert,
-        recorded_by: "admin",
-        refunded_at: refundedAtValue,
-        client_idempotency_key: data.clientIdempotencyKey,
-      })
-      .select("id")
-      .single()
-
-    if (insertError) {
-      if (insertError.code === "23505") {
-        // Ambiguous — could be client_idempotency_key (concurrent retry) or
-        // stripe_refund_id (webhook recorded this refund already). Fetch by
-        // the client key to disambiguate.
-        const { data: recovered } = await supabase
-          .from("order_refunds")
-          .select("id, order_id")
-          .eq("client_idempotency_key", data.clientIdempotencyKey)
-        if (recovered && recovered.length > 0 && recovered[0].order_id === orderId) {
-          refundId = recovered[0].id
-        } else {
-          // Must have been the stripe_refund_id unique — same Stripe refund
-          // already in the table (webhook beat us, or dupe paste).
-          throw new Error("Това Stripe възстановяване вече е записано за тази поръчка")
-        }
-      } else {
-        console.error("Failed to record refund:", insertError)
-        throw new Error("Грешка при записване на възстановяване")
-      }
-    } else {
-      refundId = inserted!.id
-      refundInserted = true
+  // Validate refundedAt not before delivered_at
+  if (order.delivered_at && data.refundedAt) {
+    const deliveredDate = new Date(order.delivered_at)
+    const refundDate = new Date(data.refundedAt)
+    if (refundDate < deliveredDate) {
+      throw new Error("Датата на възстановяване не може да е преди датата на доставка")
     }
   }
 
-  // Insert inventory movements. Deterministic idempotency_key keeps this
-  // safe to re-run on retry: the first run populates, subsequent runs
-  // collide (23505) and are treated as no-ops.
-  let inventoryMovements = 0
-  for (const adj of adjustments) {
-    const idempotencyKey = `${data.clientIdempotencyKey}-${adj.sku}-${adj.disposition}`
-    const type = adj.disposition === "sellable" ? "return_in" : "damaged"
-    // 'damaged' requires non-empty notes (chk_inventory_log_damaged).
-    const notes = adj.disposition === "damaged"
-      ? `Повреден при връщане (refund ${refundId.slice(0, 8)}): ${trimmedReason}`.slice(0, 500)
-      : null
+  // Conditional credit_note_ref validation: invoice issued → credit note required
+  if (order.needs_invoice && order.invoice_number && !trimmedCreditNote) {
+    throw new Error("За поръчка с издадена фактура е необходима референция на кредитно известие")
+  }
+  // If no invoice was issued, silently drop credit_note_ref (not an error).
+  const creditNoteRefForInsert =
+    order.needs_invoice && order.invoice_number ? trimmedCreditNote : null
 
-    const { error: invError } = await supabase
-      .from("inventory_log")
-      .insert({
-        sku: adj.sku,
-        type,
-        quantity: adj.quantity,
-        order_id: orderId,
-        reference_type: "return",
-        reference_id: refundId,
-        notes,
-        created_by: "admin",
-        idempotency_key: idempotencyKey,
-      })
+  const { data: inserted, error: insertError } = await supabase
+    .from("order_refunds")
+    .insert({
+      order_id: orderId,
+      stripe_refund_id: trimmedStripeRefundId,
+      amount_cents: data.refundAmount,
+      method: data.refundMethod,
+      source: "admin_ui",
+      reason: trimmedReason,
+      credit_note_ref: creditNoteRefForInsert,
+      recorded_by: "admin",
+      refunded_at: refundedAtValue,
+      client_idempotency_key: data.clientIdempotencyKey,
+    })
+    .select("id")
+    .single()
 
-    if (invError) {
-      if (invError.code === "23505") {
-        // Already inserted on a prior attempt — idempotent no-op.
-        continue
+  if (insertError) {
+    if (insertError.code === "23505") {
+      // Ambiguous — could be client_idempotency_key (concurrent retry) or
+      // stripe_refund_id (webhook recorded this refund already). Fetch by
+      // the client key to disambiguate.
+      const { data: recovered } = await supabase
+        .from("order_refunds")
+        .select("id, order_id")
+        .eq("client_idempotency_key", data.clientIdempotencyKey)
+      if (recovered && recovered.length > 0 && recovered[0].order_id === orderId) {
+        return { success: true, refundId: recovered[0].id }
       }
-      // Don't fail the whole operation: the refund is recorded. Admin can
-      // reconcile inventory manually if needed. Log so the error surfaces.
-      console.error(
-        `Failed to insert inventory movement for refund ${refundId} (sku=${adj.sku}, disposition=${adj.disposition}):`,
-        invError,
-      )
-      continue
+      // Must have been the stripe_refund_id unique — same Stripe refund
+      // already in the table (webhook beat us, or dupe paste).
+      throw new Error("Това Stripe възстановяване вече е записано за тази поръчка")
     }
-    inventoryMovements++
+    console.error("Failed to record refund:", insertError)
+    throw new Error("Грешка при записване на възстановяване")
   }
 
-  return {
-    success: true,
-    refundId,
-    inventoryMovements: refundInserted ? inventoryMovements : 0,
-  }
+  return { success: true, refundId: inserted!.id }
 }
 
 // Admin-annotation edits on existing refund rows (reason, credit_note_ref).
@@ -1408,20 +1281,16 @@ export async function updateRefundAnnotation(
 // Records a domain event (delivery_refused / package_lost / returned / recalled)
 // via the record_order_outcome RPC and appends a human-readable summary to
 // admin_notes so the event appears in the existing order timeline UI.
-// The main order status is NOT rewound — per the three-layer design
-// (status / refund / inventory + outcome events), post-shipment exceptions
-// are recorded alongside the status, not in place of it.
 //
-// Optional linked actions — when the admin knows upfront that an outcome
-// requires money and/or stock movement, the same call can also record a
-// refund (which in turn can carry inventoryAdjustments). All three writes
-// share the same clientIdempotencyKey so a retry collapses to no-ops:
-//   1. refund row (idempotent via client_idempotency_key)
-//   2. inventory_log rows (idempotent via deterministic derived keys)
-//   3. outcome event (appended even on retry — cheap, harmless; the
-//      payload is enriched with the refund_id returned from step 1)
-// Outcome-only flows (admin logs delivery_refused but the parcel hasn't
-// come back yet) stay supported: omit `refund`, nothing changes.
+// Strictly single-responsibility: this records the *event*, nothing else.
+// The order status is not rewound (per the three-layer design:
+// status / refund / inventory + outcome events) and no linked refund or
+// inventory writes happen here. Those are separate concerns handled by
+// recordRefund (money, with its own inventoryAdjustments for returned
+// goods) and recordStockMovement (pure stock). The admin UI coordinates
+// them as a guided multi-step flow — one user interaction, three
+// independent server actions — preserving clean separation between audit,
+// money, and goods.
 
 const OUTCOME_TYPES = ["delivery_refused", "package_lost", "returned", "recalled"] as const
 type OutcomeType = (typeof OUTCOME_TYPES)[number]
@@ -1447,23 +1316,8 @@ export async function recordOrderOutcome(
     expectedReturnAt?: string
     confirmedLostAt?: string
     receivedAt?: string
-    // Optional linked refund. When provided, a refund row is recorded
-    // before the outcome event and its id is included in the outcome
-    // payload for cross-reference. inventoryAdjustments ride along on
-    // the refund (same wiring as admin-UI refund flow). Required:
-    // clientIdempotencyKey (shared across refund + derived inventory keys).
-    refund?: {
-      refundAmount: number
-      refundReason: string
-      refundMethod: "stripe" | "bank_transfer"
-      refundedAt?: string
-      creditNoteRef?: string
-      stripeRefundId?: string
-      inventoryAdjustments?: RefundInventoryAdjustment[]
-    }
-    clientIdempotencyKey?: string
   },
-): Promise<{ success: true; refundId?: string; inventoryMovements?: number }> {
+): Promise<{ success: true }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1501,12 +1355,6 @@ export async function recordOrderOutcome(
     if (!recallReason) throw new Error("Причината за изтегляне е задължителна")
   }
 
-  // If a refund is being recorded alongside, the client must supply the
-  // idempotency key up-front — it's shared across refund + inventory writes.
-  if (data.refund && !data.clientIdempotencyKey) {
-    throw new Error("Липсва idempotency key за възстановяването")
-  }
-
   // Date validation helpers (ISO or YYYY-MM-DD).
   const parseOptionalDate = (value: string | undefined, label: string): string | null => {
     if (!value) return null
@@ -1533,29 +1381,6 @@ export async function recordOrderOutcome(
     throw new Error(`Това събитие може да се докладва само след изпращане (текущ статус: ${order.status})`)
   }
 
-  // Step 1: if a refund is requested, record it first. Do it before the
-  // outcome event so the outcome payload can reference the refund_id.
-  // recordRefund handles its own inventory_log inserts via adjustments.
-  // A validation failure inside recordRefund bubbles up before we pollute
-  // the audit log with an outcome event referencing a non-existent refund.
-  let refundId: string | undefined
-  let inventoryMovements: number | undefined
-  if (data.refund) {
-    const refundResult = await recordRefund(orderId, {
-      refundAmount: data.refund.refundAmount,
-      refundReason: data.refund.refundReason,
-      refundMethod: data.refund.refundMethod,
-      refundedAt: data.refund.refundedAt,
-      creditNoteRef: data.refund.creditNoteRef,
-      stripeRefundId: data.refund.stripeRefundId,
-      clientIdempotencyKey: data.clientIdempotencyKey!,
-      inventoryAdjustments: data.refund.inventoryAdjustments,
-    })
-    refundId = refundResult.refundId
-    inventoryMovements = refundResult.inventoryMovements
-  }
-
-  // Step 2: record the outcome event.
   const payload: Record<string, unknown> = { note: trimmedNote }
   if (courierRef) payload.courier_ref = courierRef
   if (returnRef) payload.return_ref = returnRef
@@ -1565,8 +1390,6 @@ export async function recordOrderOutcome(
   if (expectedReturnAt) payload.expected_return_at = expectedReturnAt
   if (confirmedLostAt) payload.confirmed_lost_at = confirmedLostAt
   if (receivedAt) payload.received_at = receivedAt
-  if (refundId) payload.refund_id = refundId
-  if (inventoryMovements !== undefined) payload.inventory_movements_count = inventoryMovements
 
   const { error: rpcError } = await supabase.rpc("record_order_outcome", {
     p_order_id: orderId,
@@ -1576,16 +1399,12 @@ export async function recordOrderOutcome(
   })
   if (rpcError) {
     console.error("Failed to record order outcome:", rpcError)
-    // The refund (if any) is already persisted — throwing here would leave
-    // it orphaned from the outcome event. We still throw so the admin UI
-    // surfaces the failure; the refund timeline entry ('refunded' audit
-    // event from the AFTER INSERT trigger) documents that money moved.
     throw new Error("Грешка при записване на събитие")
   }
 
-  // Step 3: bridge to the existing timeline until it reads order_audit_events
-  // directly. Human-readable summary as an admin note makes the outcome
-  // visible immediately, now also noting the linked refund amount.
+  // Bridge to the existing timeline until the admin-panel timeline reads
+  // from order_audit_events directly. Human-readable summary as an admin
+  // note makes the outcome visible immediately.
   const summaryParts: string[] = [OUTCOME_LABELS[data.outcomeType]]
   if (data.outcomeType === "returned" && data.condition) {
     summaryParts.push(data.condition === "sellable" ? "годно" : "негодно")
@@ -1593,9 +1412,6 @@ export async function recordOrderOutcome(
   if (returnRef) summaryParts.push(`реф. ${returnRef}`)
   if (recallRef) summaryParts.push(`реф. ${recallRef}`)
   if (courierRef) summaryParts.push(`куриер ${courierRef}`)
-  if (data.refund) {
-    summaryParts.push(`възст. ${(data.refund.refundAmount / 100).toFixed(2)} лв`)
-  }
   const summaryHeader = summaryParts.join(" — ")
   const noteBody = recallReason ? `${recallReason}\n\n${trimmedNote}` : trimmedNote
   const fullNote = `[${summaryHeader}] ${noteBody}`
@@ -1609,7 +1425,7 @@ export async function recordOrderOutcome(
     console.error("Failed to append admin note for outcome:", noteError)
   }
 
-  return { success: true, refundId, inventoryMovements }
+  return { success: true }
 }
 
 export async function recordComplaint(
@@ -2310,9 +2126,11 @@ export async function recordStockMovement(data: {
     throw new Error("Невалидна дата на годност")
   }
 
-  // Validate orderId — only for return_in
-  if (data.orderId && data.type !== "return_in") {
-    throw new Error("Поръчка може да се свърже само при връщане")
+  // Validate orderId — allowed on return_in (sellable return) and damaged
+  // (damaged return). On other movement types, order_id wouldn't have
+  // meaningful semantics under the current reference_type rules.
+  if (data.orderId && data.type !== "return_in" && data.type !== "damaged") {
+    throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (data.orderId && !uuidRegex.test(data.orderId)) {
@@ -2320,6 +2138,64 @@ export async function recordStockMovement(data: {
   }
 
   const supabase = await createClient()
+
+  // Order-scoped return cap: when the movement is tied to a specific
+  // customer order return (order_id + reference_type='return' +
+  // return_in|damaged), validate:
+  //   (a) the SKU was actually part of that order
+  //   (b) sum(prior return-scoped movements for this (order, sku)) +
+  //       this quantity ≤ sum(order_out quantities for this (order, sku))
+  // Matches the DB trigger enforce_order_return_cap (migration
+  // 20260423210000) — same cap, same Bulgarian wording. App-layer runs
+  // first for friendlier UX; trigger is the backstop.
+  //
+  // Warehouse-internal damage (reference_type='internal', no orderId)
+  // deliberately bypasses this — you can write off spoilage or breakage
+  // unrelated to any customer shipment. Adjustments (gain/loss) also
+  // bypass — they're per-SKU reconciliation, not per-order returns.
+  const isOrderReturn =
+    data.orderId &&
+    data.referenceType === "return" &&
+    (data.type === "return_in" || data.type === "damaged")
+
+  if (isOrderReturn) {
+    const { data: orderItems, error: itemsErr } = await supabase
+      .from("order_items")
+      .select("sku, quantity")
+      .eq("order_id", data.orderId!)
+    if (itemsErr) {
+      console.error("Failed to load order_items for return-cap validation:", itemsErr)
+      throw new Error("Грешка при проверка на артикулите на поръчката")
+    }
+    const orderSkuQty = (orderItems ?? []).find((i) => i.sku === data.sku)?.quantity ?? 0
+    if (orderSkuQty === 0) {
+      throw new Error(`SKU ${data.sku} не е част от тази поръчка`)
+    }
+
+    // Sum prior return-scoped movements (return_in + damaged with
+    // reference_type='return') for this (order_id, sku).
+    const { data: priorReturns, error: priorErr } = await supabase
+      .from("inventory_log")
+      .select("quantity")
+      .eq("order_id", data.orderId!)
+      .eq("sku", data.sku)
+      .eq("reference_type", "return")
+      .in("type", ["return_in", "damaged"])
+    if (priorErr) {
+      console.error("Failed to load prior returns:", priorErr)
+      throw new Error("Грешка при проверка на предишни връщания")
+    }
+    const priorQty = (priorReturns ?? []).reduce((s, r) => s + (r.quantity as number), 0)
+
+    if (priorQty + data.quantity > orderSkuQty) {
+      // Wording matches the DB trigger verbatim so the admin sees
+      // consistent Bulgarian copy whichever layer rejects the insert.
+      throw new Error(
+        `Не можете да върнете/бракувате повече бройки от изпратените за този артикул по тази поръчка (SKU ${data.sku}, изпратени ${orderSkuQty}, вече върнати ${priorQty}, опит за ${data.quantity})`,
+      )
+    }
+  }
+
   const { error } = await supabase.from("inventory_log").insert({
     sku: data.sku,
     type: data.type,

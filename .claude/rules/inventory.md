@@ -71,6 +71,29 @@ if (error) console.error("Failed to restore inventory:", error)
 ```
 Never chain `.catch()` on a Supabase call — throws `TypeError: supabase.rpc(...).catch is not a function`.
 
+## Return cap (order-scoped, narrow)
+A customer order ships N units of a SKU via `order_out` rows. Physical returns and return-related write-offs MUST NOT exceed N per `(order_id, sku)`.
+
+**Scope — all four conditions must hold:**
+- `order_id IS NOT NULL`
+- `reference_type = 'return'`
+- `type IN ('return_in', 'damaged')`
+- (plus the movement is being inserted; UPDATE/DELETE blocked by append-only)
+
+**Deliberately NOT capped:**
+- `damaged` with `reference_type='internal'` — warehouse spoilage, breakage, expiry write-off. Unrelated to any customer order; could discover 50 units went bad in storage even if only 30 were ever shipped.
+- `adjustment_gain` / `adjustment_loss` — per-SKU reconciliation from physical counts, not per-order returns.
+- Any `return_in` / `damaged` without `order_id` — orphaned return handling (e.g. B2B returns).
+
+**Where enforced:**
+1. App-layer (primary): `recordStockMovement` in `app/actions/admin.ts` runs when the scope conditions match. Fetches `order_items` + sums prior return-scoped movements, rejects with a friendly Bulgarian message: `Не можете да върнете/бракувате повече бройки от изпратените за този артикул по тази поръчка (SKU X, изпратени N, вече върнати M, опит за K)`.
+2. DB trigger (backstop): `trg_enforce_order_return_cap` in migration `20260423210000_enforce_order_return_cap.sql`. BEFORE INSERT only — relies on the `inventory_log` append-only triggers (migration `20260420150533_inventory_log_immutable.sql`) blocking UPDATE/DELETE so an already-capped row can't later become non-capped. Same Bulgarian wording as app-layer for consistent UX regardless of which layer catches the violation.
+
+**Correction path:**
+Since inventory_log is append-only, you cannot edit a bad row. Corrections are new rows:
+- Over-returned by mistake → insert an offsetting `adjustment_loss` with `reference_type='internal'` (cap doesn't apply — adjustments aren't return-scoped).
+- Missed a valid return → just append another `return_in` row for the remaining quantity (the cap permits it if under the shipped quantity).
+
 ## Non-negative stock policy (ledger vs snapshot distinction)
 `inventory_log` is the **ledger** — append-only, reflects reality including operational debt, backdated corrections, discovered shortages. `inventory_current` is the **operational snapshot** used for sold-out decisions.
 

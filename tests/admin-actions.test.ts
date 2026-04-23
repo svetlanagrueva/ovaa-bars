@@ -1833,6 +1833,21 @@ describe("admin actions", () => {
     })
 
     it("records return_in with batchId and orderId", async () => {
+      // Order-scoped return: the new return-cap validation fires here,
+      // requiring order_items + prior-returns mocks. Two thenable queries
+      // precede the insert.
+      const calls: unknown[] = [
+        mockThenableResult([{ sku: "EGO-DC-12", quantity: 3 }], null), // order_items
+        mockThenableResult([], null),                                   // prior returns
+        mockSupabase,                                                    // inventory_log insert
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       const result = await recordStockMovement({
@@ -1855,6 +1870,170 @@ describe("admin actions", () => {
           reference_type: "return",
         }),
       )
+    })
+
+    // ─── Return-cap coverage ─────────────────────────────────────────
+    // Narrow scope: applies only when orderId + reference_type='return'
+    // + type in {return_in, damaged}. Other movements bypass.
+
+    it("rejects return-scoped movement for SKU not in the order", async () => {
+      const calls: unknown[] = [
+        mockThenableResult([{ sku: "EGO-WCR-12", quantity: 2 }], null), // order_items — different SKU
+        mockThenableResult([], null),
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const { recordStockMovement } = await import("@/app/actions/admin")
+      await expect(
+        recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+          sku: "EGO-DC-12",
+          type: "return_in",
+          quantity: 1,
+          referenceType: "return",
+          referenceId: "refund-abc",
+          orderId: validUUID,
+        }),
+      ).rejects.toThrow("не е част от тази поръчка")
+    })
+
+    it("rejects over-restock with the friendly Bulgarian message", async () => {
+      const calls: unknown[] = [
+        mockThenableResult([{ sku: "EGO-DC-12", quantity: 2 }], null),  // shipped 2
+        mockThenableResult([{ quantity: 2 }], null),                     // already returned 2
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const { recordStockMovement } = await import("@/app/actions/admin")
+      await expect(
+        recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+          sku: "EGO-DC-12",
+          type: "return_in",
+          quantity: 1, // prior 2 + 1 > shipped 2
+          referenceType: "return",
+          referenceId: "refund-abc",
+          orderId: validUUID,
+        }),
+      ).rejects.toThrow("Не можете да върнете/бракувате повече бройки")
+    })
+
+    it("return_in + damaged under 'return' scope share the cap", async () => {
+      // Shipped 3, already damaged 1, attempt to return_in 3 → 1+3 > 3 → rejects.
+      const calls: unknown[] = [
+        mockThenableResult([{ sku: "EGO-DC-12", quantity: 3 }], null),
+        mockThenableResult([{ quantity: 1 }], null),
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const { recordStockMovement } = await import("@/app/actions/admin")
+      await expect(
+        recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+          sku: "EGO-DC-12",
+          type: "return_in",
+          quantity: 3,
+          referenceType: "return",
+          referenceId: "refund-abc",
+          orderId: validUUID,
+        }),
+      ).rejects.toThrow("Не можете да върнете")
+    })
+
+    it("warehouse-internal damaged bypasses the cap (no orderId / reference_type='internal')", async () => {
+      // Default mockSupabase routing — no thenables set up; insert succeeds.
+      // Critical: recordStockMovement must NOT attempt to load order_items
+      // when orderId is absent, or we'd see an unexpected from() call.
+      const fromSpy = vi.fn(() => mockSupabase)
+      mockSupabase.from = fromSpy
+
+      const { recordStockMovement } = await import("@/app/actions/admin")
+      const result = await recordStockMovement({
+        idempotencyKey: TEST_IDEMPOTENCY_KEY,
+        sku: "EGO-DC-12",
+        type: "damaged",
+        quantity: 100, // far more than any order — cap MUST NOT apply
+        referenceType: "internal",
+        referenceId: "SPOIL-2026-04",
+        notes: "Batch discovered spoiled in warehouse",
+      })
+
+      expect(result).toEqual({ success: true })
+      // Single from() call — the inventory_log insert only. No order_items
+      // fetch, no prior-returns fetch.
+      expect(fromSpy).toHaveBeenCalledTimes(1)
+      expect(fromSpy).toHaveBeenCalledWith("inventory_log")
+    })
+
+    it("damaged with orderId + reference_type='return' enforces the cap", async () => {
+      // The admin marks goods as damaged through the return flow — still
+      // counts against the shipped cap because goods came out of the order.
+      const calls: unknown[] = [
+        mockThenableResult([{ sku: "EGO-DC-12", quantity: 2 }], null),
+        mockThenableResult([{ quantity: 2 }], null),
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const { recordStockMovement } = await import("@/app/actions/admin")
+      await expect(
+        recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+          sku: "EGO-DC-12",
+          type: "damaged",
+          quantity: 1,
+          referenceType: "return",
+          referenceId: "refund-abc",
+          orderId: validUUID,
+          notes: "Opened on arrival",
+        }),
+      ).rejects.toThrow("Не можете да върнете")
+    })
+
+    it("exact-match returns succeed (shipped 3, prior 2, returning 1)", async () => {
+      const calls: unknown[] = [
+        mockThenableResult([{ sku: "EGO-DC-12", quantity: 3 }], null),
+        mockThenableResult([{ quantity: 2 }], null),
+        mockSupabase, // insert
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      })
+
+      const { recordStockMovement } = await import("@/app/actions/admin")
+      const result = await recordStockMovement({
+        idempotencyKey: TEST_IDEMPOTENCY_KEY,
+        sku: "EGO-DC-12",
+        type: "return_in",
+        quantity: 1,
+        referenceType: "return",
+        referenceId: "refund-abc",
+        orderId: validUUID,
+      })
+
+      expect(result).toEqual({ success: true })
     })
   })
 
@@ -2142,7 +2321,7 @@ describe("admin actions", () => {
         clientIdempotencyKey: validClientKey,
       })
 
-      expect(result).toEqual({ success: true, refundId: "refund-id-xyz", inventoryMovements: 0 })
+      expect(result).toEqual({ success: true, refundId: "refund-id-xyz" })
       expect(insertSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           order_id: validOrderId,
@@ -2198,7 +2377,6 @@ describe("admin actions", () => {
       expect(result).toEqual({
         success: true,
         refundId: "already-saved-id",
-        inventoryMovements: 0,
       })
       // No insert on order_refunds since row already exists
       expect(insertSpy).not.toHaveBeenCalled()
@@ -2317,200 +2495,6 @@ describe("admin actions", () => {
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("не може да е в бъдещето")
-    })
-
-    // ─── Inventory adjustment coverage ───────────────────────────────────
-
-    it("rejects inventory adjustment with non-positive quantity", async () => {
-      const { recordRefund } = await import("@/app/actions/admin")
-      await expect(
-        recordRefund(validOrderId, {
-          refundAmount: 1000,
-          refundReason: "Test",
-          refundMethod: "bank_transfer",
-          clientIdempotencyKey: validClientKey,
-          inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 0, disposition: "sellable" }],
-        }),
-      ).rejects.toThrow("положително цяло число")
-    })
-
-    it("rejects invalid disposition", async () => {
-      const { recordRefund } = await import("@/app/actions/admin")
-      await expect(
-        recordRefund(validOrderId, {
-          refundAmount: 1000,
-          refundReason: "Test",
-          refundMethod: "bank_transfer",
-          clientIdempotencyKey: validClientKey,
-          inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "bogus" as any }],
-        }),
-      ).rejects.toThrow("Невалидно разпореждане")
-    })
-
-    it("rejects duplicate (sku, disposition) pairs in adjustments", async () => {
-      const { recordRefund } = await import("@/app/actions/admin")
-      await expect(
-        recordRefund(validOrderId, {
-          refundAmount: 1000,
-          refundReason: "Test",
-          refundMethod: "bank_transfer",
-          clientIdempotencyKey: validClientKey,
-          inventoryAdjustments: [
-            { sku: "EGO-DC-12", quantity: 1, disposition: "sellable" },
-            { sku: "EGO-DC-12", quantity: 1, disposition: "sellable" },
-          ],
-        }),
-      ).rejects.toThrow("Дублиран запис")
-    })
-
-    it("rejects adjustment for SKU not in the order", async () => {
-      setupRecordRefundMocks({
-        existingRefunds: [],
-        includeAdjustmentQueries: true,
-        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
-        priorReturns: [],
-      })
-
-      const { recordRefund } = await import("@/app/actions/admin")
-      await expect(
-        recordRefund(validOrderId, {
-          refundAmount: 1000,
-          refundReason: "Test",
-          refundMethod: "bank_transfer",
-          clientIdempotencyKey: validClientKey,
-          inventoryAdjustments: [{ sku: "EGO-WCR-12", quantity: 1, disposition: "sellable" }],
-        }),
-      ).rejects.toThrow("не е част от тази поръчка")
-    })
-
-    it("rejects adjustment that would over-restock across prior returns", async () => {
-      setupRecordRefundMocks({
-        existingRefunds: [],
-        includeAdjustmentQueries: true,
-        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
-        priorReturns: [{ sku: "EGO-DC-12", quantity: 2, type: "return_in" }],
-      })
-
-      const { recordRefund } = await import("@/app/actions/admin")
-      await expect(
-        recordRefund(validOrderId, {
-          refundAmount: 1000,
-          refundReason: "Test",
-          refundMethod: "bank_transfer",
-          clientIdempotencyKey: validClientKey,
-          inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "sellable" }],
-        }),
-      ).rejects.toThrow("повече бройки от поръчаните")
-    })
-
-    it("inserts return_in inventory row for sellable adjustment", async () => {
-      setupRecordRefundMocks({
-        existingRefunds: [],
-        includeAdjustmentQueries: true,
-        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
-        priorReturns: [],
-      })
-      // Capture inventory_log inserts.
-      const insertCalls: Record<string, unknown>[] = []
-      mockSupabase.insert = vi.fn((row: unknown) => {
-        insertCalls.push(row as Record<string, unknown>)
-        return mockSupabase
-      }) as any
-
-      const { recordRefund } = await import("@/app/actions/admin")
-      const result = await recordRefund(validOrderId, {
-        refundAmount: 1000,
-        refundReason: "Customer returned unopened",
-        refundMethod: "bank_transfer",
-        clientIdempotencyKey: validClientKey,
-        inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "sellable" }],
-      })
-
-      expect(result.inventoryMovements).toBe(1)
-      // Two inserts: order_refunds + one inventory_log
-      expect(insertCalls.length).toBe(2)
-      const invRow = insertCalls[1]
-      expect(invRow).toMatchObject({
-        sku: "EGO-DC-12",
-        type: "return_in",
-        quantity: 1,
-        order_id: validOrderId,
-        reference_type: "return",
-        idempotency_key: `${validClientKey}-EGO-DC-12-sellable`,
-      })
-      expect(invRow.notes).toBeNull()
-    })
-
-    it("inserts damaged inventory row with required notes", async () => {
-      setupRecordRefundMocks({
-        existingRefunds: [],
-        includeAdjustmentQueries: true,
-        orderItems: [{ sku: "EGO-DC-12", quantity: 3 }],
-        priorReturns: [],
-      })
-      const insertCalls: Record<string, unknown>[] = []
-      mockSupabase.insert = vi.fn((row: unknown) => {
-        insertCalls.push(row as Record<string, unknown>)
-        return mockSupabase
-      }) as any
-
-      const { recordRefund } = await import("@/app/actions/admin")
-      await recordRefund(validOrderId, {
-        refundAmount: 1000,
-        refundReason: "Opened on arrival",
-        refundMethod: "bank_transfer",
-        clientIdempotencyKey: validClientKey,
-        inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "damaged" }],
-      })
-
-      const damagedRow = insertCalls[1]
-      expect(damagedRow).toMatchObject({
-        type: "damaged",
-        reference_type: "return",
-      })
-      // chk_inventory_log_damaged requires non-empty notes
-      expect(typeof damagedRow.notes).toBe("string")
-      expect(damagedRow.notes).toContain("Повреден при връщане")
-    })
-
-    it("treats 23505 on inventory insert as idempotent (no throw)", async () => {
-      setupRecordRefundMocks({
-        existingRefunds: [],
-        includeAdjustmentQueries: true,
-        orderItems: [{ sku: "EGO-DC-12", quantity: 2 }],
-        priorReturns: [],
-      })
-
-      // inventory_log insert fails with 23505 — a retry of the same refund.
-      let insertCount = 0
-      mockSupabase.insert = vi.fn(() => {
-        insertCount++
-        if (insertCount === 1) {
-          // order_refunds insert — handled elsewhere via single()
-          return mockSupabase
-        }
-        // inventory_log insert path — simulate the 23505 by returning
-        // an error directly on the chain. Since the server action awaits
-        // the whole chain and destructures .error, shim via a thenable.
-        return {
-          then(resolve: (v: unknown) => void) {
-            resolve({ error: { code: "23505", message: "dup idempotency key" } })
-          },
-        } as any
-      }) as any
-
-      const { recordRefund } = await import("@/app/actions/admin")
-      const result = await recordRefund(validOrderId, {
-        refundAmount: 1000,
-        refundReason: "Retry",
-        refundMethod: "bank_transfer",
-        clientIdempotencyKey: validClientKey,
-        inventoryAdjustments: [{ sku: "EGO-DC-12", quantity: 1, disposition: "sellable" }],
-      })
-
-      // Insert was attempted, but since it collided, movement count = 0
-      expect(result.success).toBe(true)
-      expect(result.inventoryMovements).toBe(0)
     })
   })
 
@@ -2656,16 +2640,13 @@ describe("admin actions", () => {
       ).rejects.toThrow("може да се докладва само след изпращане")
     })
 
-    it("records delivery_refused on a shipped order (outcome-only, no refund)", async () => {
+    it("records delivery_refused on a shipped order", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, status: "shipped" },
         error: null,
       })
-      // Typed two-arg rpc mock so .mock.calls[i][0|1] is tuple-indexable.
-      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
-        Promise.resolve({ data: null, error: null }),
-      )
-      mockSupabase.rpc = rpcSpy as never
+      const rpcSpy = vi.fn(() => Promise.resolve({ data: null, error: null }))
+      mockSupabase.rpc = rpcSpy
 
       const { recordOrderOutcome } = await import("@/app/actions/admin")
       const result = await recordOrderOutcome(validOrderId, {
@@ -2674,247 +2655,18 @@ describe("admin actions", () => {
         courierRef: "RETURN-ABC",
       })
 
-      expect(result.success).toBe(true)
-      expect(result.refundId).toBeUndefined()
-      expect(result.inventoryMovements).toBeUndefined()
-
-      // First RPC: record_order_outcome (payload does NOT carry refund_id)
+      expect(result).toEqual({ success: true })
+      // First RPC: record_order_outcome
       expect(rpcSpy).toHaveBeenNthCalledWith(1, "record_order_outcome", expect.objectContaining({
         p_order_id: validOrderId,
         p_outcome_type: "delivery_refused",
         p_payload: expect.objectContaining({ note: expect.stringContaining("Customer refused") }),
       }))
-      const firstArgs = rpcSpy.mock.calls[0] as [string, { p_payload: Record<string, unknown> }]
-      expect(firstArgs[1].p_payload).not.toHaveProperty("refund_id")
-
-      // Second RPC: add_admin_note
+      // Second RPC: add_admin_note (the bridge summary)
       expect(rpcSpy).toHaveBeenNthCalledWith(2, "add_admin_note", expect.objectContaining({
         p_order_id: validOrderId,
         p_text: expect.stringContaining("Отказана доставка"),
       }))
-    })
-
-    it("rejects refund payload without clientIdempotencyKey", async () => {
-      const { recordOrderOutcome } = await import("@/app/actions/admin")
-      await expect(
-        recordOrderOutcome(validOrderId, {
-          outcomeType: "package_lost",
-          note: "Courier claim filed for lost package",
-          courierRef: "CLAIM-42",
-          refund: {
-            refundAmount: 1000,
-            refundReason: "Lost in transit",
-            refundMethod: "bank_transfer",
-          },
-          // clientIdempotencyKey intentionally omitted
-        }),
-      ).rejects.toThrow("idempotency key")
-    })
-
-    it("records package_lost + bundled bank-transfer refund", async () => {
-      const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-
-      // DB-call sequence (recordOrderOutcome validates status FIRST, then
-      // delegates to recordRefund):
-      //   1. orders .single()                               — outcome status check
-      //   2. order_refunds .eq(client_idempotency_key)      — refund idempotency (thenable)
-      //   3. orders .single()                               — refund's order fetch
-      //   4. order_refunds .eq(order_id)                    — sum query (thenable)
-      //   5. order_refunds .insert().select().single()      — refund insert
-      //   6. rpc("record_order_outcome", …)
-      //   7. rpc("add_admin_note", …)
-      mockSupabase.single
-        .mockResolvedValueOnce({ data: { id: validOrderId, status: "shipped" }, error: null })
-        .mockResolvedValueOnce({
-          data: {
-            id: validOrderId,
-            paid_at: "2026-04-01T00:00:00Z",
-            delivered_at: null,
-            total_amount: 5000,
-            needs_invoice: false,
-            invoice_number: null,
-            stripe_payment_intent_id: "pi_test",
-          },
-          error: null,
-        })
-        .mockResolvedValueOnce({ data: { id: "refund-xyz" }, error: null })
-
-      const calls: unknown[] = [
-        mockSupabase,                               // 1. orders (outcome status)
-        mockThenableResult([], null),               // 2. idempotency lookup
-        mockSupabase,                               // 3. orders (refund order fetch)
-        mockThenableResult([], null),               // 4. sum
-        mockSupabase,                               // 5. order_refunds insert chain
-      ]
-      let idx = 0
-      mockSupabase.from = vi.fn(() => {
-        const ret = calls[idx] ?? mockSupabase
-        idx += 1
-        return ret as never
-      })
-
-      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
-        Promise.resolve({ data: null, error: null }),
-      )
-      mockSupabase.rpc = rpcSpy as never
-
-      const { recordOrderOutcome } = await import("@/app/actions/admin")
-      const result = await recordOrderOutcome(validOrderId, {
-        outcomeType: "package_lost",
-        note: "Speedy confirmed package is lost; refund customer",
-        courierRef: "CLAIM-42",
-        clientIdempotencyKey: validClientKey,
-        refund: {
-          refundAmount: 5000,
-          refundReason: "Lost in transit",
-          refundMethod: "bank_transfer",
-        },
-      })
-
-      expect(result.success).toBe(true)
-      expect(result.refundId).toBe("refund-xyz")
-      expect(result.inventoryMovements).toBe(0)
-
-      const outcomeCallIdx = rpcSpy.mock.calls.findIndex((c) => c[0] === "record_order_outcome")
-      expect(outcomeCallIdx).toBeGreaterThanOrEqual(0)
-      const outcomeArgs = rpcSpy.mock.calls[outcomeCallIdx] as [string, { p_payload: Record<string, unknown> }]
-      expect(outcomeArgs[1].p_payload).toMatchObject({ refund_id: "refund-xyz" })
-
-      const noteCallIdx = rpcSpy.mock.calls.findIndex((c) => c[0] === "add_admin_note")
-      expect(noteCallIdx).toBeGreaterThanOrEqual(0)
-      const noteArgs = rpcSpy.mock.calls[noteCallIdx] as [string, { p_text: string }]
-      expect(noteArgs[1].p_text).toContain("възст. 50.00 лв")
-    })
-
-    it("passes inventoryAdjustments through to recordRefund on returned outcome", async () => {
-      const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-
-      mockSupabase.single
-        .mockResolvedValueOnce({ data: { id: validOrderId, status: "delivered" }, error: null })
-        .mockResolvedValueOnce({
-          data: {
-            id: validOrderId,
-            paid_at: "2026-04-01T00:00:00Z",
-            delivered_at: null,
-            total_amount: 5000,
-            needs_invoice: false,
-            invoice_number: null,
-            stripe_payment_intent_id: "pi_test",
-          },
-          error: null,
-        })
-        .mockResolvedValueOnce({ data: { id: "refund-ret" }, error: null })
-
-      const calls: unknown[] = [
-        mockSupabase,                                                       // 1. orders (outcome status)
-        mockThenableResult([], null),                                       // 2. idempotency
-        mockSupabase,                                                       // 3. orders (refund order fetch)
-        mockThenableResult([], null),                                       // 4. sum
-        mockThenableResult([{ sku: "EGO-DC-12", quantity: 2 }], null),      // 5. order_items (adjustment validation)
-        mockThenableResult([], null),                                       // 6. prior returns
-        mockSupabase,                                                       // 7. order_refunds insert
-      ]
-      let idx = 0
-      mockSupabase.from = vi.fn(() => {
-        const ret = calls[idx] ?? mockSupabase
-        idx += 1
-        return ret as never
-      })
-
-      // Capture inserts to verify inventory_log rows were written.
-      const inserts: Record<string, unknown>[] = []
-      mockSupabase.insert = vi.fn((row: unknown) => {
-        inserts.push(row as Record<string, unknown>)
-        return mockSupabase
-      }) as never
-
-      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
-        Promise.resolve({ data: null, error: null }),
-      )
-      mockSupabase.rpc = rpcSpy as never
-
-      const { recordOrderOutcome } = await import("@/app/actions/admin")
-      const result = await recordOrderOutcome(validOrderId, {
-        outcomeType: "returned",
-        note: "Customer returned both bars unopened; refund full",
-        returnRef: "RET-2026-01",
-        condition: "sellable",
-        clientIdempotencyKey: validClientKey,
-        refund: {
-          refundAmount: 1000,
-          refundReason: "14-day withdrawal",
-          refundMethod: "bank_transfer",
-          inventoryAdjustments: [
-            { sku: "EGO-DC-12", quantity: 1, disposition: "sellable" },
-          ],
-        },
-      })
-
-      expect(result.inventoryMovements).toBe(1)
-      // Two insert calls: order_refunds + inventory_log (return_in)
-      expect(inserts.length).toBe(2)
-      expect(inserts[1]).toMatchObject({
-        sku: "EGO-DC-12",
-        type: "return_in",
-        quantity: 1,
-        reference_type: "return",
-        idempotency_key: `${validClientKey}-EGO-DC-12-sellable`,
-      })
-    })
-
-    it("refund validation failure aborts outcome (no outcome event on validation error)", async () => {
-      const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-
-      // Status check passes (shipped), but the refund's paid_at check fails.
-      mockSupabase.single
-        .mockResolvedValueOnce({ data: { id: validOrderId, status: "shipped" }, error: null })
-        .mockResolvedValueOnce({
-          data: {
-            id: validOrderId,
-            paid_at: null, // unpaid → recordRefund rejects here
-            total_amount: 5000,
-            needs_invoice: false,
-            stripe_payment_intent_id: null,
-          },
-          error: null,
-        })
-
-      const calls: unknown[] = [
-        mockSupabase,                  // 1. outcome status check
-        mockThenableResult([], null),  // 2. idempotency
-        mockSupabase,                  // 3. orders (refund fetch — paid_at=null, throws)
-      ]
-      let idx = 0
-      mockSupabase.from = vi.fn(() => {
-        const ret = calls[idx] ?? mockSupabase
-        idx += 1
-        return ret as never
-      })
-
-      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>(() =>
-        Promise.resolve({ data: null, error: null }),
-      )
-      mockSupabase.rpc = rpcSpy as never
-
-      const { recordOrderOutcome } = await import("@/app/actions/admin")
-      await expect(
-        recordOrderOutcome(validOrderId, {
-          outcomeType: "package_lost",
-          note: "Refund customer for lost parcel",
-          courierRef: "CLAIM-99",
-          clientIdempotencyKey: validClientKey,
-          refund: {
-            refundAmount: 1000,
-            refundReason: "Lost",
-            refundMethod: "bank_transfer",
-          },
-        }),
-      ).rejects.toThrow("неплатена поръчка")
-
-      // The outcome event must NOT have been recorded, so the audit log
-      // doesn't reference a refund that was never created.
-      const outcomeCallIdx = rpcSpy.mock.calls.findIndex((c) => c[0] === "record_order_outcome")
-      expect(outcomeCallIdx).toBe(-1)
     })
   })
 

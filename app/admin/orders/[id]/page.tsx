@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
@@ -59,7 +59,7 @@ export default function AdminOrderDetailPage({
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
 
-  // Refund state
+  // Refund state — Step 1 form fields
   const [refundAmount, setRefundAmount] = useState("")
   const [refundReason, setRefundReason] = useState("")
   const [refundMethod, setRefundMethod] = useState<"stripe" | "bank_transfer">("stripe")
@@ -67,15 +67,37 @@ export default function AdminOrderDetailPage({
   const [refundCreditNote, setRefundCreditNote] = useState("")
   const [refundStripeId, setRefundStripeId] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
-  const [refundSaved, setRefundSaved] = useState(false)
-  // One UUID per form submission — used as client_idempotency_key on the
-  // refund row and baked into deterministic keys for inventory_log inserts.
-  // Regenerated after every successful save so the next refund gets a fresh key.
+  // client_idempotency_key for the refund insert. Regenerated after the
+  // whole "refund → stock outcome" flow completes (not just after the refund
+  // step), so a retry during Step 2 still resolves to the same refund row.
   const [refundClientKey, setRefundClientKey] = useState<string>(() => crypto.randomUUID())
-  // Per-SKU inventory disposition on return. Keyed by sku.
-  // qty = "" means no return; disposition defaults to "sellable" when qty > 0.
-  const [returnQty, setReturnQty] = useState<Record<string, string>>({})
-  const [returnDisposition, setReturnDisposition] = useState<Record<string, "sellable" | "damaged">>({})
+
+  // Two-step state machine. 'form' = refund form visible; 'stock' = refund
+  // saved, stock-outcome panel visible; 'complete' = both done, dismiss banner.
+  type RefundStep = "form" | "stock" | "complete"
+  const [refundStep, setRefundStep] = useState<RefundStep>("form")
+  const [savedRefundId, setSavedRefundId] = useState<string | null>(null)
+  const [savedRefundAmountCents, setSavedRefundAmountCents] = useState<number>(0)
+
+  // Step 2 — per-SKU stock-outcome form state.
+  const [stockQty, setStockQty] = useState<Record<string, string>>({})
+  const [stockDisposition, setStockDisposition] = useState<Record<string, "sellable" | "damaged">>({})
+  // Per-(sku,disposition) UUID used as recordStockMovement idempotency key.
+  // Generated when entering Step 2, preserved across retries, cleared on
+  // flow completion so a new refund gets new keys.
+  const [stockKeys, setStockKeys] = useState<Record<string, string>>({})
+  const [stockLoading, setStockLoading] = useState(false)
+  const [stockProgress, setStockProgress] = useState<{
+    done: number
+    total: number
+    failed: Array<{ sku: string; disposition: string; message: string }>
+  } | null>(null)
+
+  // Step 2 alternative: skip-with-reason.
+  type SkipReason = "" | "no_return" | "package_lost" | "customer_keeps" | "other"
+  const [skipReason, setSkipReason] = useState<SkipReason>("")
+  const [skipOtherNote, setSkipOtherNote] = useState("")
+  const [skipLoading, setSkipLoading] = useState(false)
 
   // Complaint state
   const [complaints, setComplaints] = useState<Complaint[]>([])
@@ -99,17 +121,9 @@ export default function AdminOrderDetailPage({
   const [outcomeCondition, setOutcomeCondition] = useState<"sellable" | "damaged" | "">("")
   const [outcomeLoading, setOutcomeLoading] = useState(false)
   const [outcomeSaved, setOutcomeSaved] = useState(false)
-  // Optional linked refund on the same outcome submission.
-  const [outcomeRefundEnabled, setOutcomeRefundEnabled] = useState(false)
-  const [outcomeRefundAmount, setOutcomeRefundAmount] = useState("")
-  const [outcomeRefundMethod, setOutcomeRefundMethod] = useState<"stripe" | "bank_transfer">("bank_transfer")
-  const [outcomeRefundStripeId, setOutcomeRefundStripeId] = useState("")
-  const [outcomeRefundCreditNote, setOutcomeRefundCreditNote] = useState("")
-  // Per-line inventory adjustments carried on the linked refund.
-  // qty = "" → no return for that SKU; disposition defaults to match
-  // outcome.condition when the outcome is 'returned'.
-  const [outcomeReturnQty, setOutcomeReturnQty] = useState<Record<string, string>>({})
-  const [outcomeClientKey, setOutcomeClientKey] = useState<string>(() => crypto.randomUUID())
+  // Which outcome type was just saved — drives the post-save "next step"
+  // callout (different outcomes suggest different follow-ups).
+  const [outcomeSavedType, setOutcomeSavedType] = useState<Exclude<OutcomeType, "">|"">("")
 
   useEffect(() => {
     getOrder(id)
@@ -985,87 +999,168 @@ export default function AdminOrderDetailPage({
             </div>
           )}
 
-          {/* Refund form — visible when paid and remaining balance > 0 */}
+          {/* Two-step refund flow. Step 1 records the refund row; Step 2
+              separately records any physical stock outcome (per-SKU
+              recordStockMovement calls) OR captures a "no stock movement"
+              reason via addAdminNote. Each server action stays
+              single-responsibility; the UI does the coordination.
+              id="refund-card" is the scroll/focus target from the outcome
+              card's guided-flow "next step" callout. */}
           {(() => {
             const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
             const remainingCents = order.total_amount - alreadyRefunded
             if (!order.paid_at) return null
+
+            const resetFlow = () => {
+              setRefundAmount("")
+              setRefundReason("")
+              setRefundCreditNote("")
+              setRefundStripeId("")
+              setStockQty({})
+              setStockDisposition({})
+              setStockKeys({})
+              setStockProgress(null)
+              setSkipReason("")
+              setSkipOtherNote("")
+              setSavedRefundId(null)
+              setSavedRefundAmountCents(0)
+              setRefundStep("form")
+              // New UUIDs only on full flow completion — retries during
+              // Step 2 keep the same key so recordRefund idempotency holds.
+              setRefundClientKey(crypto.randomUUID())
+            }
+
             return (
-              <div className="space-y-3 border-t pt-4 mt-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Запиши възстановяване</p>
-                  <p className="text-xs text-muted-foreground">
-                    Остава за възстановяване: <span className="font-medium text-foreground">{formatPrice(remainingCents)}</span>
-                  </p>
-                </div>
-                {remainingCents <= 0 && (
-                  <p className="text-xs text-muted-foreground">Цялата сума по поръчката е възстановена.</p>
-                )}
-                {remainingCents > 0 && (
+              <div id="refund-card" className="space-y-3 border-t pt-4 mt-4 rounded-md transition-shadow">
+                {/* ─── Step 1: refund form ─────────────────────────────── */}
+                {refundStep === "form" && (
                   <>
-                    {order.delivered_at && (() => {
-                      const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
-                      const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-                      return (
-                        <div className={`rounded-md px-3 py-2 text-sm ${
-                          daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
-                          : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
-                          : "border border-border bg-secondary text-foreground"
-                        }`}>
-                          {daysLeft <= 0
-                            ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
-                            : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
-                          }
-                        </div>
-                      )
-                    })()}
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
-                        <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => { setRefundDate(e.target.value); setRefundSaved(false) }} className="h-8" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
-                        <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => { setRefundAmount(e.target.value); setRefundSaved(false) }} className="h-8" />
-                      </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Стъпка 1 — запиши възстановяване</p>
+                      <p className="text-xs text-muted-foreground">
+                        Остава за възстановяване: <span className="font-medium text-foreground">{formatPrice(remainingCents)}</span>
+                      </p>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
-                        <select value={refundMethod} onChange={(e) => { setRefundMethod(e.target.value as "stripe" | "bank_transfer"); setRefundSaved(false) }} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
-                          <option value="stripe">Stripe</option>
-                          <option value="bank_transfer">Банков превод</option>
-                        </select>
-                      </div>
-                      {order.needs_invoice && order.invoice_number && (
-                        <div>
-                          <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-                          <Input value={refundCreditNote} onChange={(e) => { setRefundCreditNote(e.target.value); setRefundSaved(false) }} placeholder="Задължително" className="h-8" maxLength={100} />
-                        </div>
-                      )}
-                    </div>
-                    {refundMethod === "stripe" && (
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID (от Stripe Dashboard)</label>
-                        <Input value={refundStripeId} onChange={(e) => { setRefundStripeId(e.target.value); setRefundSaved(false) }} placeholder="re_..." className="h-8 font-mono" maxLength={100} />
-                      </div>
+                    {remainingCents <= 0 && (
+                      <p className="text-xs text-muted-foreground">Цялата сума по поръчката е възстановена.</p>
                     )}
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
-                      <Input value={refundReason} onChange={(e) => { setRefundReason(e.target.value); setRefundSaved(false) }} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+                    {remainingCents > 0 && (
+                      <>
+                        {order.delivered_at && (() => {
+                          const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
+                          const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                          return (
+                            <div className={`rounded-md px-3 py-2 text-sm ${
+                              daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
+                              : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
+                              : "border border-border bg-secondary text-foreground"
+                            }`}>
+                              {daysLeft <= 0
+                                ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
+                                : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
+                              }
+                            </div>
+                          )
+                        })()}
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
+                            <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setRefundDate(e.target.value)} className="h-8" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                            <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} className="h-8" />
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
+                            <select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as "stripe" | "bank_transfer")} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                              <option value="stripe">Stripe</option>
+                              <option value="bank_transfer">Банков превод</option>
+                            </select>
+                          </div>
+                          {order.needs_invoice && order.invoice_number && (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+                              <Input value={refundCreditNote} onChange={(e) => setRefundCreditNote(e.target.value)} placeholder="Задължително" className="h-8" maxLength={100} />
+                            </div>
+                          )}
+                        </div>
+                        {refundMethod === "stripe" && (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID (от Stripe Dashboard)</label>
+                            <Input value={refundStripeId} onChange={(e) => setRefundStripeId(e.target.value)} placeholder="re_..." className="h-8 font-mono" maxLength={100} />
+                          </div>
+                        )}
+                        <div>
+                          <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
+                          <Input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
+                            setRefundLoading(true)
+                            setActionError("")
+                            try {
+                              const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
+                              const amountCents = Math.round(amountFloat * 100)
+                              const result = await recordRefund(id, {
+                                refundAmount: amountCents,
+                                refundReason: refundReason.trim(),
+                                refundMethod,
+                                refundedAt: refundDate || undefined,
+                                creditNoteRef: refundCreditNote.trim() || undefined,
+                                stripeRefundId: refundMethod === "stripe" ? refundStripeId.trim() : undefined,
+                                clientIdempotencyKey: refundClientKey,
+                              })
+                              const updated = await getOrder(id)
+                              setOrder(updated)
+                              setSavedRefundId(result.refundId)
+                              setSavedRefundAmountCents(amountCents)
+                              setRefundStep("stock")
+                            } catch (err) {
+                              setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
+                            } finally {
+                              setRefundLoading(false)
+                            }
+                          }}>
+                            {refundLoading ? "Записване..." : "Запиши възстановяване"}
+                          </Button>
+                        </div>
+                        {order.payment_method === "card" && (
+                          <p className="text-xs text-muted-foreground">
+                            Издайте възстановяване в{" "}
+                            <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
+                            {", копирайте refund ID (re_...) и го попълнете тук. Ако webhook вече е записал възстановяването, редактирайте го от списъка по-горе."}
+                          </p>
+                        )}
+                        {order.payment_method === "cod" && (
+                          <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* ─── Step 2: stock outcome ────────────────────────────── */}
+                {refundStep === "stock" && savedRefundId && (
+                  <>
+                    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                      ✓ Възстановяване {formatPrice(savedRefundAmountCents)} записано. <span className="text-[11px] opacity-75">(#{savedRefundId.slice(0, 8)})</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Стъпка 2 — запиши стоково движение</p>
                     </div>
 
-                    {/* Per-line return + disposition. Inserts matching
-                        `return_in` / `damaged` inventory_log rows linked to
-                        the refund via reference_type='return', reference_id=<refund.id>. */}
+                    {/* Path A: per-SKU physical return */}
                     <div className="rounded-md border border-border px-3 py-3">
-                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Връщане на стока (незадължително)</p>
-                      <p className="mb-2 text-[11px] text-muted-foreground">Ако артикул се връща физически, отбележете количеството и в какво състояние е. Нулеви стойности не създават движение в склада.</p>
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Физически върнати артикули</p>
+                      <p className="mb-2 text-[11px] text-muted-foreground">Отбележете количеството и състоянието на върнатите артикули. Нулеви стойности не създават движение.</p>
                       <div className="space-y-2">
                         {order.items.map((item) => {
-                          const maxReturn = item.quantity
-                          const qtyStr = returnQty[item.sku] ?? ""
-                          const disposition = returnDisposition[item.sku] ?? "sellable"
+                          const qtyStr = stockQty[item.sku] ?? ""
+                          const disposition = stockDisposition[item.sku] ?? "sellable"
                           return (
                             <div key={item.sku} className="flex items-center gap-2 text-sm">
                               <div className="min-w-0 flex-1">
@@ -1075,25 +1170,16 @@ export default function AdminOrderDetailPage({
                               <Input
                                 type="number"
                                 min="0"
-                                max={maxReturn}
+                                max={item.quantity}
                                 step="1"
                                 placeholder="0"
                                 value={qtyStr}
-                                onChange={(e) => {
-                                  setReturnQty({ ...returnQty, [item.sku]: e.target.value })
-                                  setRefundSaved(false)
-                                }}
+                                onChange={(e) => setStockQty({ ...stockQty, [item.sku]: e.target.value })}
                                 className="h-8 w-20"
                               />
                               <select
                                 value={disposition}
-                                onChange={(e) => {
-                                  setReturnDisposition({
-                                    ...returnDisposition,
-                                    [item.sku]: e.target.value as "sellable" | "damaged",
-                                  })
-                                  setRefundSaved(false)
-                                }}
+                                onChange={(e) => setStockDisposition({ ...stockDisposition, [item.sku]: e.target.value as "sellable" | "damaged" })}
                                 className="h-8 rounded-md border border-border bg-background px-2 text-xs"
                               >
                                 <option value="sellable">Годен за продажба</option>
@@ -1103,73 +1189,172 @@ export default function AdminOrderDetailPage({
                           )
                         })}
                       </div>
-                    </div>
+                      {stockProgress && (
+                        <div className="mt-3 rounded-md bg-muted/30 px-3 py-2 text-xs">
+                          Запис: {stockProgress.done} / {stockProgress.total}
+                          {stockProgress.failed.length > 0 && (
+                            <div className="mt-1 text-red-700">
+                              Грешки ({stockProgress.failed.length}): {stockProgress.failed.map((f) => `${f.sku}/${f.disposition}`).join(", ")}.
+                              Натиснете „Запиши стоково движение&rdquo; отново, за да опитате останалите (вече записаните няма да се дублират).
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          disabled={stockLoading || skipLoading}
+                          onClick={async () => {
+                            const movements = order.items
+                              .map((item) => {
+                                const qtyStr = stockQty[item.sku] ?? ""
+                                const qty = qtyStr ? parseInt(qtyStr, 10) : 0
+                                if (!qty || qty < 1) return null
+                                return {
+                                  sku: item.sku,
+                                  quantity: qty,
+                                  disposition: (stockDisposition[item.sku] ?? "sellable") as "sellable" | "damaged",
+                                }
+                              })
+                              .filter((m): m is NonNullable<typeof m> => m !== null)
+                            if (movements.length === 0) {
+                              setActionError('Въведете поне едно количество, или изберете „Няма физическо връщане" по-долу')
+                              return
+                            }
+                            setStockLoading(true)
+                            setActionError("")
+                            // Generate UUIDs per (sku, disposition) if not already
+                            // present. Preserved across retries so failures in
+                            // the middle of the loop can be safely retried.
+                            const keysDraft: Record<string, string> = { ...stockKeys }
+                            for (const m of movements) {
+                              const k = `${m.sku}::${m.disposition}`
+                              if (!keysDraft[k]) keysDraft[k] = crypto.randomUUID()
+                            }
+                            setStockKeys(keysDraft)
 
-                    <div className="flex items-center gap-3">
-                      <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
-                        setRefundLoading(true)
-                        setActionError("")
-                        try {
-                          const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
-                          const amountCents = Math.round(amountFloat * 100)
-                          // Build inventoryAdjustments from per-line form state.
-                          const inventoryAdjustments = order.items
-                            .map((item) => {
-                              const qtyStr = returnQty[item.sku] ?? ""
-                              const qty = qtyStr ? parseInt(qtyStr, 10) : 0
-                              if (!qty || qty < 1) return null
-                              return {
-                                sku: item.sku,
-                                quantity: qty,
-                                disposition: returnDisposition[item.sku] ?? "sellable",
+                            const failed: Array<{ sku: string; disposition: string; message: string }> = []
+                            let done = 0
+                            setStockProgress({ done: 0, total: movements.length, failed: [] })
+                            for (const m of movements) {
+                              const k = `${m.sku}::${m.disposition}`
+                              try {
+                                await recordStockMovement({
+                                  sku: m.sku,
+                                  type: m.disposition === "sellable" ? "return_in" : "damaged",
+                                  quantity: m.quantity,
+                                  referenceType: "return",
+                                  referenceId: savedRefundId,
+                                  notes: m.disposition === "damaged"
+                                    ? `Повреден при връщане (refund ${savedRefundId.slice(0, 8)})`
+                                    : undefined,
+                                  orderId: id,
+                                  idempotencyKey: keysDraft[k],
+                                })
+                                done += 1
+                                setStockProgress({ done, total: movements.length, failed: [...failed] })
+                              } catch (err) {
+                                failed.push({
+                                  sku: m.sku,
+                                  disposition: m.disposition,
+                                  message: err instanceof Error ? err.message : "Грешка",
+                                })
+                                setStockProgress({ done, total: movements.length, failed: [...failed] })
                               }
-                            })
-                            .filter((adj): adj is NonNullable<typeof adj> => adj !== null)
-
-                          await recordRefund(id, {
-                            refundAmount: amountCents,
-                            refundReason: refundReason.trim(),
-                            refundMethod,
-                            refundedAt: refundDate || undefined,
-                            creditNoteRef: refundCreditNote.trim() || undefined,
-                            stripeRefundId: refundMethod === "stripe" ? refundStripeId.trim() : undefined,
-                            clientIdempotencyKey: refundClientKey,
-                            inventoryAdjustments: inventoryAdjustments.length > 0 ? inventoryAdjustments : undefined,
-                          })
-                          const updated = await getOrder(id)
-                          setOrder(updated)
-                          setRefundSaved(true)
-                          setRefundAmount("")
-                          setRefundReason("")
-                          setRefundCreditNote("")
-                          setRefundStripeId("")
-                          setReturnQty({})
-                          setReturnDisposition({})
-                          // Fresh client key for the next refund. Same UUID must
-                          // never re-submit — that'd resolve to the just-saved refund.
-                          setRefundClientKey(crypto.randomUUID())
-                        } catch (err) {
-                          setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
-                        } finally {
-                          setRefundLoading(false)
-                        }
-                      }}>
-                        {refundLoading ? "Записване..." : "Запиши възстановяване"}
-                      </Button>
-                      {refundSaved && <span className="text-xs text-muted-foreground">Записано</span>}
+                            }
+                            setStockLoading(false)
+                            if (failed.length === 0) {
+                              const refreshed = await getOrder(id)
+                              setOrder(refreshed)
+                              setRefundStep("complete")
+                            } else {
+                              setActionError(failed[0].message)
+                            }
+                          }}
+                        >
+                          {stockLoading ? "Записване..." : "Запиши стоково движение"}
+                        </Button>
+                      </div>
                     </div>
-                    {order.payment_method === "card" && (
-                      <p className="text-xs text-muted-foreground">
-                        Издайте възстановяване в{" "}
-                        <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
-                        {", копирайте refund ID (re_...) и го попълнете тук. Ако webhook вече е записал възстановяването, редактирайте го от списъка по-горе."}
-                      </p>
-                    )}
-                    {order.payment_method === "cod" && (
-                      <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
-                    )}
-                    <p className="text-xs text-muted-foreground">За връщане на стока в наличност или бракуване, използвайте <a href="/admin/inventory" className="underline">Движение на склад</a>.</p>
+
+                    {/* Path B: skip with reason */}
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Или — няма физическо връщане</p>
+                      <div className="space-y-1 text-sm">
+                        {([
+                          ["no_return", "Goodwill възстановяване — не се очаква връщане"],
+                          ["package_lost", "Изгубена пратка"],
+                          ["customer_keeps", "Клиентът задържа стоката"],
+                          ["other", "Друго"],
+                        ] as const).map(([val, label]) => (
+                          <label key={val} className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="skipReason"
+                              value={val}
+                              checked={skipReason === val}
+                              onChange={(e) => setSkipReason(e.target.value as SkipReason)}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                        {skipReason === "other" && (
+                          <Input
+                            value={skipOtherNote}
+                            onChange={(e) => setSkipOtherNote(e.target.value)}
+                            placeholder="Уточнете…"
+                            className="h-8 mt-2"
+                            maxLength={500}
+                          />
+                        )}
+                      </div>
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={skipLoading || stockLoading || !skipReason || (skipReason === "other" && !skipOtherNote.trim())}
+                          onClick={async () => {
+                            setSkipLoading(true)
+                            setActionError("")
+                            const reasonLabel: Record<Exclude<SkipReason, "">, string> = {
+                              no_return: "Goodwill — не се очаква връщане",
+                              package_lost: "Изгубена пратка",
+                              customer_keeps: "Клиентът задържа стоката",
+                              other: `Друго: ${skipOtherNote.trim()}`,
+                            }
+                            const label = skipReason ? reasonLabel[skipReason] : ""
+                            try {
+                              await addAdminNote(
+                                id,
+                                `[Възстановяване #${savedRefundId.slice(0, 8)}] Стоково движение пропуснато: ${label}`.slice(0, 2000),
+                              )
+                              const refreshed = await getOrder(id)
+                              setOrder(refreshed)
+                              setRefundStep("complete")
+                            } catch (err) {
+                              setActionError(err instanceof Error ? err.message : "Грешка при записване")
+                            } finally {
+                              setSkipLoading(false)
+                            }
+                          }}
+                        >
+                          {skipLoading ? "Записване..." : "Потвърди пропускане"}
+                        </Button>
+                      </div>
+                    </div>
                   </>
+                )}
+
+                {/* ─── Step 3: complete ─────────────────────────────────── */}
+                {refundStep === "complete" && (
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+                    <p className="font-medium text-green-900">✓ Възстановяване и стоково движение приключени.</p>
+                    <div className="mt-2">
+                      <Button size="sm" variant="outline" onClick={resetFlow}>
+                        Запиши ново възстановяване
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </div>
             )
@@ -1365,209 +1550,28 @@ export default function AdminOrderDetailPage({
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
 
-              {/* Optional linked refund — records a refund row + inventory
-                  movements in the same server action. For 'returned', the
-                  per-line dispositions auto-match outcomeCondition. */}
-              {outcomeType && (() => {
-                const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
-                const remainingCents = order.total_amount - alreadyRefunded
-                const canRefund = remainingCents > 0
-                const disposition: "sellable" | "damaged" =
-                  outcomeType === "returned" && outcomeCondition === "sellable"
-                    ? "sellable"
-                    : "damaged"
-                return (
-                  <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-                    <label className="flex items-center gap-2 text-xs font-medium">
-                      <input
-                        type="checkbox"
-                        checked={outcomeRefundEnabled}
-                        disabled={!canRefund}
-                        onChange={(e) => setOutcomeRefundEnabled(e.target.checked)}
-                      />
-                      Също запиши възстановяване
-                      {!canRefund && (
-                        <span className="ml-2 text-muted-foreground">
-                          (цялата сума вече е възстановена)
-                        </span>
-                      )}
-                    </label>
-                    {outcomeRefundEnabled && canRefund && (
-                      <div className="mt-3 space-y-2">
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0.01"
-                              max={(remainingCents / 100).toFixed(2)}
-                              placeholder={(remainingCents / 100).toFixed(2)}
-                              value={outcomeRefundAmount}
-                              onChange={(e) => setOutcomeRefundAmount(e.target.value)}
-                              className="h-8"
-                            />
-                            <p className="mt-1 text-[10px] text-muted-foreground">
-                              Остатък: {formatPrice(remainingCents)}
-                            </p>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
-                            <select
-                              value={outcomeRefundMethod}
-                              onChange={(e) => setOutcomeRefundMethod(e.target.value as "stripe" | "bank_transfer")}
-                              className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
-                            >
-                              <option value="bank_transfer">Банков превод</option>
-                              <option value="stripe">Stripe</option>
-                            </select>
-                          </div>
-                        </div>
-                        {outcomeRefundMethod === "stripe" && (
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID</label>
-                            <Input
-                              value={outcomeRefundStripeId}
-                              onChange={(e) => setOutcomeRefundStripeId(e.target.value)}
-                              placeholder="re_..."
-                              className="h-8 font-mono"
-                              maxLength={100}
-                            />
-                          </div>
-                        )}
-                        {order.needs_invoice && order.invoice_number && (
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-                            <Input
-                              value={outcomeRefundCreditNote}
-                              onChange={(e) => setOutcomeRefundCreditNote(e.target.value)}
-                              placeholder="Задължително (издадена фактура)"
-                              className="h-8"
-                              maxLength={100}
-                            />
-                          </div>
-                        )}
-                        {/* Per-line inventory — only shown for outcome types
-                            where physical return of goods is the norm. */}
-                        {(outcomeType === "returned" || outcomeType === "recalled") && (
-                          <div className="rounded-md border border-border/40 p-2">
-                            <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                              Връщане на стока в склад
-                              {outcomeType === "returned" && outcomeCondition && (
-                                <span className="ml-2 text-muted-foreground normal-case">
-                                  ({outcomeCondition === "sellable" ? "ще се върнат годни" : "ще се отпишат като брак"})
-                                </span>
-                              )}
-                              {outcomeType === "recalled" && (
-                                <span className="ml-2 text-muted-foreground normal-case">(ще се отпишат като брак)</span>
-                              )}
-                            </p>
-                            <div className="space-y-1">
-                              {order.items.map((item) => {
-                                const qtyStr = outcomeReturnQty[item.sku] ?? ""
-                                return (
-                                  <div key={item.sku} className="flex items-center gap-2 text-xs">
-                                    <div className="min-w-0 flex-1 truncate">
-                                      {item.productName}
-                                      <span className="ml-2 text-muted-foreground">({item.quantity} поръчани)</span>
-                                    </div>
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      max={item.quantity}
-                                      step="1"
-                                      placeholder="0"
-                                      value={qtyStr}
-                                      onChange={(e) =>
-                                        setOutcomeReturnQty({ ...outcomeReturnQty, [item.sku]: e.target.value })
-                                      }
-                                      className="h-7 w-16"
-                                    />
-                                  </div>
-                                )
-                              })}
-                            </div>
-                            <p className="mt-1 text-[10px] text-muted-foreground">
-                              Разпореждането по подразбиране:{" "}
-                              <span className="font-medium">
-                                {disposition === "sellable" ? "годен за продажба" : "негоден (брак)"}
-                              </span>
-                            </p>
-                          </div>
-                        )}
-                        {outcomeType === "package_lost" && (
-                          <p className="text-[11px] text-muted-foreground">
-                            За изгубена пратка няма физическо връщане в склада — възстановява се само сумата.
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-
               <Button
                 size="sm"
                 variant="outline"
-                disabled={outcomeLoading || !outcomeType || outcomeNote.trim().length < 10 || (outcomeRefundEnabled && outcomeRefundMethod === "stripe" && !outcomeRefundStripeId.trim())}
+                disabled={outcomeLoading || !outcomeType || outcomeNote.trim().length < 10}
                 onClick={async () => {
                   if (!outcomeType) return
                   setOutcomeLoading(true)
                   setOutcomeSaved(false)
                   setActionError("")
+                  const submittedType = outcomeType
                   try {
-                    // Build optional refund payload + inventory adjustments.
-                    let refundPayload: Parameters<typeof recordOrderOutcome>[1]["refund"] = undefined
-                    if (outcomeRefundEnabled) {
-                      const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
-                      const remainingCents = order.total_amount - alreadyRefunded
-                      const amountFloat = outcomeRefundAmount ? parseFloat(outcomeRefundAmount) : remainingCents / 100
-                      const amountCents = Math.round(amountFloat * 100)
-
-                      // Per-line adjustments (only for outcome types where
-                      // physical return is expected). Disposition is derived
-                      // from outcome type + condition for clarity.
-                      const disposition: "sellable" | "damaged" =
-                        outcomeType === "returned" && outcomeCondition === "sellable"
-                          ? "sellable"
-                          : "damaged"
-                      const adjustments =
-                        outcomeType === "returned" || outcomeType === "recalled"
-                          ? order.items
-                              .map((item) => {
-                                const qtyStr = outcomeReturnQty[item.sku] ?? ""
-                                const qty = qtyStr ? parseInt(qtyStr, 10) : 0
-                                if (!qty || qty < 1) return null
-                                return { sku: item.sku, quantity: qty, disposition }
-                              })
-                              .filter((a): a is NonNullable<typeof a> => a !== null)
-                          : []
-
-                      refundPayload = {
-                        refundAmount: amountCents,
-                        // Outcome note is structured enough to use as the
-                        // refund reason — avoids making the admin type twice.
-                        refundReason: `[${outcomeType}] ${outcomeNote.trim()}`.slice(0, 1000),
-                        refundMethod: outcomeRefundMethod,
-                        stripeRefundId:
-                          outcomeRefundMethod === "stripe" ? outcomeRefundStripeId.trim() : undefined,
-                        creditNoteRef: outcomeRefundCreditNote.trim() || undefined,
-                        inventoryAdjustments: adjustments.length > 0 ? adjustments : undefined,
-                      }
-                    }
-
                     await recordOrderOutcome(id, {
-                      outcomeType,
+                      outcomeType: submittedType,
                       note: outcomeNote.trim(),
                       courierRef: outcomeCourierRef.trim() || undefined,
                       returnRef: outcomeReturnRef.trim() || undefined,
                       recallRef: outcomeRecallRef.trim() || undefined,
                       recallReason: outcomeRecallReason.trim() || undefined,
                       condition: outcomeCondition || undefined,
-                      refund: refundPayload,
-                      clientIdempotencyKey: outcomeRefundEnabled ? outcomeClientKey : undefined,
                     })
                     setOutcomeSaved(true)
+                    setOutcomeSavedType(submittedType)
                     setOutcomeType("")
                     setOutcomeNote("")
                     setOutcomeCourierRef("")
@@ -1575,16 +1579,7 @@ export default function AdminOrderDetailPage({
                     setOutcomeRecallRef("")
                     setOutcomeRecallReason("")
                     setOutcomeCondition("")
-                    setOutcomeRefundEnabled(false)
-                    setOutcomeRefundAmount("")
-                    setOutcomeRefundStripeId("")
-                    setOutcomeRefundCreditNote("")
-                    setOutcomeReturnQty({})
-                    // New UUID for the next submission so retries of THIS
-                    // submission resolve idempotently to the just-created
-                    // refund rather than starting a new one.
-                    setOutcomeClientKey(crypto.randomUUID())
-                    // Reload order so the new admin note + refund show in the timeline.
+                    // Reload order so the new admin note shows in the timeline.
                     const refreshed = await getOrder(id)
                     setOrder(refreshed)
                   } catch (err) {
@@ -1596,9 +1591,95 @@ export default function AdminOrderDetailPage({
               >
                 {outcomeLoading ? "Записване..." : "Запиши събитие"}
               </Button>
-              {outcomeSaved && (
-                <p className="text-xs text-green-700">Събитието е записано в историята на поръчката.</p>
-              )}
+
+              {/* Guided-flow post-save callout. Outcome is recorded
+                  standalone; this nudges the admin to the refund form
+                  (which already handles money + inventory together via
+                  recordRefund's inventoryAdjustments). Each server action
+                  stays single-responsibility; the UI does the coordination. */}
+              {outcomeSaved && outcomeSavedType && (() => {
+                const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+                const remainingCents = order.total_amount - alreadyRefunded
+                const hasRemaining = remainingCents > 0
+
+                const guidance: Record<Exclude<OutcomeType, "">, {
+                  summary: string
+                  primaryCta?: "refund" | "inventory"
+                  defer?: boolean
+                }> = {
+                  delivery_refused: {
+                    summary: "Пратката се връща. Запишете възстановяването след като парите са преведени към клиента, и движение в склада след като пратката бъде инспектирана.",
+                    defer: true,
+                  },
+                  package_lost: {
+                    summary: "Възстановете сумата на клиента. Движение в склада не се налага — стоката е изгубена.",
+                    primaryCta: "refund",
+                  },
+                  returned: {
+                    summary: "Запишете възстановяване и движение в склада (върнатите артикули се добавят към възстановяването).",
+                    primaryCta: "refund",
+                  },
+                  recalled: {
+                    summary: "Запишете възстановяване; върнатите стоки се отписват като брак.",
+                    primaryCta: "refund",
+                  },
+                }
+                const g = guidance[outcomeSavedType]
+
+                return (
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+                    <p className="font-medium text-green-900">
+                      ✓ Събитието е записано в историята на поръчката.
+                    </p>
+                    <p className="mt-1 text-xs text-green-900/80">
+                      <span className="font-medium">Следваща стъпка: </span>
+                      {g.summary}
+                    </p>
+                    {g.primaryCta === "refund" && hasRemaining && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const el = document.getElementById("refund-card")
+                            if (el) {
+                              el.scrollIntoView({ behavior: "smooth", block: "start" })
+                              el.classList.add("ring-2", "ring-accent/60")
+                              setTimeout(() => el.classList.remove("ring-2", "ring-accent/60"), 2000)
+                            }
+                            // Dismiss the callout once the admin acts on it.
+                            setOutcomeSavedType("")
+                          }}
+                        >
+                          Отвори формата за възстановяване
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setOutcomeSavedType("")}
+                        >
+                          По-късно
+                        </Button>
+                      </div>
+                    )}
+                    {g.primaryCta === "refund" && !hasRemaining && (
+                      <p className="mt-2 text-xs text-green-900/80">
+                        Цялата сума на поръчката вече е възстановена — няма остатък за възстановяване.
+                      </p>
+                    )}
+                    {g.defer && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-2"
+                        onClick={() => setOutcomeSavedType("")}
+                      >
+                        Разбрах
+                      </Button>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           </CardContent>
         </Card>
