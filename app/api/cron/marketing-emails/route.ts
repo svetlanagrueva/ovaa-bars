@@ -5,6 +5,7 @@ import { Resend } from "resend"
 import { buildReviewRequestEmail, buildCrossSellEmail } from "@/lib/email-template"
 import { buildUnsubscribeUrl } from "@/lib/unsubscribe"
 import { sanitizeError } from "@/lib/logger"
+import { requireEnv } from "@/lib/env"
 
 export const maxDuration = 60
 
@@ -106,7 +107,7 @@ export async function GET(request: Request) {
       const { html, text, subject } = emailContent
 
       const result = await resend.emails.send({
-        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+        from: requireEnv("EMAIL_FROM"),
         to: job.email,
         subject,
         html,

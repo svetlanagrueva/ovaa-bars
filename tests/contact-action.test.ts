@@ -22,6 +22,7 @@ describe("sendContactMessage", () => {
 
   it("sends email with correct parameters", async () => {
     vi.stubEnv("RESEND_API_KEY", "re_test_123")
+    vi.stubEnv("EMAIL_FROM", "Egg Origin <test@example.com>")
 
     const { sendContactMessage } = await import("@/app/actions/contact")
 

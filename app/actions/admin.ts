@@ -12,6 +12,7 @@ import { headers } from "next/headers"
 import { createShipment as createSpeedyShipment } from "@/lib/speedy"
 import { createShipment as createEcontShipment } from "@/lib/econt"
 import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
+import { requireEnv } from "@/lib/env"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -1781,7 +1782,7 @@ async function sendShippingEmail(order: Record<string, unknown>, trackingNumber:
   const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    from: requireEnv("EMAIL_FROM"),
     to: order.email as string,
     subject: `Поръчка #${(order.id as string).slice(0, 8)} - Изпратена`,
     text: `

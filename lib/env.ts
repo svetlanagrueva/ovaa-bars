@@ -17,6 +17,13 @@ const HARD_REQUIRED = [
   // Crypto secrets
   "UNSUBSCRIBE_SECRET",
   "CRON_SECRET",
+  // Email sender identity — used in every Resend.emails.send() call.
+  // Was previously soft-expected with a hardcoded `onboarding@resend.dev`
+  // fallback, which is Resend's test-sender domain. In production that
+  // fallback produces DKIM/SPF failures and mailbox providers (Gmail,
+  // Outlook) spam-filter it, so every confirmation / delivery / marketing
+  // email silently doesn't reach the customer. Fail boot instead.
+  "EMAIL_FROM",
 ] as const
 
 // Vars whose absence silently breaks a feature but doesn't block the site
@@ -25,7 +32,6 @@ const HARD_REQUIRED = [
 const EXPECTED_SOFT = [
   "RESEND_API_KEY", // customer emails + admin notifications
   "ADMIN_EMAIL", // admin-alert destination
-  "EMAIL_FROM", // sender address (has hardcoded fallback, but the fallback is a placeholder)
   "SPEEDY_USERNAME",
   "SPEEDY_PASSWORD",
   "ECONT_USERNAME",

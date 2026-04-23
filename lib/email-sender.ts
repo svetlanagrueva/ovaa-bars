@@ -2,6 +2,7 @@ import { Resend } from "resend"
 import { formatPrice } from "@/lib/products"
 import { buildOrderConfirmationEmail, buildDeliveryEmail } from "@/lib/email-template"
 import { createClient } from "@/lib/supabase/server"
+import { requireEnv } from "@/lib/env"
 
 /**
  * Load order items in the shape email templates expect.
@@ -64,7 +65,7 @@ export async function sendOrderConfirmationEmail(order: Record<string, unknown>)
     })
 
     resend.emails.send({
-      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+      from: requireEnv("EMAIL_FROM"),
       to: order.email as string,
       subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
       html,
@@ -116,7 +117,7 @@ export async function sendDeliveryEmail(order: Record<string, unknown>) {
     })
 
     resend.emails.send({
-      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+      from: requireEnv("EMAIL_FROM"),
       to: order.email as string,
       subject: `Поръчка #${(order.id as string).slice(0, 8)} - Доставена`,
       html,

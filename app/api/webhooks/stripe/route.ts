@@ -4,6 +4,7 @@ import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
 import { sanitizeError } from "@/lib/logger"
+import { requireEnv } from "@/lib/env"
 import type Stripe from "stripe"
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -14,7 +15,7 @@ function alertAdmin(subject: string, body: string) {
   if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
   const resend = new Resend(process.env.RESEND_API_KEY)
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    from: requireEnv("EMAIL_FROM"),
     to: process.env.ADMIN_EMAIL,
     subject,
     text: body,

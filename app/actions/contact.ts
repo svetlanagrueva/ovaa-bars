@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers"
 import { Resend } from "resend"
+import { requireEnv } from "@/lib/env"
 
 interface ContactData {
   name: string
@@ -55,7 +56,7 @@ export async function sendContactMessage(data: ContactData) {
   const resend = new Resend(process.env.RESEND_API_KEY)
 
   await resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    from: requireEnv("EMAIL_FROM"),
     to: "info@eggorigin.com",
     replyTo: email,
     subject: `${name} ${lastName} - запитване`,
