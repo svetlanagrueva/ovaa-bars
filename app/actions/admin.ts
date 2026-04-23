@@ -202,6 +202,21 @@ export interface OrderDetail extends OrderSummary {
   settlement_ref: string | null
   settlement_amount: number | null
   refunds: OrderRefund[]
+  // Inventory movements of type return_in / damaged for this order, used by
+  // the admin UI to show the kредитно-известие breakdown per refund (linked
+  // via inventory_log.reference_id = order_refunds.id). No FK relationship
+  // exists in the DB (reference_id is polymorphic text), so we fetch
+  // separately and match client-side.
+  inventoryReturns: OrderInventoryReturn[]
+}
+
+export interface OrderInventoryReturn {
+  id: number
+  sku: string
+  quantity: number
+  type: "return_in" | "damaged"
+  reference_id: string | null
+  created_at: string
 }
 
 export interface OrderRefund {
@@ -456,43 +471,62 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
 
   const supabase = await createClient()
 
-  const { data, error } = await supabase
-    .from("orders")
-    .select(`
-      *,
-      items:order_items(
-        productId:product_id,
-        productName:product_name,
-        sku,
-        quantity,
-        priceInCents:unit_price_cents,
-        cancelledQuantity:cancelled_quantity,
-        lineNo:line_no
-      ),
-      refunds:order_refunds(
-        id,
-        order_id,
-        stripe_refund_id,
-        amount_cents,
-        method,
-        source,
-        reason,
-        credit_note_ref,
-        recorded_by,
-        refunded_at,
-        created_at,
-        updated_at
-      )
-    `)
-    .eq("id", orderId)
-    .order("refunded_at", { foreignTable: "order_refunds", ascending: false })
-    .single()
+  const [orderResult, returnsResult] = await Promise.all([
+    supabase
+      .from("orders")
+      .select(`
+        *,
+        items:order_items(
+          productId:product_id,
+          productName:product_name,
+          sku,
+          quantity,
+          priceInCents:unit_price_cents,
+          cancelledQuantity:cancelled_quantity,
+          lineNo:line_no
+        ),
+        refunds:order_refunds(
+          id,
+          order_id,
+          stripe_refund_id,
+          amount_cents,
+          method,
+          source,
+          reason,
+          credit_note_ref,
+          recorded_by,
+          refunded_at,
+          created_at,
+          updated_at
+        )
+      `)
+      .eq("id", orderId)
+      .order("refunded_at", { foreignTable: "order_refunds", ascending: false })
+      .single(),
+    // inventory_log has no FK to order_refunds (reference_id is polymorphic
+    // text), so PostgREST can't nest it under refunds. Fetch separately and
+    // let the client match by reference_id = refund.id.
+    supabase
+      .from("inventory_log")
+      .select("id, sku, quantity, type, reference_id, created_at")
+      .eq("order_id", orderId)
+      .eq("reference_type", "return")
+      .order("created_at", { ascending: true }),
+  ])
 
-  if (error || !data) {
+  if (orderResult.error || !orderResult.data) {
     throw new Error("Order not found")
   }
 
-  return data
+  const returns = (returnsResult.data ?? []) as OrderInventoryReturn[]
+  if (returnsResult.error) {
+    // Don't block the order view on a returns fetch error — just log and
+    // show an empty list. The credit-note breakdown will degrade gracefully
+    // to the flat-amount view.
+    console.error(`Failed to fetch inventory returns for order ${orderId}:`, returnsResult.error)
+  }
+
+  return { ...orderResult.data, inventoryReturns: returns }
 }
 
 // Valid status transitions

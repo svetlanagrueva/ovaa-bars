@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -454,10 +455,17 @@ export default function AdminOrderDetailPage({
               )
             })()}
             {order.refunds.map((r) => (
-              <RefundRow key={r.id} refund={r} onSaved={async () => {
-                const refreshed = await getOrder(id)
-                setOrder(refreshed)
-              }} />
+              <RefundRow
+                key={r.id}
+                refund={r}
+                orderId={order.id}
+                orderItems={order.items}
+                inventoryReturns={order.inventoryReturns.filter(ret => ret.reference_id === r.id)}
+                onSaved={async () => {
+                  const refreshed = await getOrder(id)
+                  setOrder(refreshed)
+                }}
+              />
             ))}
           </CardContent>
         </Card>
@@ -1421,15 +1429,66 @@ export default function AdminOrderDetailPage({
   )
 }
 
-// One row in the refunds list. Lets admin edit reason + credit_note_ref on
-// a saved refund — typically used to annotate webhook-created rows after
-// the Stripe event lands ahead of the admin.
-function RefundRow({ refund, onSaved }: { refund: OrderRefund; onSaved: () => Promise<void> | void }) {
+// One row in the refunds list. Shows the refund details, a computed
+// breakdown for кредитно известие (VAT 20% inclusive; copy-pasteable for
+// Microinvest), and an inline annotation edit for reason + credit_note_ref.
+// The breakdown is built from linked inventory_log rows
+// (inventory_log.reference_id = refund.id, reference_type = 'return').
+function RefundRow({
+  refund,
+  orderId,
+  orderItems,
+  inventoryReturns,
+  onSaved,
+}: {
+  refund: OrderRefund
+  orderId: string
+  orderItems: OrderDetail["items"]
+  inventoryReturns: OrderInventoryReturn[]
+  onSaved: () => Promise<void> | void
+}) {
   const [editing, setEditing] = useState(false)
   const [reason, setReason] = useState(refund.reason ?? "")
   const [creditNote, setCreditNote] = useState(refund.credit_note_ref ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [copied, setCopied] = useState(false)
+
+  const breakdown = useMemo(
+    () =>
+      computeRefundBreakdown(
+        refund.amount_cents,
+        inventoryReturns.map((r) => ({ sku: r.sku, quantity: r.quantity, type: r.type })),
+        orderItems.map((i) => ({
+          sku: i.sku,
+          productName: i.productName,
+          unitPriceCents: i.priceInCents,
+        })),
+      ),
+    [refund.amount_cents, inventoryReturns, orderItems],
+  )
+
+  const copyText = useMemo(
+    () =>
+      formatBreakdownForCreditNote(breakdown, {
+        orderId,
+        refundedAt: refund.refunded_at,
+        method: refund.method,
+      }),
+    [breakdown, orderId, refund.refunded_at, refund.method],
+  )
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(copyText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // clipboard API unavailable / permission denied — fall back to select-all
+      // on a hidden textarea would be overkill; log and leave.
+      console.error("Clipboard write failed")
+    }
+  }
 
   return (
     <div className="rounded-md border border-border p-3 text-sm">
@@ -1473,6 +1532,76 @@ function RefundRow({ refund, onSaved }: { refund: OrderRefund; onSaved: () => Pr
           )}
         </div>
       )}
+
+      {/* Credit-note breakdown (VAT 20% inclusive) — visible when not editing.
+          Helper for the admin when issuing кредитно известие in Microinvest. */}
+      {!editing && (
+        <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Данни за кредитно известие (ДДС 20%)
+            </span>
+            <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={handleCopy}>
+              {copied ? "Копирано ✓" : "Копирай"}
+            </Button>
+          </div>
+          {breakdown.lines.length > 0 ? (
+            <div className="mt-2 space-y-1 text-xs">
+              {breakdown.lines.map((line) => (
+                <div key={line.sku} className="grid grid-cols-[1fr_auto] gap-x-3">
+                  <div className="min-w-0">
+                    <div className="truncate">
+                      {line.productName}
+                      {line.type === "damaged" && (
+                        <span className="ml-2 text-muted-foreground">[брак]</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {line.quantity} бр. × {formatPrice(line.unitPriceCents)} ·{" "}
+                      <span className="font-mono">{line.sku}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div>{formatPrice(line.lineGrossCents)}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      ДДС {formatPrice(line.lineVatCents)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div className="mt-1 grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/60 pt-1 text-[11px]">
+                <span className="text-muted-foreground">Общо върнати:</span>
+                <span className="text-right">
+                  {formatPrice(breakdown.linesGrossCents)}{" "}
+                  <span className="text-muted-foreground">
+                    (нето {formatPrice(breakdown.linesNetCents)} + ДДС {formatPrice(breakdown.linesVatCents)})
+                  </span>
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Няма физически върнати артикули (възстановяване без връщане на стока).
+            </p>
+          )}
+          <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/60 pt-1 text-xs">
+            <span className="font-medium">Сума по възстановяване:</span>
+            <span className="text-right font-medium">
+              {formatPrice(breakdown.refundGrossCents)}{" "}
+              <span className="text-[10px] font-normal text-muted-foreground">
+                (нето {formatPrice(breakdown.refundNetCents)} + ДДС {formatPrice(breakdown.refundVatCents)})
+              </span>
+            </span>
+          </div>
+          {breakdown.lines.length > 0 && !breakdown.matchesLineSum && (
+            <p className="mt-2 text-[11px] text-amber-800">
+              Разлика с върнатите артикули: {formatPrice(breakdown.refundGrossCents - breakdown.linesGrossCents)}{" "}
+              (възможна такса обработка, доставка или частична отстъпка).
+            </p>
+          )}
+        </div>
+      )}
+
       {editing && (
         <div className="mt-3 space-y-2">
           <div>

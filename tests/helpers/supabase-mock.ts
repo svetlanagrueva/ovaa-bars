@@ -45,6 +45,8 @@ export function mockThenableResult(data: unknown, error: unknown = null, count: 
     lte: vi.fn(() => obj),
     select: vi.fn(() => obj),
     range: vi.fn(() => obj),
+    order: vi.fn(() => obj),
+    limit: vi.fn(() => obj),
     then(resolve: (v: unknown) => void) {
       resolve({ data, error, count })
     },

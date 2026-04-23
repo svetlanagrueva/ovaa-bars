@@ -216,14 +216,25 @@ describe("admin actions", () => {
       await expect(getOrder("")).rejects.toThrow("Invalid order ID")
     })
 
-    it("returns order detail for valid UUID", async () => {
+    it("returns order detail with empty inventoryReturns for valid UUID", async () => {
+      // getOrder fans out two parallel queries: the orders JOIN and an
+      // inventory_log .eq().eq() thenable for linked returns. Wire both.
       const fakeOrder = { id: validUUID, status: "pending" }
       mockSupabase.single.mockResolvedValue({ data: fakeOrder, error: null })
+      // Route the second from() call (inventory_log) through a thenable that
+      // resolves empty; the first call falls through to mockSupabase for the
+      // orders fetch.
+      let callIndex = 0
+      mockSupabase.from = vi.fn(() => {
+        callIndex += 1
+        if (callIndex === 2) return mockThenableResult([], null) as never
+        return mockSupabase as never
+      })
 
       const { getOrder } = await import("@/app/actions/admin")
       const result = await getOrder(validUUID)
 
-      expect(result).toEqual(fakeOrder)
+      expect(result).toEqual({ ...fakeOrder, inventoryReturns: [] })
     })
 
     it("throws when order not found", async () => {
