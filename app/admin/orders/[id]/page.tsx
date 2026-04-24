@@ -124,6 +124,19 @@ export default function AdminOrderDetailPage({
   // Which outcome type was just saved — drives the post-save "next step"
   // callout (different outcomes suggest different follow-ups).
   const [outcomeSavedType, setOutcomeSavedType] = useState<Exclude<OutcomeType, "">|"">("")
+  // Context from the just-saved outcome, preserved across the outcome form's
+  // field reset so the callout's "Open refund form" shortcut can prefill
+  // the refund form. Cleared when the refund flow is dismissed or completed.
+  const [savedOutcomeNote, setSavedOutcomeNote] = useState<string>("")
+  const [savedOutcomeRef, setSavedOutcomeRef] = useState<string>("")
+  // Set when the refund form was opened FROM an outcome callout. Drives
+  // the "linked to outcome X" banner at the top of the refund card so
+  // the admin sees the provenance of the prefilled values. Cleared on
+  // flow reset.
+  const [outcomeLinkedContext, setOutcomeLinkedContext] = useState<{
+    outcomeType: Exclude<OutcomeType, "">
+    ref: string
+  } | null>(null)
 
   useEffect(() => {
     getOrder(id)
@@ -1024,14 +1037,51 @@ export default function AdminOrderDetailPage({
               setSkipOtherNote("")
               setSavedRefundId(null)
               setSavedRefundAmountCents(0)
+              setOutcomeLinkedContext(null)
+              setSavedOutcomeNote("")
+              setSavedOutcomeRef("")
               setRefundStep("form")
               // New UUIDs only on full flow completion — retries during
               // Step 2 keep the same key so recordRefund idempotency holds.
               setRefundClientKey(crypto.randomUUID())
             }
 
+            const outcomeLabels: Record<"delivery_refused" | "package_lost" | "returned" | "recalled", string> = {
+              delivery_refused: "Отказана доставка",
+              package_lost: "Изгубена пратка",
+              returned: "Върнат продукт",
+              recalled: "Изтеглен продукт",
+            }
+
             return (
               <div id="refund-card" className="space-y-3 border-t pt-4 mt-4 rounded-md transition-shadow">
+                {/* "Linked to outcome" banner — surfaces provenance when the
+                    form was opened from the outcome callout and the values
+                    are prefilled. Visible on Step 1 only (Step 2/complete
+                    have their own status indicators). Dismissible — some
+                    admins may want to strip the prefill and start fresh. */}
+                {refundStep === "form" && outcomeLinkedContext && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    <div className="flex items-start justify-between gap-3">
+                      <span>
+                        Възстановяване, свързано с: <strong>{outcomeLabels[outcomeLinkedContext.outcomeType]}</strong>
+                        {outcomeLinkedContext.ref && <span className="ml-1">(реф. <span className="font-mono">{outcomeLinkedContext.ref}</span>)</span>}
+                        . Сумата и причината са попълнени от събитието — редактирайте ги свободно.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOutcomeLinkedContext(null)
+                          setRefundAmount("")
+                          setRefundReason("")
+                        }}
+                        className="shrink-0 text-[11px] underline hover:no-underline"
+                      >
+                        Изчисти
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {/* ─── Step 1: refund form ─────────────────────────────── */}
                 {refundStep === "form" && (
                   <>
@@ -1572,6 +1622,15 @@ export default function AdminOrderDetailPage({
                     })
                     setOutcomeSaved(true)
                     setOutcomeSavedType(submittedType)
+                    // Stash the note + first available reference for the
+                    // callout-to-refund-form prefill. Must happen BEFORE
+                    // clearing the input state below.
+                    setSavedOutcomeNote(outcomeNote.trim())
+                    setSavedOutcomeRef(
+                      (outcomeReturnRef.trim() ||
+                        outcomeRecallRef.trim() ||
+                        outcomeCourierRef.trim()) ?? "",
+                    )
                     setOutcomeType("")
                     setOutcomeNote("")
                     setOutcomeCourierRef("")
@@ -1602,26 +1661,84 @@ export default function AdminOrderDetailPage({
                 const remainingCents = order.total_amount - alreadyRefunded
                 const hasRemaining = remainingCents > 0
 
+                // Map outcome type → Bulgarian label for the linked banner
+                // shown in the refund card once prefill has happened.
+                const outcomeLabels: Record<Exclude<OutcomeType, "">, string> = {
+                  delivery_refused: "Отказана доставка",
+                  package_lost: "Изгубена пратка",
+                  returned: "Върнат продукт",
+                  recalled: "Изтеглен продукт",
+                }
+
+                // Opens the refund card with values prefilled from the just-saved
+                // outcome: full remaining balance as amount, reason as
+                // "[<outcome label>] <note>" with optional reference. Focuses
+                // the amount input so the admin can tweak or Tab through.
+                const openLinkedRefund = () => {
+                  if (!outcomeSavedType) return
+                  const amountStr = (remainingCents / 100).toFixed(2)
+                  setRefundAmount(amountStr)
+                  const label = outcomeLabels[outcomeSavedType]
+                  const refPart = savedOutcomeRef ? ` (реф. ${savedOutcomeRef})` : ""
+                  const reasonText = `[${label}${refPart}] ${savedOutcomeNote}`.slice(0, 1000)
+                  setRefundReason(reasonText)
+                  setOutcomeLinkedContext({
+                    outcomeType: outcomeSavedType,
+                    ref: savedOutcomeRef,
+                  })
+                  // Make sure the flow is at Step 1 (form) even if the admin
+                  // was in the middle of a different refund flow somehow.
+                  setRefundStep("form")
+
+                  const el = document.getElementById("refund-card")
+                  if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "start" })
+                    el.classList.add("ring-2", "ring-accent/60")
+                    setTimeout(() => el.classList.remove("ring-2", "ring-accent/60"), 2000)
+                  }
+                  // Focus the amount input after the scroll settles. The
+                  // type=number input is first in the form order below
+                  // the date picker; focus the number one so the admin can
+                  // immediately tweak or Tab through.
+                  setTimeout(() => {
+                    const input = document.querySelector<HTMLInputElement>(
+                      '#refund-card input[type="number"]',
+                    )
+                    input?.focus()
+                    input?.select()
+                  }, 500)
+
+                  setOutcomeSavedType("")
+                }
+
                 const guidance: Record<Exclude<OutcomeType, "">, {
                   summary: string
-                  primaryCta?: "refund" | "inventory"
-                  defer?: boolean
+                  refundNow: boolean // show "Open refund form" primary CTA
+                  refundLater: boolean // show "По-късно" / "Разбрах" dismiss
                 }> = {
                   delivery_refused: {
-                    summary: "Пратката се връща. Запишете възстановяването след като парите са преведени към клиента, и движение в склада след като пратката бъде инспектирана.",
-                    defer: true,
+                    // Parcel still inbound; usually admin refunds AFTER it arrives
+                    // and they've confirmed condition. But sometimes admin knows
+                    // they'll refund regardless (customer's already disputed, etc.),
+                    // so offer both paths.
+                    summary: "Пратката се връща. Обикновено възстановяването и движението в склада се записват след като пратката бъде инспектирана.",
+                    refundNow: true,
+                    refundLater: true,
                   },
                   package_lost: {
                     summary: "Възстановете сумата на клиента. Движение в склада не се налага — стоката е изгубена.",
-                    primaryCta: "refund",
+                    refundNow: true,
+                    refundLater: true,
                   },
                   returned: {
                     summary: "Запишете възстановяване и движение в склада (върнатите артикули се добавят към възстановяването).",
-                    primaryCta: "refund",
+                    refundNow: true,
+                    refundLater: true,
                   },
                   recalled: {
                     summary: "Запишете възстановяване; върнатите стоки се отписват като брак.",
-                    primaryCta: "refund",
+                    refundNow: true,
+                    refundLater: true,
                   },
                 }
                 const g = guidance[outcomeSavedType]
@@ -1635,48 +1752,27 @@ export default function AdminOrderDetailPage({
                       <span className="font-medium">Следваща стъпка: </span>
                       {g.summary}
                     </p>
-                    {g.primaryCta === "refund" && hasRemaining && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const el = document.getElementById("refund-card")
-                            if (el) {
-                              el.scrollIntoView({ behavior: "smooth", block: "start" })
-                              el.classList.add("ring-2", "ring-accent/60")
-                              setTimeout(() => el.classList.remove("ring-2", "ring-accent/60"), 2000)
-                            }
-                            // Dismiss the callout once the admin acts on it.
-                            setOutcomeSavedType("")
-                          }}
-                        >
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {g.refundNow && hasRemaining && (
+                        <Button size="sm" variant="outline" onClick={openLinkedRefund}>
                           Отвори формата за възстановяване
                         </Button>
+                      )}
+                      {g.refundNow && !hasRemaining && (
+                        <p className="text-xs text-green-900/80">
+                          Цялата сума на поръчката вече е възстановена — няма остатък за възстановяване.
+                        </p>
+                      )}
+                      {g.refundLater && (
                         <Button
                           size="sm"
                           variant="outline"
                           onClick={() => setOutcomeSavedType("")}
                         >
-                          По-късно
+                          {g.refundNow ? "По-късно" : "Разбрах"}
                         </Button>
-                      </div>
-                    )}
-                    {g.primaryCta === "refund" && !hasRemaining && (
-                      <p className="mt-2 text-xs text-green-900/80">
-                        Цялата сума на поръчката вече е възстановена — няма остатък за възстановяване.
-                      </p>
-                    )}
-                    {g.defer && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="mt-2"
-                        onClick={() => setOutcomeSavedType("")}
-                      >
-                        Разбрах
-                      </Button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 )
               })()}
