@@ -13,6 +13,8 @@ import { createShipment as createSpeedyShipment } from "@/lib/speedy"
 import { createShipment as createEcontShipment } from "@/lib/econt"
 import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
 import { requireEnv } from "@/lib/env"
+import { stripe } from "@/lib/stripe"
+import { sanitizeError } from "@/lib/logger"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -1140,6 +1142,61 @@ export async function recordRefund(
   if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
   if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
     throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
+  }
+
+  // For Stripe refunds, verify the pasted refund ID against Stripe before
+  // committing a row. A typo or paste-from-wrong-order would otherwise create
+  // a phantom row pointing at a non-existent or mismatched Stripe refund,
+  // discoverable only by later reconciliation or never. One API call here
+  // trades ~200ms for data integrity. Four checks:
+  //   1. The refund exists in Stripe (resource_missing → friendly error).
+  //   2. refund.status === 'succeeded' — money actually moved. Pending or
+  //      failed refunds must not be logged as money-moved events.
+  //   3. refund.payment_intent matches order.stripe_payment_intent_id —
+  //      the refund belongs to THIS order, not a different one the admin
+  //      accidentally copied from.
+  //   4. refund.amount matches data.refundAmount — admin's local total
+  //      equals the Stripe-side total. Divergence signals a typo in one
+  //      of the two fields.
+  if (data.refundMethod === "stripe" && trimmedStripeRefundId) {
+    let stripeRefund
+    try {
+      stripeRefund = await stripe.refunds.retrieve(trimmedStripeRefundId)
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code
+      if (code === "resource_missing") {
+        throw new Error(
+          `Stripe refund ID "${trimmedStripeRefundId}" не е намерен в Stripe — проверете ID в Stripe Dashboard`,
+        )
+      }
+      console.error(
+        `Failed to retrieve Stripe refund ${trimmedStripeRefundId}:`,
+        sanitizeError(err),
+      )
+      throw new Error("Грешка при проверка на Stripe refund — опитайте отново")
+    }
+
+    if (stripeRefund.status !== "succeeded") {
+      throw new Error(
+        `Stripe refund не е успешно приключил (статус: ${stripeRefund.status}). Изчакайте да приключи или проверете в Stripe Dashboard.`,
+      )
+    }
+
+    const refundPI =
+      typeof stripeRefund.payment_intent === "string"
+        ? stripeRefund.payment_intent
+        : stripeRefund.payment_intent?.id ?? null
+    if (refundPI !== order.stripe_payment_intent_id) {
+      throw new Error(
+        `Stripe refund ID не принадлежи на тази поръчка (PaymentIntent в Stripe: ${refundPI ?? "липсва"}, очакван: ${order.stripe_payment_intent_id})`,
+      )
+    }
+
+    if (stripeRefund.amount !== data.refundAmount) {
+      throw new Error(
+        `Сумата не съвпада със Stripe (въведено: ${(data.refundAmount / 100).toFixed(2)} лв, Stripe: ${(stripeRefund.amount / 100).toFixed(2)} лв). Проверете refund ID или сумата.`,
+      )
+    }
   }
 
   // Sum existing refunds for friendly overshoot message (trigger is backstop).

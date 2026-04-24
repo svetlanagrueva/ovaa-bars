@@ -2,6 +2,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
 import { validUUID } from "./helpers/fixtures"
 
+// Helper: minimal Stripe refund shape for the verification check.
+// Defaults match the "happy path" in most recordRefund tests; individual
+// tests override fields to exercise specific rejection paths.
+function mockStripeRefund(overrides: {
+  id?: string
+  status?: "succeeded" | "pending" | "failed" | "canceled" | "requires_action"
+  payment_intent?: string | null
+  amount?: number
+} = {}) {
+  return {
+    id: overrides.id ?? "re_abc123",
+    status: overrides.status ?? "succeeded",
+    payment_intent: overrides.payment_intent ?? "pi_test",
+    amount: overrides.amount ?? 5000,
+    created: Math.floor(Date.now() / 1000),
+    currency: "eur",
+    reason: null,
+  }
+}
+
 const TEST_IDEMPOTENCY_KEY = "11111111-2222-3333-4444-555555555555"
 
 // Mock admin-auth
@@ -30,6 +50,17 @@ vi.mock("@/lib/econt", () => ({
 const mockConfirmDeliveryForOrder: any = vi.fn(() => Promise.resolve({ confirmed: true }))
 vi.mock("@/lib/delivery-confirmation", () => ({
   confirmDeliveryForOrder: (a: string, b: string, c: string) => mockConfirmDeliveryForOrder(a, b, c),
+}))
+
+// Mock @/lib/stripe — importing it pulls in `server-only`, which refuses
+// to load outside a Next.js server context. Only the refunds surface is
+// used by admin.ts; stub that with jest-fn so individual tests can override.
+vi.mock("@/lib/stripe", () => ({
+  stripe: {
+    refunds: {
+      retrieve: vi.fn(),
+    },
+  },
 }))
 
 // Mock Supabase
@@ -2295,6 +2326,10 @@ describe("admin actions", () => {
         },
         existingRefunds: [],
       })
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
+        mockStripeRefund({ id: "re_abc123", payment_intent: "pi_test", amount: 5000 }) as never,
+      )
 
       const { recordRefund } = await import("@/app/actions/admin")
       await expect(
@@ -2339,6 +2374,10 @@ describe("admin actions", () => {
       setupRecordRefundMocks({ existingRefunds: [] })
       const insertSpy = vi.fn(() => mockSupabase)
       mockSupabase.insert = insertSpy
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
+        mockStripeRefund({ id: "re_1AbCdEfGh", payment_intent: "pi_test", amount: 5000 }) as never,
+      )
 
       const { recordRefund } = await import("@/app/actions/admin")
       await recordRefund(validOrderId, {
@@ -2472,6 +2511,11 @@ describe("admin actions", () => {
         return ret as never
       }) as any
 
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
+        mockStripeRefund({ id: "re_abc123", payment_intent: "pi_test", amount: 1000 }) as never,
+      )
+
       const { recordRefund } = await import("@/app/actions/admin")
       await expect(
         recordRefund(validOrderId, {
@@ -2482,6 +2526,136 @@ describe("admin actions", () => {
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("вече е записано")
+    })
+
+    // ─── Stripe refund-ID verification (pre-insert) ─────────────────────
+
+    it("rejects when Stripe refund ID doesn't exist in Stripe", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockRejectedValueOnce(
+        Object.assign(new Error("No such refund"), { code: "resource_missing" }),
+      )
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          stripeRefundId: "re_typo999",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("не е намерен в Stripe")
+    })
+
+    it("rejects when Stripe refund's payment_intent doesn't match the order", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const { stripe } = await import("@/lib/stripe")
+      // Valid refund, but belongs to a different payment intent.
+      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
+        mockStripeRefund({
+          id: "re_otherOrder",
+          payment_intent: "pi_different_order",
+          amount: 5000,
+        }) as never,
+      )
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          stripeRefundId: "re_otherOrder",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("не принадлежи на тази поръчка")
+    })
+
+    it("rejects when Stripe refund amount doesn't match admin-entered amount", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
+        mockStripeRefund({
+          id: "re_amountMismatch",
+          payment_intent: "pi_test",
+          amount: 1500, // Stripe says 15.00, admin types 25.00
+        }) as never,
+      )
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 2500,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          stripeRefundId: "re_amountMismatch",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("Сумата не съвпада със Stripe")
+    })
+
+    it("rejects when Stripe refund is still pending", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
+        mockStripeRefund({
+          id: "re_pending",
+          status: "pending",
+          payment_intent: "pi_test",
+          amount: 5000,
+        }) as never,
+      )
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          stripeRefundId: "re_pending",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("не е успешно приключил")
+    })
+
+    it("rejects when Stripe API returns a non-missing error", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const { stripe } = await import("@/lib/stripe")
+      vi.mocked(stripe.refunds.retrieve).mockRejectedValueOnce(
+        Object.assign(new Error("timeout"), { code: "api_connection_error" }),
+      )
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      await expect(
+        recordRefund(validOrderId, {
+          refundAmount: 5000,
+          refundReason: "Test",
+          refundMethod: "stripe",
+          stripeRefundId: "re_transient",
+          clientIdempotencyKey: validClientKey,
+        }),
+      ).rejects.toThrow("Грешка при проверка на Stripe refund")
+    })
+
+    it("bank_transfer refunds skip Stripe verification", async () => {
+      setupRecordRefundMocks({ existingRefunds: [] })
+      const { stripe } = await import("@/lib/stripe")
+      const retrieveSpy = vi.mocked(stripe.refunds.retrieve)
+      retrieveSpy.mockClear()
+
+      const { recordRefund } = await import("@/app/actions/admin")
+      const result = await recordRefund(validOrderId, {
+        refundAmount: 5000,
+        refundReason: "COD refund",
+        refundMethod: "bank_transfer",
+        clientIdempotencyKey: validClientKey,
+      })
+
+      expect(result.success).toBe(true)
+      // No Stripe API call at all for bank-transfer refunds.
+      expect(retrieveSpy).not.toHaveBeenCalled()
     })
 
     it("rejects future refundedAt date", async () => {
