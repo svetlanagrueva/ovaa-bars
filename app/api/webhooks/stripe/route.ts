@@ -50,6 +50,30 @@ async function findOrderForRefund(
   return order
 }
 
+// Lookup helper for dispute events (same PI→order pattern as refunds).
+async function findOrderForDispute(
+  dispute: Stripe.Dispute,
+): Promise<{ id: string } | null> {
+  const paymentIntentId = typeof dispute.payment_intent === "string"
+    ? dispute.payment_intent
+    : dispute.payment_intent?.id ?? null
+  if (!paymentIntentId) {
+    console.error(`Dispute ${dispute.id} has no payment_intent`)
+    return null
+  }
+  const supabase = await createClient()
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("stripe_payment_intent_id", paymentIntentId)
+    .single()
+  if (!order) {
+    console.error(`No order found for payment intent ${paymentIntentId} (dispute ${dispute.id})`)
+    return null
+  }
+  return order
+}
+
 // Idempotent upsert of a Stripe Refund into order_refunds.
 // Natural key: stripe_refund_id (unique partial index). First arrival wins,
 // subsequent arrivals (retries, cross-event overlap) are no-ops.
@@ -378,55 +402,150 @@ export async function POST(request: Request) {
     }
   }
 
-  // ─── charge.dispute.created ─────────────────────────────────────────────
-  // Chargeback filed. Operator must know within minutes — Stripe typically
-  // gives ~7 days to respond with evidence. Record audit event + email admin.
+  // ─── Dispute lifecycle ──────────────────────────────────────────────────
+  //
+  // charge.dispute.created           — chargeback filed, evidence window opens
+  // charge.dispute.closed            — resolved (status = won | lost | warning_closed | ...)
+  // charge.dispute.funds_reinstated  — we won AND Stripe restored the held funds
+  //
+  // All three converge on record_order_outcome with a dispute-specific
+  // event type so the timeline shows the full lifecycle. The loss case
+  // produces money movement through the existing refund.created handler;
+  // no duplicate refund handling needed here.
+  //
+  // charge.dispute.updated (evidence submitted, status transitions short of
+  // closure) is deliberately not handled — too noisy for the audit log.
   if (event.type === "charge.dispute.created") {
     const dispute = event.data.object as Stripe.Dispute
-    const paymentIntentId = typeof dispute.payment_intent === "string"
-      ? dispute.payment_intent
-      : dispute.payment_intent?.id ?? null
-
-    if (paymentIntentId) {
+    const order = await findOrderForDispute(dispute)
+    if (order) {
       const supabase = await createClient()
-      const { data: order } = await supabase
-        .from("orders")
-        .select("id, total_amount, email")
-        .eq("stripe_payment_intent_id", paymentIntentId)
-        .single()
+      const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+        p_order_id: order.id,
+        p_outcome_type: "dispute_opened",
+        p_payload: {
+          dispute_id: dispute.id,
+          amount: dispute.amount,
+          reason: dispute.reason,
+          status: dispute.status,
+          evidence_due_by: dispute.evidence_details?.due_by ?? null,
+        },
+        p_actor: "stripe-webhook",
+      })
+      if (outcomeErr) {
+        console.error(`Failed to record dispute_opened outcome for ${order.id}:`, sanitizeError(outcomeErr))
+      }
 
-      if (order) {
-        const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
-          p_order_id: order.id,
-          p_outcome_type: "dispute_opened",
-          p_payload: {
-            dispute_id: dispute.id,
-            payment_intent_id: paymentIntentId,
-            amount: dispute.amount,
-            reason: dispute.reason,
-            status: dispute.status,
-            evidence_due_by: dispute.evidence_details?.due_by ?? null,
-          },
-          p_actor: "stripe-webhook",
-        })
-        if (outcomeErr) {
-          console.error(`Failed to record dispute_opened outcome for ${order.id}:`, sanitizeError(outcomeErr))
-        }
+      const dueBy = dispute.evidence_details?.due_by
+        ? new Date(dispute.evidence_details.due_by * 1000).toISOString().slice(0, 10)
+        : "unknown"
+      alertAdmin(
+        `⚠ Chargeback opened — order ${String(order.id).slice(0, 8)}`,
+        `A chargeback (dispute) was filed on order ${order.id}.\n\n` +
+          `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +
+          `Reason: ${dispute.reason}\n` +
+          `Status: ${dispute.status}\n` +
+          `Evidence due by: ${dueBy}\n` +
+          `Dispute ID: ${dispute.id}\n\n` +
+          `Respond in the Stripe dashboard: https://dashboard.stripe.com/disputes/${dispute.id}`,
+      )
+    }
+  }
 
-        const dueBy = dispute.evidence_details?.due_by
-          ? new Date(dispute.evidence_details.due_by * 1000).toISOString().slice(0, 10)
-          : "unknown"
+  // Dispute resolved — the outcome hinges on dispute.status. Admin alert
+  // wording branches on won vs lost so the operator immediately knows
+  // whether to expect funds back or treat the money as gone.
+  if (event.type === "charge.dispute.closed") {
+    const dispute = event.data.object as Stripe.Dispute
+    const order = await findOrderForDispute(dispute)
+    if (order) {
+      const supabase = await createClient()
+      const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+        p_order_id: order.id,
+        p_outcome_type: "dispute_closed",
+        p_payload: {
+          dispute_id: dispute.id,
+          amount: dispute.amount,
+          reason: dispute.reason,
+          status: dispute.status, // 'won' | 'lost' | 'warning_closed' | ...
+        },
+        p_actor: "stripe-webhook",
+      })
+      if (outcomeErr) {
+        console.error(`Failed to record dispute_closed outcome for ${order.id}:`, sanitizeError(outcomeErr))
+      }
+
+      const orderShort = String(order.id).slice(0, 8)
+      const amt = (dispute.amount / 100).toFixed(2)
+      const disputeUrl = `https://dashboard.stripe.com/disputes/${dispute.id}`
+      if (dispute.status === "won") {
         alertAdmin(
-          `⚠ Chargeback opened — order ${String(order.id).slice(0, 8)}`,
-          `A chargeback (dispute) was filed on order ${order.id}.\n\n` +
-            `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +
+          `✓ Dispute WON — order ${orderShort}`,
+          `The chargeback on order ${order.id} was resolved in our favor.\n\n` +
+            `Amount: ${amt} EUR\n` +
+            `Reason (original): ${dispute.reason}\n` +
+            `Dispute: ${dispute.id}\n\n` +
+            `Stripe will reinstate the held funds. A separate ` +
+            `charge.dispute.funds_reinstated event will fire when the money ` +
+            `is back in the merchant balance.\n\n` +
+            `Dashboard: ${disputeUrl}`,
+        )
+      } else if (dispute.status === "lost") {
+        alertAdmin(
+          `⚠ Dispute LOST — order ${orderShort}`,
+          `The chargeback on order ${order.id} was resolved against us.\n\n` +
+            `Amount: ${amt} EUR\n` +
             `Reason: ${dispute.reason}\n` +
-            `Status: ${dispute.status}\n` +
-            `Evidence due by: ${dueBy}\n` +
-            `Dispute ID: ${dispute.id}\n\n` +
-            `Respond in the Stripe dashboard: https://dashboard.stripe.com/disputes/${dispute.id}`,
+            `Dispute: ${dispute.id}\n\n` +
+            `The disputed amount has been refunded to the cardholder by ` +
+            `Stripe. A refund.created event already (or will) record this ` +
+            `in order_refunds with source='stripe_webhook'.\n\n` +
+            `Dashboard: ${disputeUrl}`,
+        )
+      } else {
+        // warning_closed, needs_response, under_review, etc. — less common
+        // terminal states; admin should glance at the dashboard.
+        alertAdmin(
+          `Dispute closed (${dispute.status}) — order ${orderShort}`,
+          `The dispute on order ${order.id} reached terminal status "${dispute.status}".\n\n` +
+            `Amount: ${amt} EUR\n` +
+            `Dispute: ${dispute.id}\n\n` +
+            `Dashboard: ${disputeUrl}`,
         )
       }
+    }
+  }
+
+  // Funds_reinstated fires only when we won AND Stripe has actually moved
+  // the money back into the merchant balance. Separate from closed.won
+  // because the money movement can trail the resolution slightly.
+  if (event.type === "charge.dispute.funds_reinstated") {
+    const dispute = event.data.object as Stripe.Dispute
+    const order = await findOrderForDispute(dispute)
+    if (order) {
+      const supabase = await createClient()
+      const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+        p_order_id: order.id,
+        p_outcome_type: "dispute_funds_reinstated",
+        p_payload: {
+          dispute_id: dispute.id,
+          amount: dispute.amount,
+          status: dispute.status,
+        },
+        p_actor: "stripe-webhook",
+      })
+      if (outcomeErr) {
+        console.error(`Failed to record dispute_funds_reinstated outcome for ${order.id}:`, sanitizeError(outcomeErr))
+      }
+
+      alertAdmin(
+        `✓ Dispute funds restored — order ${String(order.id).slice(0, 8)}`,
+        `Stripe has reinstated the held funds from the won dispute on ` +
+          `order ${order.id}.\n\n` +
+          `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +
+          `Dispute: ${dispute.id}\n\n` +
+          `Dashboard: https://dashboard.stripe.com/disputes/${dispute.id}`,
+      )
     }
   }
 

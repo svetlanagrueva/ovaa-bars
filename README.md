@@ -57,7 +57,7 @@ Stripe webhook setup
 
 The webhook endpoint lives at `POST /api/webhooks/stripe` and drives order confirmation, inventory restoration on abandoned/failed checkouts, refund recording, and dispute alerting. **`STRIPE_WEBHOOK_SECRET` is hard-required** (checked at server boot in `lib/env.ts`) — set it before the first deploy.
 
-Subscribe the endpoint to these **8 events** in the Stripe Dashboard (Developers → Webhooks → Add endpoint):
+Subscribe the endpoint to these **10 events** in the Stripe Dashboard (Developers → Webhooks → Add endpoint):
 
 | Event | Handles |
 |---|---|
@@ -69,6 +69,8 @@ Subscribe the endpoint to these **8 events** in the Stripe Dashboard (Developers
 | `refund.failed` | Explicit failure event. No DB write (phase 1 doesn't track money-didn't-move rows), but fires an ⚠-subject admin alert with `failure_reason` so operator can retry or contact customer. |
 | `charge.refunded` | Legacy fan-in event. Newer Stripe API versions don't auto-expand `charge.refunds`, so the handler explicitly calls `stripe.refunds.list({ charge: id })` and upserts each — redundant with `refund.created` but idempotent (same `stripe_refund_id` natural key dedupes). Safe to keep subscribed as a belt-and-braces fallback. |
 | `charge.dispute.created` | Chargeback filed. Writes a `dispute_opened` outcome event into `order_audit_events` with the dispute details, fires a prominent admin alert including evidence-due-by date and Stripe dispute URL. |
+| `charge.dispute.closed` | Dispute resolved. Writes a `dispute_closed` outcome event carrying the final `dispute.status` (`won` / `lost` / `warning_closed` / etc.). Admin alert wording branches on status: won → "funds will be reinstated"; lost → "refunded to cardholder, see order_refunds"; other → neutral "closed with status X". |
+| `charge.dispute.funds_reinstated` | We won AND Stripe restored the held funds to the merchant balance. Distinct from `closed.won` because the money movement trails the resolution slightly. Writes a `dispute_funds_reinstated` outcome event + "funds restored" admin alert. |
 
 **Local development:**
 
