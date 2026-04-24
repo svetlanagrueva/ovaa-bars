@@ -3576,4 +3576,179 @@ describe("admin actions", () => {
       ).rejects.toThrow("вече е приключена")
     })
   })
+
+  describe("getRecallCandidates", () => {
+    const validSku = "EGO-DC-12"
+
+    // The server action builds a chain .from(…).select(…).eq(sku, …).in(status, …)
+    // and conditionally appends .gte(…).lte(…) for date filters, then awaits
+    // it. To let the final await resolve, pivot at `.eq` — swap in a
+    // self-referential thenable so every subsequent call stays on it and
+    // the `await` resolves with the supplied rows. Returns the thenable so
+    // tests can assert on its specific spies (not the base mock's spies,
+    // which stop getting called after the pivot).
+    function setupChain(rows: unknown[], error: unknown = null) {
+      const chain = mockThenableResult(rows, error)
+      mockSupabase.eq = vi.fn(() => chain) as never
+      return chain
+    }
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await expect(getRecallCandidates(validSku)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid SKU", async () => {
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await expect(getRecallCandidates("NOT-A-SKU")).rejects.toThrow("Невалиден SKU")
+    })
+
+    it("rejects malformed from-date", async () => {
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await expect(getRecallCandidates(validSku, "04/01/2026")).rejects.toThrow("Невалидна начална дата")
+    })
+
+    it("rejects malformed to-date", async () => {
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await expect(getRecallCandidates(validSku, "2026-04-01", "04/30/2026")).rejects.toThrow("Невалидна крайна дата")
+    })
+
+    it("rejects from-date after to-date", async () => {
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await expect(getRecallCandidates(validSku, "2026-04-30", "2026-04-01")).rejects.toThrow(
+        "не може да е след крайната",
+      )
+    })
+
+    it("returns empty array when no orders match", async () => {
+      setupChain([])
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      const result = await getRecallCandidates(validSku)
+      expect(result).toEqual([])
+    })
+
+    it("filters by sku, status in (confirmed, shipped, delivered), and flattens the joined order shape", async () => {
+      const rows = [
+        {
+          quantity: 2,
+          sku: validSku,
+          orders: {
+            id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            created_at: "2026-04-10T10:00:00Z",
+            shipped_at: "2026-04-11T10:00:00Z",
+            delivered_at: null,
+            status: "shipped",
+            first_name: "Ivan",
+            last_name: "Petrov",
+            email: "ivan@example.com",
+            phone: "+359888111222",
+            city: "София",
+            address: "ул. Витоша 1",
+            postal_code: "1000",
+            tracking_number: "SPEEDY-1",
+            logistics_partner: "speedy-office",
+          },
+        },
+        {
+          quantity: 3,
+          sku: validSku,
+          orders: {
+            id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            created_at: "2026-04-12T10:00:00Z",
+            shipped_at: "2026-04-13T10:00:00Z",
+            delivered_at: "2026-04-14T15:00:00Z",
+            status: "delivered",
+            first_name: "Maria",
+            last_name: "Ivanova",
+            email: "maria@example.com",
+            phone: "+359888333444",
+            city: "Пловдив",
+            address: null,
+            postal_code: null,
+            tracking_number: "ECONT-1",
+            logistics_partner: "econt-office",
+          },
+        },
+      ]
+      const chain = setupChain(rows)
+
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      const result = await getRecallCandidates(validSku)
+
+      // Query targets order_items, filters by sku, joins status via !inner.
+      expect(mockSupabase.from).toHaveBeenCalledWith("order_items")
+      expect(mockSupabase.eq).toHaveBeenCalledWith("sku", validSku)
+      expect(chain.in).toHaveBeenCalledWith("orders.status", ["confirmed", "shipped", "delivered"])
+
+      // Two candidates, flattened from the nested orders relation.
+      expect(result).toHaveLength(2)
+      // Sort order: confirmed → shipped → delivered. Both here are shipped
+      // and delivered, so shipped (Ivan) sorts before delivered (Maria).
+      expect(result[0]).toMatchObject({
+        orderId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        shortId: "aaaaaaaa",
+        status: "shipped",
+        firstName: "Ivan",
+        quantity: 2,
+        trackingNumber: "SPEEDY-1",
+      })
+      expect(result[1]).toMatchObject({
+        orderId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        status: "delivered",
+        quantity: 3,
+        address: null,
+        postalCode: null,
+      })
+    })
+
+    it("applies gte/lte when both dates are supplied", async () => {
+      const chain = setupChain([])
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await getRecallCandidates(validSku, "2026-04-01", "2026-04-30")
+
+      expect(chain.gte).toHaveBeenCalledWith(
+        "orders.created_at",
+        "2026-04-01T00:00:00.000Z",
+      )
+      expect(chain.lte).toHaveBeenCalledWith(
+        "orders.created_at",
+        "2026-04-30T23:59:59.999Z",
+      )
+    })
+
+    it("skips gte/lte when no dates are supplied", async () => {
+      const chain = setupChain([])
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await getRecallCandidates(validSku)
+
+      expect(chain.gte).not.toHaveBeenCalled()
+      expect(chain.lte).not.toHaveBeenCalled()
+    })
+
+    it("sorts confirmed before shipped before delivered", async () => {
+      const baseOrder = {
+        first_name: "Test", last_name: "User", email: "t@e.com", phone: "+359888",
+        city: "Sofia", address: "addr", postal_code: "1000",
+        tracking_number: null, logistics_partner: null,
+      }
+      const rows = [
+        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "11111111-1111-1111-1111-111111111111", created_at: "2026-04-14T10:00:00Z", shipped_at: "2026-04-15T10:00:00Z", delivered_at: "2026-04-16T10:00:00Z", status: "delivered" } },
+        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "22222222-2222-2222-2222-222222222222", created_at: "2026-04-10T10:00:00Z", shipped_at: null, delivered_at: null, status: "confirmed" } },
+        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "33333333-3333-3333-3333-333333333333", created_at: "2026-04-12T10:00:00Z", shipped_at: "2026-04-13T10:00:00Z", delivered_at: null, status: "shipped" } },
+      ]
+      setupChain(rows)
+
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      const result = await getRecallCandidates(validSku)
+
+      expect(result.map((r) => r.status)).toEqual(["confirmed", "shipped", "delivered"])
+    })
+
+    it("surfaces DB errors with a friendly message", async () => {
+      setupChain([], { message: "connection reset" })
+      const { getRecallCandidates } = await import("@/app/actions/admin")
+      await expect(getRecallCandidates(validSku)).rejects.toThrow("Грешка при извличане")
+    })
+  })
 })

@@ -13,6 +13,7 @@ export function createSupabaseMock() {
     delete: vi.fn(() => mock),
     eq: vi.fn(() => mock),
     neq: vi.fn(() => mock),
+    in: vi.fn(() => mock),
     order: vi.fn(() => mock),
     range: vi.fn(() => mock),
     limit: vi.fn(() => mock),
@@ -84,6 +85,7 @@ export function resetSupabaseMock(mock: Record<string, ReturnType<typeof vi.fn>>
   mock.delete = vi.fn(() => mock)
   mock.eq = vi.fn(() => mock)
   mock.neq = vi.fn(() => mock)
+  mock.in = vi.fn(() => mock)
   mock.order = vi.fn(() => mock)
   mock.range = vi.fn(() => mock)
   mock.limit = vi.fn(() => mock)

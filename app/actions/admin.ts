@@ -2704,3 +2704,165 @@ export async function recordStockMovement(data: {
   return { success: true }
 }
 
+// ─── Recall / batch traceability export ─────────────────────────────────────
+// Food-safety recall workflow: given a SKU (and optional date range), list
+// all orders containing that SKU that might need customer contact.
+//
+// Pre-launch, we don't track batch → order mapping (would need FIFO batch
+// consumption). So the recall set is always "all orders with this SKU in
+// the date range" — an over-approximation. Admin does the final triage
+// by phone. This is acceptable for our volume; if we ever ship enough to
+// make the over-approximation expensive, we add a per-order batch
+// allocation at ship time.
+//
+// Status scope: `confirmed`, `shipped`, `delivered`. Covers the three
+// audiences:
+//   - confirmed: not yet shipped → can be cancelled + refunded
+//   - shipped: in transit → notify, ask customer not to consume
+//   - delivered: possibly consumed → notify, offer refund/replacement,
+//     ask about symptoms if food-safety issue
+// Excluded: pending (no payment = no goods reserved), cancelled, expired
+// (terminal — no goods at risk).
+
+export interface RecallCandidate {
+  orderId: string
+  shortId: string
+  createdAt: string
+  shippedAt: string | null
+  deliveredAt: string | null
+  status: "confirmed" | "shipped" | "delivered"
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  city: string
+  address: string | null
+  postalCode: string | null
+  quantity: number
+  trackingNumber: string | null
+  logisticsPartner: string | null
+}
+
+export async function getRecallCandidates(
+  sku: string,
+  fromDate?: string,
+  toDate?: string,
+): Promise<RecallCandidate[]> {
+  await requireAdmin()
+
+  const validSkus = PRODUCTS.map((p) => p.sku)
+  if (!validSkus.includes(sku)) throw new Error("Невалиден SKU")
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (fromDate && !dateRegex.test(fromDate)) throw new Error("Невалидна начална дата")
+  if (toDate && !dateRegex.test(toDate)) throw new Error("Невалидна крайна дата")
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error("Началната дата не може да е след крайната")
+  }
+
+  const supabase = await createClient()
+
+  // Query from order_items so the SKU filter hits the right column. The
+  // !inner join restricts to items whose parent order matches the
+  // status + date filters. cardinality is many-to-one (one order per
+  // item) — PostgREST returns `orders` as a single object, not an array.
+  let query = supabase
+    .from("order_items")
+    .select(`
+      quantity,
+      sku,
+      orders!inner (
+        id,
+        created_at,
+        shipped_at,
+        delivered_at,
+        status,
+        first_name,
+        last_name,
+        email,
+        phone,
+        city,
+        address,
+        postal_code,
+        tracking_number,
+        logistics_partner
+      )
+    `)
+    .eq("sku", sku)
+    .in("orders.status", ["confirmed", "shipped", "delivered"])
+
+  if (fromDate) {
+    query = query.gte("orders.created_at", `${fromDate}T00:00:00.000Z`)
+  }
+  if (toDate) {
+    // End-of-day inclusive: orders placed any time on the to-date are
+    // included. Matches how admins mentally read "до 2026-04-24".
+    query = query.lte("orders.created_at", `${toDate}T23:59:59.999Z`)
+  }
+
+  const { data, error } = await query
+  if (error) {
+    console.error("Failed to fetch recall candidates:", error)
+    throw new Error("Грешка при извличане на кандидати за изтегляне")
+  }
+
+  type OrderShape = {
+    id: string
+    created_at: string
+    shipped_at: string | null
+    delivered_at: string | null
+    status: "confirmed" | "shipped" | "delivered"
+    first_name: string
+    last_name: string
+    email: string
+    phone: string
+    city: string
+    address: string | null
+    postal_code: string | null
+    tracking_number: string | null
+    logistics_partner: string | null
+  }
+  type ItemShape = { quantity: number; sku: string; orders: OrderShape | OrderShape[] }
+
+  const rows = (data ?? []) as unknown as ItemShape[]
+
+  const candidates: RecallCandidate[] = rows.map((row) => {
+    // PostgREST sometimes types the to-one relation as an array in the
+    // generated types. At runtime it's a single object when the FK is
+    // to-one; handle both for safety.
+    const o = Array.isArray(row.orders) ? row.orders[0] : row.orders
+    return {
+      orderId: o.id,
+      shortId: o.id.slice(0, 8),
+      createdAt: o.created_at,
+      shippedAt: o.shipped_at,
+      deliveredAt: o.delivered_at,
+      status: o.status,
+      firstName: o.first_name,
+      lastName: o.last_name,
+      email: o.email,
+      phone: o.phone,
+      city: o.city,
+      address: o.address,
+      postalCode: o.postal_code,
+      quantity: row.quantity,
+      trackingNumber: o.tracking_number,
+      logisticsPartner: o.logistics_partner,
+    }
+  })
+
+  // Sort delivered last, shipped middle, confirmed first (so admin works
+  // through escalating risk in the same order they'd dial the phone).
+  const statusOrder: Record<RecallCandidate["status"], number> = {
+    confirmed: 0,
+    shipped: 1,
+    delivered: 2,
+  }
+  candidates.sort((a, b) => {
+    const cmp = statusOrder[a.status] - statusOrder[b.status]
+    if (cmp !== 0) return cmp
+    return (b.createdAt || "").localeCompare(a.createdAt || "")
+  })
+
+  return candidates
+}

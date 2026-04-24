@@ -79,8 +79,22 @@
 - Stock cards per SKU: red badge = 0, amber ≤ 20, green > 20
 - "Добави партида" dialog: product dropdown, quantity, batch ID, expiry date, notes — inserts `batch_in` row into `inventory_log`
 - Movement log table: date, SKU, type badge, ±quantity, before/after columns, batch ID or order link, expiry date
-- Server actions: `getInventoryStatus()`, `addInventoryBatch()` (validates SKU against PRODUCTS list)
+- Server actions: `getInventoryStatus()`, `addInventoryBatch()` (validates SKU against PRODUCTS list), `getRecallCandidates()`
 - Cancellation from order detail automatically calls `restore_inventory` RPC — stock updates immediately
+
+### Recall / batch traceability export
+Food-safety workflow: if a batch has a problem (supplier defect, expiry miscount, contamination), admin needs a contactable list of customers to phone/email. `getRecallCandidates(sku, fromDate?, toDate?)` returns orders containing the SKU, filtered to non-terminal statuses (`confirmed`, `shipped`, `delivered`) — the three audiences that need different actions:
+- `confirmed` → cancel + refund before shipment
+- `shipped` → intercept where possible, warn customer not to consume
+- `delivered` → possibly consumed, offer refund/replacement, symptom intake
+
+Over-approximates by SKU, not by batch: we don't track which batch shipped to which order (would need FIFO batch consumption at ship time). Acceptable at current volume — admin does phone-level triage on the list. If volume grows to where the over-approximation becomes expensive, add a per-order batch allocation column.
+
+UI (`/admin/inventory` → "Изтегляне от пазара / рекол" card):
+- SKU dropdown (required), optional from/to date range (applied to `orders.created_at`, end-of-day inclusive)
+- "Покажи" button runs the fetch and renders a preview table (top 10 rows) + totals + per-status counts
+- "Експорт CSV" button builds the full list with BOM + Bulgarian header labels. Filename: `recall-<sku>-<date>.csv`. Columns: order id, created, status, shipped, delivered, name, email, phone, city, address, postal code, quantity, tracking, courier.
+- Sort: `confirmed` first, `shipped` second, `delivered` third — mirrors the escalating-risk order admin works through. Within a status, most recent first.
 
 ## Email Notifications
 - Admin gets email on new orders (card and COD) if `ADMIN_EMAIL` env var is set

@@ -123,9 +123,14 @@ This prevents false sold-out UI on transient failures. Always use the `has()` gu
 
 ## Admin Inventory Panel
 - Route: `/admin/inventory`
-- Server actions: `getInventoryStatus()` (fetches `inventory_current` + last 50 log entries in parallel), `addInventoryBatch()`
+- Server actions: `getInventoryStatus()` (fetches `inventory_current` + last 50 log entries in parallel), `addInventoryBatch()`, `getRecallCandidates()`
 - Stock badge colours: red = 0, amber ≤ 20, green > 20
 - Movement log shows: date, SKU, type badge, ±quantity, before/after, batch ID or order link, expiry date
+
+## Recall traceability (approximation)
+`getRecallCandidates(sku, fromDate?, toDate?)` queries `order_items !inner orders` for a SKU + non-terminal status (`confirmed`, `shipped`, `delivered`) + optional `orders.created_at` range. Returns flattened rows with all contact fields needed for customer outreach (name, email, phone, address, tracking). See `admin-panel.md` § "Recall / batch traceability export" for the UI + CSV shape.
+
+**Scope deliberately over-approximate by SKU, not by batch.** We don't track which batch shipped to which order — no batch consumption ledger at ship time. So a recall on "batch X" returns ALL orders containing that SKU in the date window; admin does phone-level triage. This is fine at current volume (three SKUs, low order rate). If volume grows enough that the false-positive rate on recall lists becomes expensive, the upgrade path is a `shipped_batch_allocations` table populated FIFO at ship time — additive schema change, doesn't invalidate anything here.
 
 ## Running inventory SQL on a new database
 Inventory tables, functions, trigger, and RLS policies are part of the initial schema migration at `supabase/migrations/20260420120000_initial_schema.sql`. On a fresh DB, apply all migrations in `supabase/migrations/` in filename order (see that directory's README.md for the workflow). For schema changes post-initial, add a new migration file rather than editing an existing one.
