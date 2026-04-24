@@ -1076,6 +1076,241 @@ export async function markCodConfirmed(orderId: string): Promise<{ success: true
   return { success: true }
 }
 
+// ─── Order edit (contact + quantity) ────────────────────────────────────────
+// Bulgarian COD reality: 10-20% of orders need post-confirmation
+// corrections — wrong вход/етаж/апартамент, typo'd phone, "add one more
+// box". Without these actions admin's only recourse is cancel + reorder,
+// which burns customer trust and internal time. Scope is deliberately
+// narrow:
+//   - Contact edits: fields that admin corrects most often. email stays
+//     out of the editable set pre-launch (case-sensitivity CHECK + email
+//     is also the unsubscribe key, so editing affects cross-table state).
+//   - Quantity edits: COD only, confirmed-but-not-shipped only. Card
+//     quantity increase routes through replaces_order_id (separate
+//     feature) because charging the delta requires a new Stripe session.
+//   - Fee recalc is NOT done on edit (shipping / cod / discount frozen
+//     at creation). Admin crossing a free-shipping threshold via edit
+//     does not get shipping refunded automatically.
+
+const CONTACT_FIELD_MAX = 500
+
+export async function updateOrderContact(
+  orderId: string,
+  data: {
+    firstName?: string
+    lastName?: string
+    phone?: string
+    address?: string
+    postalCode?: string
+    city?: string
+    notes?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  // Per-field validation. Only fields that were actually provided are
+  // validated; undefined values pass through untouched. Empty string
+  // collapses to a no-op UPDATE for that field — the trigger's
+  // `is distinct from` check won't fire on ""=="" so the audit stays clean.
+  const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
+  const updatePayload: Record<string, unknown> = {}
+
+  if (data.firstName !== undefined) {
+    const trimmed = data.firstName.trim()
+    if (!trimmed) throw new Error("Името не може да е празно")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Името е твърде дълго")
+    updatePayload.first_name = trimmed
+  }
+  if (data.lastName !== undefined) {
+    const trimmed = data.lastName.trim()
+    if (!trimmed) throw new Error("Фамилията не може да е празна")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Фамилията е твърде дълга")
+    updatePayload.last_name = trimmed
+  }
+  if (data.phone !== undefined) {
+    const trimmed = data.phone.trim()
+    if (!trimmed) throw new Error("Телефонът не може да е празен")
+    if (!PHONE_REGEX.test(trimmed)) throw new Error("Невалиден формат на телефон")
+    updatePayload.phone = trimmed
+  }
+  if (data.address !== undefined) {
+    const trimmed = data.address.trim()
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Адресът е твърде дълъг")
+    updatePayload.address = trimmed
+  }
+  if (data.postalCode !== undefined) {
+    const trimmed = data.postalCode.trim()
+    if (trimmed.length > 20) throw new Error("Невалиден пощенски код")
+    updatePayload.postal_code = trimmed
+  }
+  if (data.city !== undefined) {
+    const trimmed = data.city.trim()
+    if (!trimmed) throw new Error("Градът не може да е празен")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Градът е твърде дълъг")
+    updatePayload.city = trimmed
+  }
+  if (data.notes !== undefined) {
+    const trimmed = data.notes
+    if (trimmed.length > 2000) throw new Error("Бележките са твърде дълги")
+    updatePayload.notes = trimmed
+  }
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new Error("Няма промени за записване")
+  }
+
+  const supabase = await createClient()
+
+  // Gate on status='confirmed' — editing shipped orders silently on the
+  // courier side is a support nightmare; pending orders are pre-payment
+  // and will be re-submitted by the customer; cancelled/expired/delivered
+  // are terminal. Atomic update via `.eq("status", "confirmed")` protects
+  // against a status-change race.
+  const { data: updated, error } = await supabase
+    .from("orders")
+    .update(updatePayload)
+    .eq("id", orderId)
+    .eq("status", "confirmed")
+    .select("id")
+
+  if (error) {
+    console.error("Failed to update order contact:", error)
+    throw new Error("Грешка при записване на промените")
+  }
+  if (!updated || updated.length === 0) {
+    // Pre-check the order to produce a specific error: might be wrong id,
+    // wrong status, or nothing changed at the DB layer (values equal to old).
+    const { data: existing } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", orderId)
+      .single()
+    if (!existing) throw new Error("Поръчката не е намерена")
+    throw new Error(
+      `Редакцията е допустима само за потвърдени поръчки (текущ статус: ${existing.status})`,
+    )
+  }
+
+  return { success: true }
+}
+
+// COD-only, pre-ship-only. Delegates all the cross-table atomicity to the
+// edit_order_quantity RPC (which does FOR UPDATE on order_items, reservation
+// delta via reserve_inventory / restore_inventory, order_items.quantity
+// update, orders.total_amount recalc — all in one transaction). Server action
+// layers: pre-flight validation (friendly errors, payment method gating) and
+// the order_items_changed audit emission (can't easily emit from the RPC
+// because the event belongs to the admin intent, not the SQL op).
+export async function updateOrderQuantity(
+  orderId: string,
+  sku: string,
+  newQuantity: number,
+): Promise<{ success: true; newTotalCents: number }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  if (!sku || typeof sku !== "string") throw new Error("SKU е задължителен")
+  const validSkus = PRODUCTS.map((p) => p.sku)
+  if (!validSkus.includes(sku)) throw new Error("Невалиден SKU")
+
+  if (!Number.isInteger(newQuantity) || newQuantity < 1 || newQuantity > 100) {
+    throw new Error("Количеството трябва да е цяло число между 1 и 100")
+  }
+
+  const supabase = await createClient()
+
+  // Pre-check: COD, confirmed, no tracking number yet. Tracking number
+  // means shipment generation has started — editing quantity after that
+  // would desync the courier label, the real cart, and the COD amount
+  // the courier will collect. Not supported pre-launch.
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, payment_method, status, tracking_number")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.payment_method !== "cod") {
+    throw new Error(
+      "Редакция на количества за картови поръчки изисква нова поръчка — използвайте „Замяна на поръчка\" (replaces_order_id)",
+    )
+  }
+  if (order.status !== "confirmed") {
+    throw new Error(
+      `Редакция на количества е допустима само за потвърдени поръчки (текущ статус: ${order.status})`,
+    )
+  }
+  if (order.tracking_number) {
+    throw new Error("Товарителницата вече е генерирана — не може да се променя количество")
+  }
+
+  // Capture the old quantity for the audit payload — after the RPC runs,
+  // we can't distinguish old from new.
+  const { data: itemRow, error: itemErr } = await supabase
+    .from("order_items")
+    .select("quantity, unit_price_cents, product_name")
+    .eq("order_id", orderId)
+    .eq("sku", sku)
+    .single()
+
+  if (itemErr || !itemRow) {
+    throw new Error(`Артикулът ${sku} не е част от тази поръчка`)
+  }
+  const oldQuantity = itemRow.quantity as number
+
+  // The RPC handles FOR UPDATE + reserve/restore + row updates atomically.
+  // Any invariant violation (insufficient stock, over-restore) raises from
+  // the nested RPC and aborts the whole transaction.
+  const { data: newTotalData, error: rpcError } = await supabase.rpc("edit_order_quantity", {
+    p_order_id: orderId,
+    p_sku: sku,
+    p_new_quantity: newQuantity,
+  })
+
+  if (rpcError) {
+    const raw = rpcError.message ?? ""
+    // reserve_inventory's friendly error → surface it with the product name
+    if (raw.includes("Insufficient stock for SKU")) {
+      throw new Error(`Няма достатъчна наличност за ${itemRow.product_name}`)
+    }
+    console.error("edit_order_quantity RPC failed:", rpcError)
+    throw new Error("Грешка при редакция на количеството")
+  }
+
+  const newTotalCents = Number(newTotalData) || 0
+
+  // Emit audit event via record_order_outcome. The RPC's allow-list was
+  // extended with 'order_items_changed' in the same migration.
+  // Non-fatal: if the audit insert fails, the quantity change is already
+  // committed — log and move on, don't leak an error to the admin for
+  // an audit-only concern.
+  if (oldQuantity !== newQuantity) {
+    const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+      p_order_id: orderId,
+      p_outcome_type: "order_items_changed",
+      p_payload: {
+        sku,
+        product_name: itemRow.product_name,
+        old_quantity: oldQuantity,
+        new_quantity: newQuantity,
+        delta: newQuantity - oldQuantity,
+        new_total_cents: newTotalCents,
+      },
+      p_actor: "admin",
+    })
+    if (auditErr) {
+      console.error("Failed to emit order_items_changed audit:", auditErr)
+    }
+  }
+
+  return { success: true, newTotalCents }
+}
+
 // ─── Refund tracking ─────────────────────────────────────────────────────────
 // Refunds live in the order_refunds child table (one row per refund, many per
 // order). Single-responsibility: recordRefund writes ONLY to order_refunds.

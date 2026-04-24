@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
@@ -60,6 +60,21 @@ export default function AdminOrderDetailPage({
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
   const [codConfirmLoading, setCodConfirmLoading] = useState(false)
+
+  // Order edit — contact info state
+  const [contactEditing, setContactEditing] = useState(false)
+  const [contactFirstName, setContactFirstName] = useState("")
+  const [contactLastName, setContactLastName] = useState("")
+  const [contactPhone, setContactPhone] = useState("")
+  const [contactAddress, setContactAddress] = useState("")
+  const [contactPostalCode, setContactPostalCode] = useState("")
+  const [contactCity, setContactCity] = useState("")
+  const [contactNotes, setContactNotes] = useState("")
+  const [contactSaving, setContactSaving] = useState(false)
+
+  // Order edit — COD quantity state (per-SKU)
+  const [qtyEditing, setQtyEditing] = useState<Record<string, number | null>>({})
+  const [qtySaving, setQtySaving] = useState<Record<string, boolean>>({})
 
   // Refund state — Step 1 form fields
   const [refundAmount, setRefundAmount] = useState("")
@@ -263,19 +278,135 @@ export default function AdminOrderDetailPage({
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Customer info */}
+        {/* Customer info — read-only by default, inline edit for status=confirmed.
+            Edit produces a single UPDATE on orders; the AFTER UPDATE trigger emits
+            a contact_info_changed event with per-field {old, new} pairs. Fields
+            not editable here: email (stays out of the edit surface because of the
+            lowercase CHECK + it's also the unsubscribe key). Admin who truly needs
+            to correct an email does it via direct DB or support. */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="text-base">Клиент</CardTitle>
+            {order.status === "confirmed" && !contactEditing && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px]"
+                onClick={() => {
+                  setContactFirstName(order.first_name)
+                  setContactLastName(order.last_name)
+                  setContactPhone(order.phone)
+                  setContactAddress(order.address ?? "")
+                  setContactPostalCode(order.postal_code ?? "")
+                  setContactCity(order.city)
+                  setContactNotes(order.notes ?? "")
+                  setActionError("")
+                  setContactEditing(true)
+                }}
+              >
+                Редактирай
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <div><span className="text-muted-foreground">Име:</span> {order.first_name} {order.last_name}</div>
-            <div><span className="text-muted-foreground">Имейл:</span> {order.email}</div>
-            <div><span className="text-muted-foreground">Телефон:</span> {order.phone}</div>
-            <div><span className="text-muted-foreground">Град:</span> {order.city}</div>
-            {order.address && <div><span className="text-muted-foreground">Адрес:</span> {order.address}</div>}
-            {order.postal_code && <div><span className="text-muted-foreground">Пощенски код:</span> {order.postal_code}</div>}
-            {order.notes && <div><span className="text-muted-foreground">Бележки:</span> {order.notes}</div>}
+            {!contactEditing && (
+              <>
+                <div><span className="text-muted-foreground">Име:</span> {order.first_name} {order.last_name}</div>
+                <div><span className="text-muted-foreground">Имейл:</span> {order.email}</div>
+                <div><span className="text-muted-foreground">Телефон:</span> {order.phone}</div>
+                <div><span className="text-muted-foreground">Град:</span> {order.city}</div>
+                {order.address && <div><span className="text-muted-foreground">Адрес:</span> {order.address}</div>}
+                {order.postal_code && <div><span className="text-muted-foreground">Пощенски код:</span> {order.postal_code}</div>}
+                {order.notes && <div><span className="text-muted-foreground">Бележки:</span> {order.notes}</div>}
+              </>
+            )}
+            {contactEditing && (
+              <div className="space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Име</label>
+                    <Input value={contactFirstName} onChange={(e) => setContactFirstName(e.target.value)} className="h-8" maxLength={200} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Фамилия</label>
+                    <Input value={contactLastName} onChange={(e) => setContactLastName(e.target.value)} className="h-8" maxLength={200} />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Имейл (не може да се редактира)</label>
+                  <Input value={order.email} disabled className="h-8 bg-muted/50" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                  <Input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className="h-8" maxLength={40} />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr,auto]">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                    <Input value={contactCity} onChange={(e) => setContactCity(e.target.value)} className="h-8" maxLength={200} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Пощенски код</label>
+                    <Input value={contactPostalCode} onChange={(e) => setContactPostalCode(e.target.value)} className="h-8 w-28" maxLength={20} />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                  <Input value={contactAddress} onChange={(e) => setContactAddress(e.target.value)} className="h-8" maxLength={500} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Бележки от клиента</label>
+                  <textarea
+                    value={contactNotes}
+                    onChange={(e) => setContactNotes(e.target.value)}
+                    rows={2}
+                    maxLength={2000}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    disabled={contactSaving}
+                    onClick={async () => {
+                      setContactSaving(true)
+                      setActionError("")
+                      try {
+                        await updateOrderContact(id, {
+                          firstName: contactFirstName,
+                          lastName: contactLastName,
+                          phone: contactPhone,
+                          address: contactAddress,
+                          postalCode: contactPostalCode,
+                          city: contactCity,
+                          notes: contactNotes,
+                        })
+                        const refreshed = await getOrder(id)
+                        setOrder(refreshed)
+                        setContactEditing(false)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка при записване")
+                      } finally {
+                        setContactSaving(false)
+                      }
+                    }}
+                  >
+                    {contactSaving ? "Записване..." : "Запази"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={contactSaving}
+                    onClick={() => {
+                      setContactEditing(false)
+                      setActionError("")
+                    }}
+                  >
+                    Отказ
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -300,19 +431,102 @@ export default function AdminOrderDetailPage({
           </CardContent>
         </Card>
 
-        {/* Items */}
+        {/* Items — per-line quantity edit for COD + confirmed + no tracking.
+            Atomic via edit_order_quantity RPC: reserves/restores inventory,
+            updates order_items, recomputes total_amount in one transaction. */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Продукти</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {order.items.map((item, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <span>{item.productName} x {item.quantity}</span>
-                  <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
-                </div>
-              ))}
+              {(() => {
+                const canEditQty =
+                  order.payment_method === "cod" &&
+                  order.status === "confirmed" &&
+                  !order.tracking_number
+                return order.items.map((item, i) => {
+                  const editing = qtyEditing[item.sku] ?? null
+                  const saving = qtySaving[item.sku] ?? false
+                  return (
+                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                      <div className="min-w-0 flex-1 truncate">
+                        {item.productName}
+                        {!canEditQty || editing === null ? (
+                          <span> x {item.quantity}</span>
+                        ) : null}
+                      </div>
+                      {canEditQty && editing === null && (
+                        <>
+                          <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: item.quantity })}
+                          >
+                            Редактирай
+                          </Button>
+                        </>
+                      )}
+                      {canEditQty && editing !== null && (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            step="1"
+                            value={editing}
+                            onChange={(e) => {
+                              const n = parseInt(e.target.value, 10)
+                              setQtyEditing({
+                                ...qtyEditing,
+                                [item.sku]: Number.isInteger(n) && n >= 1 ? n : editing,
+                              })
+                            }}
+                            className="h-7 w-16"
+                            disabled={saving}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            disabled={saving || editing === item.quantity}
+                            onClick={async () => {
+                              if (editing === null) return
+                              setQtySaving({ ...qtySaving, [item.sku]: true })
+                              setActionError("")
+                              try {
+                                await updateOrderQuantity(id, item.sku, editing)
+                                const refreshed = await getOrder(id)
+                                setOrder(refreshed)
+                                setQtyEditing({ ...qtyEditing, [item.sku]: null })
+                              } catch (err) {
+                                setActionError(err instanceof Error ? err.message : "Грешка при редакция")
+                              } finally {
+                                setQtySaving({ ...qtySaving, [item.sku]: false })
+                              }
+                            }}
+                          >
+                            {saving ? "..." : "Запиши"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            disabled={saving}
+                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: null })}
+                          >
+                            Отказ
+                          </Button>
+                        </div>
+                      )}
+                      {!canEditQty && (
+                        <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                      )}
+                    </div>
+                  )
+                })
+              })()}
               {(() => {
                 const subtotal = order.items.reduce((s, item) => s + item.priceInCents * item.quantity, 0)
                 return (

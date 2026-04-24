@@ -1131,6 +1131,256 @@ describe("admin actions", () => {
     })
   })
 
+  describe("updateOrderContact", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(updateOrderContact(validOrderId, { phone: "+359888111222" })).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(updateOrderContact("bad-id", { phone: "+359888111222" })).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects empty payload", async () => {
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(updateOrderContact(validOrderId, {})).rejects.toThrow("Няма промени")
+    })
+
+    it("rejects empty trimmed firstName", async () => {
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(updateOrderContact(validOrderId, { firstName: "   " })).rejects.toThrow("Името не може")
+    })
+
+    it("rejects malformed phone", async () => {
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(updateOrderContact(validOrderId, { phone: "not-a-phone!" })).rejects.toThrow("Невалиден формат на телефон")
+    })
+
+    it("updates only the provided fields and calls .eq('status','confirmed')", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validOrderId }], error: null })
+        },
+      }
+      const updateSpy = vi.fn(() => updateChain)
+      mockSupabase.update = updateSpy as any
+
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      const result = await updateOrderContact(validOrderId, {
+        firstName: "  Ivan  ",
+        phone: "+359 888 111 222",
+      })
+
+      expect(result).toEqual({ success: true })
+      // Trimmed + only provided fields appear
+      expect(updateSpy).toHaveBeenCalledWith({
+        first_name: "Ivan",
+        phone: "+359 888 111 222",
+      })
+      // Status gate enforced atomically
+      expect(updateChain.eq).toHaveBeenCalledWith("status", "confirmed")
+    })
+
+    it("surfaces status-mismatch error with the current status", async () => {
+      // Zero rows affected by the .eq("status", "confirmed") update
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain) as any
+      // Follow-up .single() returns the order with its actual status
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { status: "shipped" },
+        error: null,
+      })
+
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(
+        updateOrderContact(validOrderId, { phone: "+359888111222" }),
+      ).rejects.toThrow(/потвърдени поръчки.*shipped/)
+    })
+  })
+
+  describe("updateOrderQuantity", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 2)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity("bad-id", "EGO-DC-12", 2)).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects invalid SKU", async () => {
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "NOT-A-SKU", 2)).rejects.toThrow("Невалиден SKU")
+    })
+
+    it("rejects quantity out of bounds", async () => {
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 0)).rejects.toThrow("между 1 и 100")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 101)).rejects.toThrow("между 1 и 100")
+    })
+
+    it("rejects card orders (routes through replaces_order_id instead)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "card", status: "confirmed", tracking_number: null },
+        error: null,
+      })
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 3)).rejects.toThrow("картови поръчки")
+    })
+
+    it("rejects non-'confirmed' status", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "shipped", tracking_number: "TRK123" },
+        error: null,
+      })
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 3)).rejects.toThrow(/потвърдени поръчки/)
+    })
+
+    it("rejects orders with tracking_number already set", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, payment_method: "cod", status: "confirmed", tracking_number: "SPEEDY123" },
+        error: null,
+      })
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 3)).rejects.toThrow("Товарителницата вече е генерирана")
+    })
+
+    it("rejects SKU not in the order", async () => {
+      mockSupabase.single
+        .mockResolvedValueOnce({
+          data: { id: validOrderId, payment_method: "cod", status: "confirmed", tracking_number: null },
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          data: null,
+          error: { message: "not found" },
+        })
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 3)).rejects.toThrow("не е част от тази поръчка")
+    })
+
+    it("calls edit_order_quantity RPC + emits order_items_changed audit on change", async () => {
+      mockSupabase.single
+        .mockResolvedValueOnce({
+          data: { id: validOrderId, payment_method: "cod", status: "confirmed", tracking_number: null },
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          data: { quantity: 2, unit_price_cents: 500, product_name: "Dark Chocolate Box" },
+          error: null,
+        })
+
+      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>((name) => {
+        if (name === "edit_order_quantity") return Promise.resolve({ data: 1500, error: null })
+        return Promise.resolve({ data: null, error: null })
+      })
+      mockSupabase.rpc = rpcSpy as never
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      const result = await updateOrderQuantity(validOrderId, "EGO-DC-12", 4)
+
+      expect(result).toEqual({ success: true, newTotalCents: 1500 })
+
+      // First RPC: edit_order_quantity with new quantity
+      const editCall = rpcSpy.mock.calls.find((c) => c[0] === "edit_order_quantity")
+      expect(editCall).toBeDefined()
+      expect(editCall![1]).toMatchObject({
+        p_order_id: validOrderId,
+        p_sku: "EGO-DC-12",
+        p_new_quantity: 4,
+      })
+
+      // Second RPC: record_order_outcome with the audit payload
+      const auditCall = rpcSpy.mock.calls.find((c) => c[0] === "record_order_outcome")
+      expect(auditCall).toBeDefined()
+      const auditArgs = auditCall![1] as { p_outcome_type: string; p_payload: Record<string, unknown> }
+      expect(auditArgs.p_outcome_type).toBe("order_items_changed")
+      expect(auditArgs.p_payload).toMatchObject({
+        sku: "EGO-DC-12",
+        old_quantity: 2,
+        new_quantity: 4,
+        delta: 2,
+        new_total_cents: 1500,
+      })
+    })
+
+    it("surfaces a friendly error when reserve_inventory runs out of stock", async () => {
+      mockSupabase.single
+        .mockResolvedValueOnce({
+          data: { id: validOrderId, payment_method: "cod", status: "confirmed", tracking_number: null },
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          data: { quantity: 2, unit_price_cents: 500, product_name: "Dark Chocolate Box" },
+          error: null,
+        })
+
+      mockSupabase.rpc = vi.fn((name: string) => {
+        if (name === "edit_order_quantity") {
+          return Promise.resolve({
+            data: null,
+            error: { message: "Insufficient stock for SKU EGO-DC-12. Available: 1, requested: 2" },
+          })
+        }
+        return Promise.resolve({ data: null, error: null })
+      }) as never
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await expect(updateOrderQuantity(validOrderId, "EGO-DC-12", 4)).rejects.toThrow(
+        /Няма достатъчна наличност за Dark Chocolate Box/,
+      )
+    })
+
+    it("no-op edit (same quantity) does not emit audit", async () => {
+      mockSupabase.single
+        .mockResolvedValueOnce({
+          data: { id: validOrderId, payment_method: "cod", status: "confirmed", tracking_number: null },
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          data: { quantity: 3, unit_price_cents: 500, product_name: "Dark Chocolate Box" },
+          error: null,
+        })
+
+      const rpcSpy = vi.fn<(name: string, args: unknown) => Promise<unknown>>((name) => {
+        if (name === "edit_order_quantity") return Promise.resolve({ data: 1800, error: null })
+        return Promise.resolve({ data: null, error: null })
+      })
+      mockSupabase.rpc = rpcSpy as never
+
+      const { updateOrderQuantity } = await import("@/app/actions/admin")
+      await updateOrderQuantity(validOrderId, "EGO-DC-12", 3) // same as current
+
+      // edit_order_quantity still called (server-side handles the no-op
+      // defensively) but audit is skipped.
+      const editCall = rpcSpy.mock.calls.find((c) => c[0] === "edit_order_quantity")
+      expect(editCall).toBeDefined()
+      const auditCall = rpcSpy.mock.calls.find((c) => c[0] === "record_order_outcome")
+      expect(auditCall).toBeUndefined()
+    })
+  })
+
   describe("recordCodSettlement", () => {
     const validOrderId = validUUID
 
