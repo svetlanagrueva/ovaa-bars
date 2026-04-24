@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
 import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
+import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -1832,7 +1833,7 @@ function RefundRow({
   const [creditNote, setCreditNote] = useState(refund.credit_note_ref ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle")
 
   const breakdown = useMemo(
     () =>
@@ -1859,15 +1860,17 @@ function RefundRow({
   )
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(copyText)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // clipboard API unavailable / permission denied — fall back to select-all
-      // on a hidden textarea would be overkill; log and leave.
-      console.error("Clipboard write failed")
+    // copyToClipboard tries the async clipboard API first (HTTPS /
+    // localhost), then falls back to document.execCommand('copy') via a
+    // hidden textarea for HTTP dev contexts and older browsers.
+    const ok = await copyToClipboard(copyText)
+    if (ok) {
+      setCopied("ok")
+    } else {
+      setCopied("failed")
+      console.error("Clipboard write failed — both async API and execCommand fallback unavailable")
     }
+    setTimeout(() => setCopied("idle"), 2000)
   }
 
   return (
@@ -1921,8 +1924,13 @@ function RefundRow({
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Данни за кредитно известие (ДДС 20%)
             </span>
-            <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={handleCopy}>
-              {copied ? "Копирано ✓" : "Копирай"}
+            <Button
+              size="sm"
+              variant="outline"
+              className={`h-6 text-[11px] ${copied === "failed" ? "border-red-400 text-red-700" : ""}`}
+              onClick={handleCopy}
+            >
+              {copied === "ok" ? "Копирано ✓" : copied === "failed" ? "Не успя" : "Копирай"}
             </Button>
           </div>
           {breakdown.lines.length > 0 ? (
