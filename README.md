@@ -53,6 +53,48 @@ Test card numbers (use with `sk_test_` key only):
 
 Full list: https://docs.stripe.com/testing
 
+Stripe webhook setup
+
+The webhook endpoint lives at `POST /api/webhooks/stripe` and drives order confirmation, inventory restoration on abandoned/failed checkouts, refund recording, and dispute alerting. **`STRIPE_WEBHOOK_SECRET` is hard-required** (checked at server boot in `lib/env.ts`) — set it before the first deploy.
+
+Subscribe the endpoint to these **8 events** in the Stripe Dashboard (Developers → Webhooks → Add endpoint):
+
+| Event | Handles |
+|---|---|
+| `checkout.session.completed` | Primary happy path — flips the order `pending → confirmed`, sets `paid_at`, captures PaymentIntent + receipt URL, fires confirmation email to customer and new-order alert to admin. |
+| `checkout.session.expired` | Customer abandoned the Stripe checkout (default 24h TTL). Flips `pending → expired` and releases the reserved inventory back to stock. |
+| `payment_intent.payment_failed` | 3DS challenge failed / card declined post-authorization. Same effect as `checkout.session.expired` but fires within seconds instead of up to 24h — cuts the stuck-pending window. |
+| `refund.created` | Primary refund event. Upserts `order_refunds` keyed on `stripe_refund_id` (partial unique index, idempotent). Alerts admin to annotate reason + credit-note reference. |
+| `refund.updated` | Status transitions (pending → succeeded\|failed). Same handler as `refund.created`; idempotent upsert. |
+| `refund.failed` | Explicit failure event. No DB write (phase 1 doesn't track money-didn't-move rows), but fires an ⚠-subject admin alert with `failure_reason` so operator can retry or contact customer. |
+| `charge.refunded` | Legacy fan-in event. Newer Stripe API versions don't auto-expand `charge.refunds`, so the handler explicitly calls `stripe.refunds.list({ charge: id })` and upserts each — redundant with `refund.created` but idempotent (same `stripe_refund_id` natural key dedupes). Safe to keep subscribed as a belt-and-braces fallback. |
+| `charge.dispute.created` | Chargeback filed. Writes a `dispute_opened` outcome event into `order_audit_events` with the dispute details, fires a prominent admin alert including evidence-due-by date and Stripe dispute URL. |
+
+**Local development:**
+
+```
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+```
+
+Copy the `whsec_...` signing secret from the `stripe listen` output → `STRIPE_WEBHOOK_SECRET` in `.env.local`. The CLI forwards all events by default, no per-event subscription needed locally.
+
+Trigger specific events for testing:
+
+```
+stripe trigger checkout.session.completed
+stripe trigger refund.created
+stripe trigger charge.dispute.created
+```
+
+**Production:**
+
+1. In Stripe Dashboard → Developers → Webhooks → Add endpoint. URL: `https://<your-domain>/api/webhooks/stripe`.
+2. Select the 8 events listed above.
+3. Copy the endpoint signing secret (`whsec_...`) → Vercel project env → `STRIPE_WEBHOOK_SECRET`.
+4. Redeploy so the new env value takes effect. `instrumentation.ts` runs `checkEnvAtBoot` and fails loudly in Vercel logs if the secret is missing.
+
+**Admin-issued refunds:** phase 1 workflow is manual — admin issues the Stripe refund in the Stripe Dashboard (Payments → select → Refund), then pastes the `re_...` refund ID into the admin panel. The admin-panel server action calls `stripe.refunds.retrieve(id)` to verify the refund exists, `status='succeeded'`, `payment_intent` matches this order, and `amount` matches before inserting the `order_refunds` row. Phantom IDs / typos / wrong-order pastes are rejected upfront with a Bulgarian error message. See `.claude/rules/admin-panel.md` § Refunds for the two-step flow detail.
+
 Delivery integrations
 
 The app supports two delivery providers — **Speedy** and **Econt**. Both are behind feature flags 
