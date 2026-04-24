@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
@@ -59,6 +59,7 @@ export default function AdminOrderDetailPage({
   const [settlementPaidAt, setSettlementPaidAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
+  const [codConfirmLoading, setCodConfirmLoading] = useState(false)
 
   // Refund state — Step 1 form fields
   const [refundAmount, setRefundAmount] = useState("")
@@ -207,7 +208,13 @@ export default function AdminOrderDetailPage({
         </Badge>
       </div>
 
-      {order.payment_method === "cod" && order.status === "confirmed" && (
+      {/* COD phone confirmation banner. Three states for confirmed COD orders:
+          1. Unconfirmed → amber "please call" + tel link + "Mark as confirmed" button
+          2. Confirmed → green banner with timestamp (admin can still see the record)
+          3. Shipped/delivered → banner hidden (the call is no longer actionable)
+          This turns the old policy reminder into an operational gate: pairing with
+          the soft-block warning on generate-shipment below.  */}
+      {order.payment_method === "cod" && order.status === "confirmed" && !order.cod_confirmed_at && (
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
           <p className="text-sm font-medium text-amber-900">
             Обади се на клиента за потвърждение преди изпращане
@@ -218,6 +225,40 @@ export default function AdminOrderDetailPage({
           >
             {order.phone}
           </a>
+          <div className="mt-3">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={codConfirmLoading}
+              onClick={async () => {
+                setCodConfirmLoading(true)
+                setActionError("")
+                try {
+                  await markCodConfirmed(id)
+                  const updated = await getOrder(id)
+                  setOrder(updated)
+                } catch (err) {
+                  setActionError(err instanceof Error ? err.message : "Грешка при потвърждаване")
+                } finally {
+                  setCodConfirmLoading(false)
+                }
+              }}
+            >
+              {codConfirmLoading ? "Записване..." : "Маркирай обаждането като потвърдено"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {order.payment_method === "cod" && order.status === "confirmed" && order.cod_confirmed_at && (
+        <div className="mb-6 rounded-lg border border-green-300 bg-green-50 p-4 text-sm text-green-900">
+          ✓ Обаждането е потвърдено на{" "}
+          {new Date(order.cod_confirmed_at).toLocaleDateString("bg-BG", {
+            day: "2-digit", month: "2-digit", year: "numeric",
+            hour: "2-digit", minute: "2-digit",
+          })}
+          {order.cod_confirmed_by && order.cod_confirmed_by !== "admin" && (
+            <span className="ml-1 text-green-900/70">от {order.cod_confirmed_by}</span>
+          )}
         </div>
       )}
 
@@ -647,26 +688,49 @@ export default function AdminOrderDetailPage({
               {!order.tracking_number && (order.logistics_partner?.startsWith("speedy") || order.logistics_partner?.startsWith("econt")) && (
                 <>
                   {!shipmentOpen ? (
-                    <Button
-                      variant="outline"
-                      onClick={async () => {
-                        setActionError("")
-                        try {
-                          const { form, display } = await getShipmentDefaults(id)
-                          setShipmentForm(form)
-                          setShipmentDisplay(display)
-                          setSelectedOfficeNumericId(
-                            display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
-                          )
-                          setOfficePickerError(false)
-                          setShipmentOpen(true)
-                        } catch (err) {
-                          setActionError(err instanceof Error ? err.message : "Грешка")
-                        }
-                      }}
-                    >
-                      Генерирай товарителница ({order.logistics_partner?.startsWith("speedy") ? "Speedy" : "Еконт"})
-                    </Button>
+                    <div className="space-y-2">
+                      {/* Soft-block warning: COD orders should have the phone
+                          confirmation recorded before shipping. We don't block
+                          the button — admin can proceed — but the warning is
+                          visible and the action requires a second click, which
+                          is the "soft block" (prompt-based) per the 2026-04-24
+                          ops plan. Promote to hard block only if abuse appears. */}
+                      {order.payment_method === "cod" && !order.cod_confirmed_at && (
+                        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          ⚠ Обаждането за потвърждение на COD поръчката не е маркирано. Препоръчително е да потвърдите обаждането преди да генерирате товарителница (намалява отказите на доставка).
+                        </div>
+                      )}
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          // Soft block: if COD is unconfirmed, require explicit
+                          // acknowledgement via a native confirm() dialog. The
+                          // wording makes the deliberate-override character
+                          // obvious — admin has to actively say "да, въпреки това".
+                          if (order.payment_method === "cod" && !order.cod_confirmed_at) {
+                            const proceed = window.confirm(
+                              "Обаждането за потвърждение не е маркирано. Сигурни ли сте, че искате да генерирате товарителницата без потвърдено обаждане?",
+                            )
+                            if (!proceed) return
+                          }
+                          setActionError("")
+                          try {
+                            const { form, display } = await getShipmentDefaults(id)
+                            setShipmentForm(form)
+                            setShipmentDisplay(display)
+                            setSelectedOfficeNumericId(
+                              display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
+                            )
+                            setOfficePickerError(false)
+                            setShipmentOpen(true)
+                          } catch (err) {
+                            setActionError(err instanceof Error ? err.message : "Грешка")
+                          }
+                        }}
+                      >
+                        Генерирай товарителница ({order.logistics_partner?.startsWith("speedy") ? "Speedy" : "Еконт"})
+                      </Button>
+                    </div>
                   ) : shipmentForm && (
                     <div className="rounded-lg border border-border p-4 space-y-4">
                       <div className="flex items-center justify-between">

@@ -204,6 +204,8 @@ export interface OrderDetail extends OrderSummary {
   courier_ppp_ref: string | null
   settlement_ref: string | null
   settlement_amount: number | null
+  cod_confirmed_at: string | null
+  cod_confirmed_by: string | null
   refunds: OrderRefund[]
   // Inventory movements of type return_in / damaged for this order, used by
   // the admin UI to show the kредитно-известие breakdown per refund (linked
@@ -1010,6 +1012,65 @@ export async function recordCodSettlement(
 
   if (!updated || updated.length === 0) {
     throw new Error("Плащането вече е записано за тази поръчка")
+  }
+
+  return { success: true }
+}
+
+// ─── COD phone confirmation ─────────────────────────────────────────────────
+// Bulgarian COD operational reality: admin should call the customer to verify
+// phone + address + intent before generating the shipment, or parcels get
+// refused at the door. This records the moment the call was completed.
+// Paired with a UI soft-block warning on generate-shipment for COD+unconfirmed
+// orders. Policy becomes a recorded system event.
+export async function markCodConfirmed(orderId: string): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+
+  // Verify order is COD and in a pre-ship state — confirming after ship is
+  // meaningless (parcel already in courier hands). Shipped/delivered orders
+  // can't go back for a confirmation.
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, payment_method, status, cod_confirmed_at")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.payment_method !== "cod") {
+    throw new Error("Потвърждението на обаждането е само за поръчки с наложен платеж")
+  }
+  if (order.status !== "confirmed") {
+    throw new Error(
+      `Потвърждението важи само за потвърдени поръчки (текущ статус: ${order.status})`,
+    )
+  }
+  if (order.cod_confirmed_at) {
+    throw new Error("Обаждането вече е потвърдено за тази поръчка")
+  }
+
+  // Idempotent via .is(cod_confirmed_at, null) — a concurrent second click
+  // returns zero rows and surfaces the "already confirmed" message cleanly.
+  const { data: updated, error } = await supabase
+    .from("orders")
+    .update({
+      cod_confirmed_at: new Date().toISOString(),
+      cod_confirmed_by: "admin",
+    })
+    .eq("id", orderId)
+    .is("cod_confirmed_at", null)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to mark COD as confirmed:", error)
+    throw new Error("Грешка при потвърждаване на обаждането")
+  }
+  if (!updated || updated.length === 0) {
+    throw new Error("Обаждането вече е потвърдено за тази поръчка")
   }
 
   return { success: true }

@@ -1012,6 +1012,125 @@ describe("admin actions", () => {
     })
   })
 
+  describe("markCodConfirmed", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      await expect(markCodConfirmed(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      await expect(markCodConfirmed("not-a-uuid")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects non-COD orders", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          payment_method: "card",
+          status: "confirmed",
+          cod_confirmed_at: null,
+        },
+        error: null,
+      })
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      await expect(markCodConfirmed(validOrderId)).rejects.toThrow("само за поръчки с наложен платеж")
+    })
+
+    it("rejects orders not in 'confirmed' status", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          payment_method: "cod",
+          status: "shipped",
+          cod_confirmed_at: null,
+        },
+        error: null,
+      })
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      await expect(markCodConfirmed(validOrderId)).rejects.toThrow("само за потвърдени поръчки")
+    })
+
+    it("rejects when already confirmed (idempotent guard in pre-check)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          payment_method: "cod",
+          status: "confirmed",
+          cod_confirmed_at: "2026-04-24T10:00:00Z",
+        },
+        error: null,
+      })
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      await expect(markCodConfirmed(validOrderId)).rejects.toThrow("вече е потвърдено")
+    })
+
+    it("marks cod_confirmed_at + cod_confirmed_by='admin' and returns success", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          payment_method: "cod",
+          status: "confirmed",
+          cod_confirmed_at: null,
+        },
+        error: null,
+      })
+      // Update chain resolves with one affected row (the happy-path return from .select())
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validOrderId }], error: null })
+        },
+      }
+      const updateSpy = vi.fn(() => updateChain)
+      mockSupabase.update = updateSpy as any
+
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      const result = await markCodConfirmed(validOrderId)
+      expect(result).toEqual({ success: true })
+      expect(updateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cod_confirmed_at: expect.any(String),
+          cod_confirmed_by: "admin",
+        }),
+      )
+    })
+
+    it("rejects when concurrent update beats us (.is(cod_confirmed_at,null) guard)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          payment_method: "cod",
+          status: "confirmed",
+          cod_confirmed_at: null,
+        },
+        error: null,
+      })
+      // Simulate a second concurrent click racing with us: the pre-check passed
+      // because the other request hadn't committed yet, but our UPDATE ...
+      // WHERE cod_confirmed_at IS NULL finds zero rows because the other
+      // request already set the timestamp. The idempotent-guard path surfaces
+      // as the same "already confirmed" message.
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        is: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [], error: null })
+        },
+      }
+      mockSupabase.update = vi.fn(() => updateChain) as any
+
+      const { markCodConfirmed } = await import("@/app/actions/admin")
+      await expect(markCodConfirmed(validOrderId)).rejects.toThrow("вече е потвърдено")
+    })
+  })
+
   describe("recordCodSettlement", () => {
     const validOrderId = validUUID
 
