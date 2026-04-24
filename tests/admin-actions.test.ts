@@ -77,6 +77,17 @@ vi.mock("resend", () => ({
   },
 }))
 
+// Mock email-sender — admin actions import these helpers for manual resends.
+// We verify the server action calls them with the right args; the helpers
+// themselves are fire-and-forget and tested separately.
+const mockSendOrderConfirmationEmail: any = vi.fn(() => Promise.resolve())
+const mockSendDeliveryEmail: any = vi.fn(() => Promise.resolve())
+vi.mock("@/lib/email-sender", () => ({
+  sendOrderConfirmationEmail: (...args: unknown[]) => mockSendOrderConfirmationEmail(...args),
+  sendDeliveryEmail: (...args: unknown[]) => mockSendDeliveryEmail(...args),
+  notifyAdminNewOrder: vi.fn(() => Promise.resolve()),
+}))
+
 // Mock next/navigation — redirect throws like it does in Next.js
 const mockRedirect = vi.fn()
 vi.mock("next/navigation", () => ({
@@ -1378,6 +1389,204 @@ describe("admin actions", () => {
       expect(editCall).toBeDefined()
       const auditCall = rpcSpy.mock.calls.find((c) => c[0] === "record_order_outcome")
       expect(auditCall).toBeUndefined()
+    })
+  })
+
+  describe("resendOrderConfirmationEmail", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { resendOrderConfirmationEmail } = await import("@/app/actions/admin")
+      await expect(resendOrderConfirmationEmail(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { resendOrderConfirmationEmail } = await import("@/app/actions/admin")
+      await expect(resendOrderConfirmationEmail("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects when order is not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({ data: null, error: { message: "nope" } })
+      const { resendOrderConfirmationEmail } = await import("@/app/actions/admin")
+      await expect(resendOrderConfirmationEmail(validOrderId)).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("rejects pending orders (confirmation wording would be wrong)", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "pending" },
+        error: null,
+      })
+      const { resendOrderConfirmationEmail } = await import("@/app/actions/admin")
+      await expect(resendOrderConfirmationEmail(validOrderId)).rejects.toThrow(/след потвърждение на плащането/)
+    })
+
+    it("rejects cancelled orders", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "cancelled" },
+        error: null,
+      })
+      const { resendOrderConfirmationEmail } = await import("@/app/actions/admin")
+      await expect(resendOrderConfirmationEmail(validOrderId)).rejects.toThrow(/отказана/)
+    })
+
+    it("calls sendOrderConfirmationEmail + emits email_resent audit", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "confirmed", first_name: "Ivan", email: "ivan@example.com" },
+        error: null,
+      })
+
+      const rpcSpy = vi.fn(() => Promise.resolve({ data: null, error: null }))
+      mockSupabase.rpc = rpcSpy as never
+
+      const { resendOrderConfirmationEmail } = await import("@/app/actions/admin")
+      const result = await resendOrderConfirmationEmail(validOrderId)
+
+      expect(result).toEqual({ success: true })
+      expect(mockSendOrderConfirmationEmail).toHaveBeenCalledOnce()
+      expect(rpcSpy).toHaveBeenCalledWith("record_order_outcome", expect.objectContaining({
+        p_order_id: validOrderId,
+        p_outcome_type: "email_resent",
+        p_payload: { email_type: "order_confirmation" },
+        p_actor: "admin",
+      }))
+    })
+  })
+
+  describe("resendShippingEmail", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { resendShippingEmail } = await import("@/app/actions/admin")
+      await expect(resendShippingEmail(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { resendShippingEmail } = await import("@/app/actions/admin")
+      await expect(resendShippingEmail("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects when order is not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({ data: null, error: { message: "nope" } })
+      const { resendShippingEmail } = await import("@/app/actions/admin")
+      await expect(resendShippingEmail(validOrderId)).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("rejects orders with no tracking number", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "confirmed", tracking_number: null },
+        error: null,
+      })
+      const { resendShippingEmail } = await import("@/app/actions/admin")
+      await expect(resendShippingEmail(validOrderId)).rejects.toThrow("Пратката още не е генерирана")
+    })
+
+    it("rejects orders with placeholder tracking", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "confirmed", tracking_number: "__generating__" },
+        error: null,
+      })
+      const { resendShippingEmail } = await import("@/app/actions/admin")
+      await expect(resendShippingEmail(validOrderId)).rejects.toThrow("Пратката още не е генерирана")
+    })
+
+    it("sends shipping email + emits email_resent audit when tracking exists", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          status: "shipped",
+          tracking_number: "SPEEDY12345",
+          email: "ivan@example.com",
+          first_name: "Ivan",
+          total_amount: 1000,
+          logistics_partner: "speedy-office",
+        },
+        error: null,
+      })
+
+      mockSupabase.order.mockReturnValue(mockThenableResult({
+        data: [{ product_name: "Dark Chocolate Box", quantity: 1, unit_price_cents: 1000 }],
+        error: null,
+      }) as never)
+
+      const rpcSpy = vi.fn(() => Promise.resolve({ data: null, error: null }))
+      mockSupabase.rpc = rpcSpy as never
+
+      const { resendShippingEmail } = await import("@/app/actions/admin")
+      const result = await resendShippingEmail(validOrderId)
+
+      expect(result).toEqual({ success: true })
+      expect(rpcSpy).toHaveBeenCalledWith("record_order_outcome", expect.objectContaining({
+        p_order_id: validOrderId,
+        p_outcome_type: "email_resent",
+        p_payload: { email_type: "shipping" },
+        p_actor: "admin",
+      }))
+    })
+  })
+
+  describe("resendDeliveryEmail", () => {
+    const validOrderId = validUUID
+
+    it("throws Unauthorized when not authenticated", async () => {
+      mockValidateAdminSession.mockResolvedValue(false)
+      const { resendDeliveryEmail } = await import("@/app/actions/admin")
+      await expect(resendDeliveryEmail(validOrderId)).rejects.toThrow("Unauthorized")
+    })
+
+    it("rejects invalid UUID", async () => {
+      const { resendDeliveryEmail } = await import("@/app/actions/admin")
+      await expect(resendDeliveryEmail("bad-id")).rejects.toThrow("Invalid order ID")
+    })
+
+    it("rejects when order is not found", async () => {
+      mockSupabase.single.mockResolvedValueOnce({ data: null, error: { message: "nope" } })
+      const { resendDeliveryEmail } = await import("@/app/actions/admin")
+      await expect(resendDeliveryEmail(validOrderId)).rejects.toThrow("Поръчката не е намерена")
+    })
+
+    it("rejects orders that aren't delivered yet", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: { id: validOrderId, status: "shipped" },
+        error: null,
+      })
+      const { resendDeliveryEmail } = await import("@/app/actions/admin")
+      await expect(resendDeliveryEmail(validOrderId)).rejects.toThrow(/само за доставени поръчки/)
+    })
+
+    it("calls sendDeliveryEmail with force=true + emits email_resent audit", async () => {
+      mockSupabase.single.mockResolvedValueOnce({
+        data: {
+          id: validOrderId,
+          status: "delivered",
+          delivery_email_sent_at: "2026-04-20T12:00:00Z",
+          first_name: "Ivan",
+          email: "ivan@example.com",
+        },
+        error: null,
+      })
+
+      const rpcSpy = vi.fn(() => Promise.resolve({ data: null, error: null }))
+      mockSupabase.rpc = rpcSpy as never
+
+      const { resendDeliveryEmail } = await import("@/app/actions/admin")
+      const result = await resendDeliveryEmail(validOrderId)
+
+      expect(result).toEqual({ success: true })
+      // Must be called with force: true so the delivery_email_sent_at early
+      // return in the helper is bypassed — otherwise resending an already-
+      // sent email would be a silent no-op.
+      expect(mockSendDeliveryEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ id: validOrderId }),
+        { force: true },
+      )
+      expect(rpcSpy).toHaveBeenCalledWith("record_order_outcome", expect.objectContaining({
+        p_order_id: validOrderId,
+        p_outcome_type: "email_resent",
+        p_payload: { email_type: "delivery" },
+        p_actor: "admin",
+      }))
     })
   })
 

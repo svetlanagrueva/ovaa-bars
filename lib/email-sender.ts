@@ -98,10 +98,17 @@ export async function sendOrderConfirmationEmail(order: Record<string, unknown>)
  * Send delivery confirmation email to the customer.
  * Fire-and-forget — logs errors but never throws.
  * Records delivery_email_sent_at on success, delivery_email_last_error on failure.
+ *
+ * `options.force`: bypass the `delivery_email_sent_at` early-return so admin
+ * can manually resend. The timestamp update still uses `.is(..., null)`
+ * (first-write-wins), so the original first-sent time is preserved.
  */
-export async function sendDeliveryEmail(order: Record<string, unknown>) {
+export async function sendDeliveryEmail(
+  order: Record<string, unknown>,
+  options?: { force?: boolean },
+) {
   if (!process.env.RESEND_API_KEY) return
-  if (order.delivery_email_sent_at) return
+  if (order.delivery_email_sent_at && !options?.force) return
 
   try {
     const supabase = await createClient()

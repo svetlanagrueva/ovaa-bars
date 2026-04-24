@@ -15,6 +15,7 @@ import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
 import { requireEnv } from "@/lib/env"
 import { stripe } from "@/lib/stripe"
 import { sanitizeError } from "@/lib/logger"
+import { sendOrderConfirmationEmail, sendDeliveryEmail } from "@/lib/email-sender"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -187,6 +188,7 @@ export interface OrderDetail extends OrderSummary {
   stripe_payment_intent_id: string | null
   stripe_receipt_url: string | null
   order_confirmation_sent_at: string | null
+  delivery_email_sent_at: string | null
   invoice_number: string | null
   invoice_date: string | null
   promo_code: string | null
@@ -1309,6 +1311,133 @@ export async function updateOrderQuantity(
   }
 
   return { success: true, newTotalCents }
+}
+
+// ─── Email resends ──────────────────────────────────────────────────────────
+// Admin can manually resend transactional emails from the order detail page.
+// Common triggers: customer says "I didn't get the email", email landed in
+// spam, address typo corrected via updateOrderContact.
+//
+// The existing helpers in lib/email-sender.ts are already fire-and-forget and
+// safe to call again. Their timestamp-update guards (first-write-wins via
+// .is(..., null)) preserve the original first-sent time across resends —
+// the audit event is the record of the resend.
+//
+// Each resend writes an email_resent outcome event so the timeline shows
+// which email was re-sent and when.
+
+async function emitEmailResentAudit(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+  emailType: "order_confirmation" | "shipping" | "delivery",
+) {
+  const { error } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "email_resent",
+    p_payload: { email_type: emailType },
+    p_actor: "admin",
+  })
+  if (error) {
+    console.error(`Failed to emit email_resent audit (${emailType}):`, error)
+  }
+}
+
+export async function resendOrderConfirmationEmail(
+  orderId: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Поръчката не е намерена")
+
+  // Don't resend for pending orders — they haven't been confirmed yet, so the
+  // "order confirmation" wording would be wrong (no receipt URL for card,
+  // no COD acceptance).
+  if (order.status === "pending") {
+    throw new Error("Потвърждение на поръчка се изпраща след потвърждение на плащането")
+  }
+  if (order.status === "cancelled" || order.status === "expired") {
+    throw new Error(
+      `Не може да се изпрати потвърждение за ${order.status === "cancelled" ? "отказана" : "изтекла"} поръчка`,
+    )
+  }
+
+  await sendOrderConfirmationEmail(order as Record<string, unknown>)
+  await emitEmailResentAudit(supabase, orderId, "order_confirmation")
+
+  return { success: true }
+}
+
+export async function resendShippingEmail(
+  orderId: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Поръчката не е намерена")
+
+  // Shipping email is only meaningful once a tracking number is assigned.
+  // status='shipped' implies tracking_number was set (generate-shipment
+  // atomically moves the status), but the placeholder value is a distinct
+  // not-yet-ready state — rare edge case, refuse it explicitly.
+  if (!order.tracking_number || order.tracking_number === "__generating__") {
+    throw new Error("Пратката още не е генерирана — няма номер за изпращане")
+  }
+
+  await sendShippingEmail(order as Record<string, unknown>, order.tracking_number as string)
+  await emitEmailResentAudit(supabase, orderId, "shipping")
+
+  return { success: true }
+}
+
+export async function resendDeliveryEmail(
+  orderId: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Поръчката не е намерена")
+
+  if (order.status !== "delivered") {
+    throw new Error(
+      `Потвърждение за доставка се изпраща само за доставени поръчки (текущ статус: ${order.status})`,
+    )
+  }
+
+  // force: true bypasses the delivery_email_sent_at early-return so the email
+  // actually fires. The timestamp update inside sendDeliveryEmail keeps its
+  // .is(..., null) guard, so the original first-sent time is preserved.
+  await sendDeliveryEmail(order as Record<string, unknown>, { force: true })
+  await emitEmailResentAudit(supabase, orderId, "delivery")
+
+  return { success: true }
 }
 
 // ─── Refund tracking ─────────────────────────────────────────────────────────

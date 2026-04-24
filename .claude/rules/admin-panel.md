@@ -106,9 +106,16 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 - Hidden preheader text for inbox preview on all templates
 - UTM parameters on all clickable links (`utm_source=email&utm_campaign=<name>&utm_content=<label>`)
 - `sendOrderConfirmationEmail()` in `lib/email-sender.ts` is the single unified sender for both card and COD orders (extracted from stripe.ts, used by both webhook and server actions)
-- `sendDeliveryEmail()` in `lib/email-sender.ts` — delivery confirmation, fire-and-forget with retry via `delivery_email_sent_at` marker. Early returns if already sent.
+- `sendDeliveryEmail()` in `lib/email-sender.ts` — delivery confirmation, fire-and-forget with retry via `delivery_email_sent_at` marker. Early returns if already sent, unless called with `{ force: true }` (admin resend path).
 - `notifyAdminNewOrder()` in `lib/email-sender.ts` — admin notification for new orders (both card and COD)
 - Transactional emails have NO unsubscribe link — they are mandatory
+
+### Manual resends (admin order detail "Имейли" card)
+Admin can manually resend the three customer-facing transactional emails from the order detail page. Common triggers: customer says "I didn't get the email", email landed in spam, address was corrected via `updateOrderContact`.
+- Server actions: `resendOrderConfirmationEmail(orderId)`, `resendShippingEmail(orderId)`, `resendDeliveryEmail(orderId)` in `app/actions/admin.ts`. Each validates admin, validates order state, calls the underlying helper, emits an `email_resent` audit event with `{ email_type: 'order_confirmation' | 'shipping' | 'delivery' }`.
+- Row visibility in the "Имейли" card is state-gated: confirmation row always visible post-pending, shipping row once `tracking_number` is set (not `__generating__`), delivery row once `status='delivered'`. The card itself is hidden for pending / cancelled / expired orders.
+- Timestamp preservation: the helpers keep their `.is(..., null)` guards on the success timestamp update, so the original first-sent time (`order_confirmation_sent_at` / `delivery_email_sent_at`) is preserved across resends. `sendDeliveryEmail`'s early-return is bypassed only via `{ force: true }`, which `resendDeliveryEmail` passes. Shipping has no persisted timestamp.
+- The audit event is the record of the resend — column-diff audit wouldn't fire because the timestamps don't change. `record_order_outcome` allow-list extended with `email_resent` in migration `20260424150000_extend_outcome_types_for_email_resent.sql`.
 
 ## Automatic Delivery Confirmation (`lib/delivery-confirmation.ts`)
 - All delivery paths (admin manual, cron polling, future webhooks) converge on `confirmDeliveryForOrder(orderId, deliveredAt, source)`
