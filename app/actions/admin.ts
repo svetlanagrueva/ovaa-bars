@@ -878,6 +878,12 @@ export async function addAdminNote(orderId: string, note: string) {
   return { success: true }
 }
 
+// Note: invoice_number / invoice_date are deliberately allowed on orders
+// where needs_invoice=false. Profile fields (type/mol/address/company_name/
+// eik/vat) stay tied to needs_invoice — those represent what the customer
+// agreed to share at checkout. The number is admin-controlled (issued in
+// Microinvest, pasted here) and orthogonal to checkout consent. See
+// migration 20260425_relax_invoice_fields_cleared.sql.
 export async function setInvoiceNumber(orderId: string, invoiceNumber: string): Promise<{ success: true }> {
   await requireAdmin()
 
