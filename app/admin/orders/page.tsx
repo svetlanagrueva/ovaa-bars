@@ -29,6 +29,14 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Отказани",
 }
 
+const STATUS_BADGE_LABELS: Record<string, string> = {
+  pending: "Чакаща",
+  confirmed: "Потвърдена",
+  shipped: "Изпратена",
+  delivered: "Доставена",
+  cancelled: "Отказана",
+}
+
 const STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   pending: "outline",
   confirmed: "default",
@@ -126,7 +134,7 @@ function AdminOrdersPage() {
           (o.total_amount / 100).toFixed(2),
           o.payment_method === "card" ? "Карта" : "Наложен платеж",
           o.logistics_partner || "",
-          STATUS_LABELS[o.status] || o.status,
+          STATUS_BADGE_LABELS[o.status] || o.status,
           o.invoice_number || "",
           o.invoice_date ? new Date(o.invoice_date).toLocaleDateString("bg-BG") : "",
         ]
@@ -313,7 +321,7 @@ function AdminOrdersPage() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>
-                      {STATUS_LABELS[order.status] || order.status}
+                      {STATUS_BADGE_LABELS[order.status] || order.status}
                     </Badge>
                   </TableCell>
                 </TableRow>
