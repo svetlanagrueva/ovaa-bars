@@ -215,6 +215,23 @@ export interface OrderDetail extends OrderSummary {
   // exists in the DB (reference_id is polymorphic text), so we fetch
   // separately and match client-side.
   inventoryReturns: OrderInventoryReturn[]
+  // Domain events from order_audit_events that aren't already represented
+  // by column-derived rows in the timeline (status changes, paid_at,
+  // shipped_at, etc. are already captured via their respective columns —
+  // surfacing both would double-count). The fetch in getOrder filters to
+  // an allowlist of event_types: order_items_changed, contact_info_changed,
+  // email_resent, status_force_override, data_repair, the post-shipment
+  // outcomes, refund_annotation_edited, payment_failed, dispute_*,
+  // external_refund.
+  auditEvents: OrderAuditEvent[]
+}
+
+export interface OrderAuditEvent {
+  id: number
+  event_type: string
+  actor: string
+  payload: Record<string, unknown>
+  created_at: string
 }
 
 export interface OrderInventoryReturn {
@@ -478,7 +495,30 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
 
   const supabase = await createClient()
 
-  const [orderResult, returnsResult] = await Promise.all([
+  // Allowlist of audit event types to surface in the timeline. Events
+  // already covered by column-derived rows in the UI (status_changed,
+  // paid_at_recorded, shipped_at_recorded, etc.) are intentionally
+  // excluded to avoid double-counting in the timeline.
+  const TIMELINE_EVENT_TYPES = [
+    "order_items_changed",
+    "contact_info_changed",
+    "email_resent",
+    "status_force_override",
+    "data_repair",
+    "delivery_refused",
+    "package_lost",
+    "returned",
+    "recalled",
+    "partial_return",
+    "refund_annotation_edited",
+    "external_refund",
+    "payment_failed",
+    "dispute_opened",
+    "dispute_closed",
+    "dispute_funds_reinstated",
+  ]
+
+  const [orderResult, returnsResult, auditResult] = await Promise.all([
     supabase
       .from("orders")
       .select(`
@@ -519,6 +559,12 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       .eq("order_id", orderId)
       .eq("reference_type", "return")
       .order("created_at", { ascending: true }),
+    supabase
+      .from("order_audit_events")
+      .select("id, event_type, actor, payload, created_at")
+      .eq("order_id", orderId)
+      .in("event_type", TIMELINE_EVENT_TYPES)
+      .order("created_at", { ascending: true }),
   ])
 
   if (orderResult.error || !orderResult.data) {
@@ -533,7 +579,15 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     console.error(`Failed to fetch inventory returns for order ${orderId}:`, returnsResult.error)
   }
 
-  return { ...orderResult.data, inventoryReturns: returns }
+  const auditEvents = (auditResult.data ?? []) as OrderAuditEvent[]
+  if (auditResult.error) {
+    // Same fail-open: render the order without audit events rather than
+    // blocking the page. The column-derived timeline events are still
+    // visible.
+    console.error(`Failed to fetch audit events for order ${orderId}:`, auditResult.error)
+  }
+
+  return { ...orderResult.data, inventoryReturns: returns, auditEvents }
 }
 
 // Valid status transitions

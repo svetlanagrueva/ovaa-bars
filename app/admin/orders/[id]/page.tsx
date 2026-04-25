@@ -1007,6 +1007,89 @@ export default function AdminOrderDetailPage({
         <CardContent>
           <div className="relative space-y-0">
             {(() => {
+              // Map an order_audit_events row to a Bulgarian label + detail
+              // string for the timeline. Domain events that aren't already
+              // captured by column-derived rows (status, paid_at, etc.) live
+              // here. The server filters event_type to TIMELINE_EVENT_TYPES;
+              // any new outcome / audit type added there should also get a
+              // case here so it renders something readable.
+              type AuditEvt = OrderDetail["auditEvents"][number]
+              const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s)
+              const renderAuditEvent = (e: AuditEvt): { label: string; detail?: string } => {
+                const p = e.payload || {}
+                switch (e.event_type) {
+                  case "order_items_changed": {
+                    const productName = (p.product_name as string) || (p.sku as string) || "артикул"
+                    const oldQ = p.old_quantity as number | undefined
+                    const newQ = p.new_quantity as number | undefined
+                    const detail = oldQ != null && newQ != null
+                      ? `${productName}: ${oldQ} → ${newQ}`
+                      : productName
+                    return { label: "Редакция на количество", detail }
+                  }
+                  case "contact_info_changed": {
+                    const fields = Object.keys(p).filter((k) => p[k] && typeof p[k] === "object")
+                    const labels: Record<string, string> = {
+                      first_name: "име",
+                      last_name: "фамилия",
+                      phone: "телефон",
+                      email: "имейл",
+                      address: "адрес",
+                      postal_code: "пощ. код",
+                      city: "град",
+                      notes: "бележки",
+                    }
+                    const list = fields.map((k) => labels[k] ?? k).join(", ")
+                    return { label: "Редакция на данни на клиента", detail: list || undefined }
+                  }
+                  case "email_resent": {
+                    const t = p.email_type as string | undefined
+                    const labels: Record<string, string> = {
+                      order_confirmation: "потвърждение за поръчка",
+                      shipping: "известие за изпращане",
+                      delivery: "потвърждение за доставка",
+                    }
+                    return { label: "Имейл изпратен повторно", detail: t ? labels[t] ?? t : undefined }
+                  }
+                  case "status_force_override": {
+                    const from = p.from as string | undefined
+                    const to = p.to as string | undefined
+                    const reason = p.reason as string | undefined
+                    return {
+                      label: "Принудителна промяна на статус",
+                      detail: [from && to ? `${from} → ${to}` : null, reason ? truncate(reason, 80) : null].filter(Boolean).join(" — ") || undefined,
+                    }
+                  }
+                  case "data_repair": {
+                    return { label: "Корекция на данни", detail: p.reason ? truncate(p.reason as string, 80) : undefined }
+                  }
+                  case "delivery_refused":
+                    return { label: "Отказана доставка", detail: p.note ? truncate(p.note as string, 80) : undefined }
+                  case "package_lost":
+                    return { label: "Изгубена пратка", detail: (p.courier_ref as string) || undefined }
+                  case "returned":
+                    return { label: "Върнат продукт", detail: (p.return_ref as string) || undefined }
+                  case "recalled":
+                    return { label: "Изтеглен продукт", detail: (p.recall_ref as string) || undefined }
+                  case "partial_return":
+                    return { label: "Частично връщане" }
+                  case "refund_annotation_edited":
+                    return { label: "Промяна на бележка по възстановяване" }
+                  case "external_refund":
+                    return { label: "Външно възстановяване" }
+                  case "payment_failed":
+                    return { label: "Неуспешно плащане", detail: (p.reason as string) || undefined }
+                  case "dispute_opened":
+                    return { label: "Отворен спор" }
+                  case "dispute_closed":
+                    return { label: "Приключен спор", detail: (p.status as string) || undefined }
+                  case "dispute_funds_reinstated":
+                    return { label: "Върнати средства от спор" }
+                  default:
+                    return { label: e.event_type }
+                }
+              }
+
               // For orders created before timestamps were added, fall back to created_at
               const confirmedFallback = !order.confirmed_at && order.status !== "pending" ? order.created_at : null
               const events = [
@@ -1024,11 +1107,14 @@ export default function AdminOrderDetailPage({
                 })),
                 ...complaints.filter(c => c.reported_at).map(c => ({ label: "Рекламация", date: c.reported_at, detail: `#${c.complaint_ref}` })),
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
-                ...order.admin_notes.map((note) => ({
-                  label: "Бележка",
-                  date: note.created_at,
-                  detail: note.text.length > 80 ? note.text.slice(0, 80) + "…" : note.text,
-                })),
+                // Domain events from order_audit_events. Admin notes are
+                // intentionally NOT in this array — they live in the
+                // dedicated "Вътрешни бележки" card to avoid duplication
+                // (see admin-panel.md § Order Detail timeline).
+                ...order.auditEvents.map((e) => {
+                  const { label, detail } = renderAuditEvent(e)
+                  return { label, date: e.created_at, detail }
+                }),
               ]
                 .filter((e) => e.date)
                 .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
