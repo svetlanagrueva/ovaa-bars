@@ -79,6 +79,10 @@ export default function AdminOrderDetailPage({
   const [contactCity, setContactCity] = useState("")
   const [contactNotes, setContactNotes] = useState("")
   const [contactSaving, setContactSaving] = useState(false)
+  // Errors from updateOrderContact need to surface inside the contact card
+  // itself — actionError is shared with the Действия card much further down,
+  // so a validation rejection scrolled out of view and the admin saw nothing.
+  const [contactError, setContactError] = useState("")
 
   // Order edit — COD quantity state (per-SKU)
   const [qtyEditing, setQtyEditing] = useState<Record<string, number | null>>({})
@@ -469,6 +473,7 @@ export default function AdminOrderDetailPage({
                   setContactCity(order.city)
                   setContactNotes(order.notes ?? "")
                   setActionError("")
+                  setContactError("")
                   setContactEditing(true)
                 }}
               >
@@ -532,13 +537,16 @@ export default function AdminOrderDetailPage({
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                   />
                 </div>
+                {contactError && (
+                  <p className="text-sm text-red-600">{contactError}</p>
+                )}
                 <div className="flex items-center gap-2 pt-1">
                   <Button
                     size="sm"
                     disabled={contactSaving}
                     onClick={async () => {
                       setContactSaving(true)
-                      setActionError("")
+                      setContactError("")
                       try {
                         await updateOrderContact(id, {
                           firstName: contactFirstName,
@@ -553,7 +561,7 @@ export default function AdminOrderDetailPage({
                         setOrder(refreshed)
                         setContactEditing(false)
                       } catch (err) {
-                        setActionError(err instanceof Error ? err.message : "Грешка при записване")
+                        setContactError(err instanceof Error ? err.message : "Грешка при записване")
                       } finally {
                         setContactSaving(false)
                       }
@@ -567,7 +575,7 @@ export default function AdminOrderDetailPage({
                     disabled={contactSaving}
                     onClick={() => {
                       setContactEditing(false)
-                      setActionError("")
+                      setContactError("")
                     }}
                   >
                     Отказ
