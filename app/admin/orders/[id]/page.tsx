@@ -52,6 +52,12 @@ export default function AdminOrderDetailPage({
   const [shipmentLoading, setShipmentLoading] = useState(false)
   const [shipmentSuccess, setShipmentSuccess] = useState<string | null>(null)
   const [selectedOfficeNumericId, setSelectedOfficeNumericId] = useState<number | null>(null)
+  // Sender / recipient sections start collapsed to a summary line — admin
+  // sees pre-filled data without a dropdown overwhelming the view, expands
+  // only when they actually need to change something. Mirrors Shopify's
+  // "Edit" toggle on Ship-from / Ship-to in the fulfillment panel.
+  const [senderEditing, setSenderEditing] = useState(false)
+  const [recipientEditing, setRecipientEditing] = useState(false)
   const [officePickerError, setOfficePickerError] = useState(false)
   const [newNote, setNewNote] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
@@ -1113,116 +1119,206 @@ export default function AdminOrderDetailPage({
                         <h3 className="text-sm font-semibold">
                           Товарителница — {shipmentDisplay?.courier === "speedy" ? "Speedy" : "Еконт"} ({shipmentDisplay?.deliveryType === "office" ? "до офис" : "до адрес"})
                         </h3>
-                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false) }}>Затвори</button>
+                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false); setSenderEditing(false); setRecipientEditing(false) }}>Затвори</button>
                       </div>
 
-                      {/* Sender */}
+                      {/* Sender — collapsed summary by default; "Промени"
+                          expands to editable fields. Pre-filled from
+                          SELLER_* env vars. For Econt sender, edit mode adds
+                          an office picker so admin can pick a different
+                          drop-off office without typing the code by hand. */}
                       <div className="space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Подател</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
-                            <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
-                            <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
-                          </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Подател</p>
+                          {!senderEditing && (
+                            <button
+                              type="button"
+                              onClick={() => setSenderEditing(true)}
+                              className="text-xs text-blue-600 hover:underline"
+                            >
+                              Промени
+                            </button>
+                          )}
                         </div>
-                        {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
-                            <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                        {!senderEditing ? (
+                          <div className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
+                            <p className="font-medium">{shipmentForm.senderName || "—"}</p>
+                            <p className="text-xs text-muted-foreground">{shipmentForm.senderPhone || "—"}</p>
+                            {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Офис код (Еконт): <span className="font-mono">{shipmentForm.senderOfficeCode}</span>
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {[shipmentForm.senderAddress, shipmentForm.senderCity, shipmentForm.senderPostalCode].filter(Boolean).join(", ") || "—"}
+                              </p>
+                            )}
                           </div>
                         ) : (
-                          <div className="grid gap-2 sm:grid-cols-3">
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Град</label>
-                              <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                          <>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
+                                <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                                <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
+                              </div>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
-                              <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                            {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
+                              <>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
+                                  <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Или избери офис от списъка</label>
+                                  <EcontOfficePicker
+                                    selectedOfficeId={null}
+                                    onSelect={(office: EcontOfficeOption) => {
+                                      setShipmentForm({ ...shipmentForm, senderOfficeCode: office.code })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                </div>
+                              </>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                                  <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                                  <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                                  <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="pt-1">
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSenderEditing(false)}>Готово</Button>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
-                              <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
-                            </div>
-                          </div>
+                          </>
                         )}
                       </div>
 
-                      {/* Receiver */}
+                      {/* Receiver — collapsed summary by default. Customer
+                          chose office (or address) at checkout, so the
+                          pre-filled value is almost always correct. "Промени
+                          офис" expands the picker for the rare case admin
+                          needs to switch (customer called to change
+                          delivery, picked wrong office, etc.). */}
                       <div className="space-y-2 border-t pt-3">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Получател</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Име</label>
-                            <Input value={shipmentForm.recipientName} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientName: e.target.value })} />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
-                            <Input value={shipmentForm.recipientPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPhone: e.target.value })} />
-                          </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Получател</p>
+                          {!recipientEditing && (
+                            <button
+                              type="button"
+                              onClick={() => setRecipientEditing(true)}
+                              className="text-xs text-blue-600 hover:underline"
+                            >
+                              {shipmentDisplay?.deliveryType === "office" ? "Промени офис" : "Промени"}
+                            </button>
+                          )}
                         </div>
-                        {shipmentDisplay?.deliveryType === "office" ? (
-                          <div className="space-y-3">
-                            {shipmentDisplay?.courier === "speedy" ? (
-                              <SpeedyOfficePicker
-                                selectedOfficeId={selectedOfficeNumericId}
-                                onSelect={(office: SpeedyOfficeOption) => {
-                                  setSelectedOfficeNumericId(office.id)
-                                  setShipmentForm({ ...shipmentForm, recipientOfficeId: String(office.id), recipientOfficeName: office.name })
-                                }}
-                                onError={setOfficePickerError}
-                              />
+                        {!recipientEditing ? (
+                          <div className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
+                            <p className="font-medium">{shipmentForm.recipientName || "—"}</p>
+                            <p className="text-xs text-muted-foreground">{shipmentForm.recipientPhone || "—"}</p>
+                            {shipmentDisplay?.deliveryType === "office" ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Офис: <span className="font-medium text-foreground">{shipmentForm.recipientOfficeName || "—"}</span>
+                                {(shipmentForm.recipientOfficeId || shipmentForm.recipientOfficeCode) && (
+                                  <span className="ml-1 font-mono">
+                                    ({shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode})
+                                  </span>
+                                )}
+                              </p>
                             ) : (
-                              <EcontOfficePicker
-                                selectedOfficeId={selectedOfficeNumericId}
-                                onSelect={(office: EcontOfficeOption) => {
-                                  setSelectedOfficeNumericId(office.id)
-                                  setShipmentForm({ ...shipmentForm, recipientOfficeCode: office.code, recipientOfficeName: office.name })
-                                }}
-                                onError={setOfficePickerError}
-                              />
-                            )}
-                            {officePickerError && (
-                              <p className="text-sm text-red-600">
-                                Офисите не могат да бъдат заредени. Използвайте ръчно въвеждане на товарителница.
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {[shipmentForm.recipientAddress, shipmentForm.recipientCity, shipmentForm.recipientPostalCode].filter(Boolean).join(", ") || "—"}
                               </p>
                             )}
-                            <div className="grid gap-2 sm:grid-cols-3">
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">
-                                  Офис {shipmentDisplay?.courier === "speedy" ? "ID" : "код"}
-                                </label>
-                                <Input
-                                  value={shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
-                                  disabled
-                                  className="bg-secondary"
-                                />
-                              </div>
-                              <div className="sm:col-span-2">
-                                <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
-                                <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
-                              </div>
-                            </div>
                           </div>
                         ) : (
-                          <div className="grid gap-2 sm:grid-cols-3">
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Град</label>
-                              <Input value={shipmentForm.recipientCity} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientCity: e.target.value })} />
+                          <>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Име</label>
+                                <Input value={shipmentForm.recipientName} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientName: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                                <Input value={shipmentForm.recipientPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPhone: e.target.value })} />
+                              </div>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
-                              <Input value={shipmentForm.recipientAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientAddress: e.target.value })} />
+                            {shipmentDisplay?.deliveryType === "office" ? (
+                              <div className="space-y-3">
+                                {shipmentDisplay?.courier === "speedy" ? (
+                                  <SpeedyOfficePicker
+                                    selectedOfficeId={selectedOfficeNumericId}
+                                    onSelect={(office: SpeedyOfficeOption) => {
+                                      setSelectedOfficeNumericId(office.id)
+                                      setShipmentForm({ ...shipmentForm, recipientOfficeId: String(office.id), recipientOfficeName: office.name })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                ) : (
+                                  <EcontOfficePicker
+                                    selectedOfficeId={selectedOfficeNumericId}
+                                    onSelect={(office: EcontOfficeOption) => {
+                                      setSelectedOfficeNumericId(office.id)
+                                      setShipmentForm({ ...shipmentForm, recipientOfficeCode: office.code, recipientOfficeName: office.name })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                )}
+                                {officePickerError && (
+                                  <p className="text-sm text-red-600">
+                                    Офисите не могат да бъдат заредени. Използвайте ръчно въвеждане на товарителница.
+                                  </p>
+                                )}
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  <div>
+                                    <label className="mb-1 block text-xs text-muted-foreground">
+                                      Офис {shipmentDisplay?.courier === "speedy" ? "ID" : "код"}
+                                    </label>
+                                    <Input
+                                      value={shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
+                                      disabled
+                                      className="bg-secondary"
+                                    />
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+                                    <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                                  <Input value={shipmentForm.recipientCity} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientCity: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                                  <Input value={shipmentForm.recipientAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientAddress: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                                  <Input value={shipmentForm.recipientPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPostalCode: e.target.value })} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="pt-1">
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setRecipientEditing(false)}>Готово</Button>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
-                              <Input value={shipmentForm.recipientPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPostalCode: e.target.value })} />
-                            </div>
-                          </div>
+                          </>
                         )}
                       </div>
 
@@ -1259,6 +1355,8 @@ export default function AdminOrderDetailPage({
                               setShipmentOpen(false)
                               setSelectedOfficeNumericId(null)
                               setOfficePickerError(false)
+                              setSenderEditing(false)
+                              setRecipientEditing(false)
                               const updated = await getOrder(id)
                               setOrder(updated)
                               setShipmentSuccess(tn)
@@ -1271,7 +1369,7 @@ export default function AdminOrderDetailPage({
                         >
                           {shipmentLoading ? "Генериране..." : "Изпрати към куриера"}
                         </Button>
-                        <Button variant="ghost" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false) }}>Отказ</Button>
+                        <Button variant="ghost" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false); setSenderEditing(false); setRecipientEditing(false) }}>Отказ</Button>
                       </div>
                     </div>
                   )}
