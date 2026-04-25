@@ -46,12 +46,14 @@ export function SocialProof() {
             {SOCIAL_IMAGES.map((src, i) => (
               <div
                 key={i}
-                className={`aspect-square overflow-hidden rounded-full bg-muted ${i === 3 ? "hidden lg:block" : ""}`}
+                className={`relative aspect-square overflow-hidden rounded-full bg-muted ${i === 3 ? "hidden lg:block" : ""}`}
               >
-                <img
+                <Image
                   src={src}
                   alt=""
-                  className="h-full w-full object-cover"
+                  fill
+                  sizes="(max-width: 1024px) 33vw, 20vw"
+                  className="object-cover"
                 />
               </div>
             ))}

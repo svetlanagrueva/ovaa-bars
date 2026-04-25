@@ -46,7 +46,6 @@ vi.mock("@/lib/econt", () => ({
 }))
 
 // Mock delivery confirmation (imported by admin actions for delivered status)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockConfirmDeliveryForOrder: any = vi.fn(() => Promise.resolve({ confirmed: true }))
 vi.mock("@/lib/delivery-confirmation", () => ({
   confirmDeliveryForOrder: (a: string, b: string, c: string) => mockConfirmDeliveryForOrder(a, b, c),
@@ -1768,7 +1767,6 @@ describe("admin actions", () => {
     it("requires paid_at — rejects when missing", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         recordCodSettlement(validUUID, { paidAt: "" } as any)
       ).rejects.toThrow("Датата на плащане е задължителна")
     })
@@ -3372,7 +3370,6 @@ describe("admin actions", () => {
       const { recordOrderOutcome } = await import("@/app/actions/admin")
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         recordOrderOutcome(validOrderId, { outcomeType: "bogus" as any, note: "x".repeat(20) }),
       ).rejects.toThrow("Невалиден тип събитие")
     })

@@ -30,6 +30,13 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect, onError }: Econt
   const [manualValue, setManualValue] = useState("")
   const dropdownRef = useRef<HTMLDivElement>(null)
   const fetchedRef = useRef(false)
+  // Stash onError in a ref so the fetch effect doesn't need it in its dep
+  // array — keeps the effect from re-running on every parent render and
+  // satisfies react-hooks/exhaustive-deps without triggering re-fetches.
+  const onErrorRef = useRef(onError)
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -58,13 +65,13 @@ export function EcontOfficePicker({ selectedOfficeId, onSelect, onError }: Econt
       })
       .then((data) => {
         setOffices(data.offices || [])
-        onError?.(false)
+        onErrorRef.current?.(false)
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return
         fetchedRef.current = false // allow retry on next open
         setError("Неуспешно зареждане на офисите на Еконт")
-        onError?.(true)
+        onErrorRef.current?.(true)
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
