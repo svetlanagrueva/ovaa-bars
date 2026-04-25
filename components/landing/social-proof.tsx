@@ -13,10 +13,51 @@ const SOCIAL_IMAGES = [
 
 export function SocialProof() {
   return (
-    <section className="bg-card py-16 sm:py-20 lg:py-24">
-      <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <div className="grid items-center gap-10 lg:grid-cols-12 lg:gap-10">
-          {/* Left */}
+    <section className="bg-card py-12 sm:py-16 lg:py-24">
+      <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
+        {/* Mobile: stacked layout */}
+        <div className="lg:hidden">
+          <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
+            Общност
+          </p>
+
+          <h3 className="mt-3 text-[22px] font-light tracking-[-0.02em] text-foreground sm:mt-4 sm:text-2xl">
+            Балансирай ежедневието
+          </h3>
+
+          <p className="mt-3 text-[13px] leading-[1.7] text-muted-foreground sm:mt-4 sm:max-w-sm sm:text-sm sm:leading-7">
+            Виж как Egg Origin се вписва в ежедневието на хора с фокус,
+            движение и баланс.
+          </p>
+
+          {/* Mobile: 2x2 grid */}
+          <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
+            {SOCIAL_IMAGES.slice(0, 4).map((src, i) => (
+              <div
+                key={i}
+                className={`aspect-square overflow-hidden rounded-[16px] bg-muted sm:rounded-[20px] ${i === 3 ? "hidden sm:block" : ""}`}
+              >
+                <img
+                  src={src}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            ))}
+          </div>
+
+          <Link
+            href="https://instagram.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-6 inline-flex w-full items-center justify-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent sm:w-auto"
+          >
+            Instagram →
+          </Link>
+        </div>
+
+        {/* Desktop: side-by-side layout */}
+        <div className="hidden items-center gap-10 lg:grid lg:grid-cols-12">
           <div className="lg:col-span-4">
             <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               Общност
@@ -41,12 +82,11 @@ export function SocialProof() {
             </Link>
           </div>
 
-          {/* Right - images */}
-          <div className="grid grid-cols-3 gap-3 lg:col-span-8 lg:grid-cols-4">
+          <div className="grid grid-cols-4 gap-3 lg:col-span-8">
             {SOCIAL_IMAGES.map((src, i) => (
               <div
                 key={i}
-                className={`group aspect-square overflow-hidden rounded-[20px] bg-muted ${i === 3 ? "hidden lg:block" : ""}`}
+                className="group aspect-square overflow-hidden rounded-[20px] bg-muted"
               >
                 <img
                   src={src}
@@ -64,13 +104,13 @@ export function SocialProof() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.2 }}
-          className="mt-12 flex flex-wrap justify-center gap-4"
+          className="mt-8 flex flex-wrap justify-center gap-4 sm:mt-12"
         >
           <a
             href="https://www.trustpilot.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 transition-colors hover:bg-muted/30"
+            className="inline-flex w-full items-center justify-center gap-3 rounded-full border border-border/60 px-6 py-3 transition-colors hover:bg-muted/30 sm:w-auto"
           >
             <div className="flex items-center gap-1">
               {[...Array(5)].map((_, i) => (
