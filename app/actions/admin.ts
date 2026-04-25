@@ -670,6 +670,14 @@ export interface ShipmentFormData {
   // (only the code is). Populated from SELLER_ECONT_OFFICE_NAME env var as
   // a default; replaced by EcontOfficePicker selection in edit mode.
   senderOfficeName: string
+  // Speedy sender drop-off office. When set, Speedy doesn't dispatch a
+  // courier to the seller address — admin drops off at this office. Sent
+  // as `sender.dropoffOfficeId` to Speedy's API. Both fields are populated
+  // from SELLER_SPEEDY_OFFICE_ID / _NAME env vars or the SpeedyOfficePicker
+  // in edit mode. Stored as strings to mirror the recipient fields and
+  // keep the form shape uniform; coerced to number on dispatch.
+  senderSpeedyOfficeId: string
+  senderSpeedyOfficeName: string
   recipientName: string
   recipientPhone: string
   recipientCity: string
@@ -725,6 +733,8 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
       senderPostalCode: process.env.SELLER_POSTAL_CODE || "",
       senderOfficeCode: process.env.SELLER_ECONT_OFFICE_CODE || "",
       senderOfficeName: process.env.SELLER_ECONT_OFFICE_NAME || "",
+      senderSpeedyOfficeId: process.env.SELLER_SPEEDY_OFFICE_ID || "",
+      senderSpeedyOfficeName: process.env.SELLER_SPEEDY_OFFICE_NAME || "",
       recipientName: `${order.first_name} ${order.last_name}`,
       recipientPhone: order.phone,
       recipientCity: order.city,
@@ -806,6 +816,11 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
         weight: form.weight,
         contents: form.contents,
         codAmount,
+        // Optional sender drop-off-at-office. When unset, Speedy follows
+        // the default courier-pickup-from-registered-address flow.
+        senderOfficeId: form.senderSpeedyOfficeId
+          ? Number(form.senderSpeedyOfficeId) || undefined
+          : undefined,
       })
       trackingNumber = result.trackingNumber
     } else {

@@ -80,6 +80,11 @@ export interface SpeedyShipmentParams {
   weight: number
   contents: string
   codAmount?: number
+  // When set, the sender will drop the parcel off at this Speedy office
+  // instead of the courier picking it up at the registered sender address.
+  // Mirrors the recipient's `officeId` / pickupOfficeId on the receiver side.
+  // Sent to the Speedy API as `sender.dropoffOfficeId`.
+  senderOfficeId?: number
 }
 
 export interface CourierShipmentStatus {
@@ -132,15 +137,24 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
     }
   }
 
+  const sender: Record<string, unknown> = {
+    phone1: { number: process.env.SELLER_PHONE || "" },
+    contactName: process.env.SELLER_COMPANY_NAME || "",
+    email: process.env.SELLER_EMAIL || "",
+  }
+  // Drop-off-at-office mode: if the seller's account is configured for it
+  // and an office id is supplied, Speedy will not dispatch a courier to the
+  // sender address. Mutually exclusive with the default address-pickup
+  // behavior — supplying both would let Speedy decide which to honor.
+  if (params.senderOfficeId) {
+    sender.dropoffOfficeId = params.senderOfficeId
+  }
+
   const body = {
     userName: SPEEDY_USERNAME,
     password: SPEEDY_PASSWORD,
     language: "BG",
-    sender: {
-      phone1: { number: process.env.SELLER_PHONE || "" },
-      contactName: process.env.SELLER_COMPANY_NAME || "",
-      email: process.env.SELLER_EMAIL || "",
-    },
+    sender,
     recipient,
     service,
     content: {

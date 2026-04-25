@@ -2053,6 +2053,8 @@ describe("admin actions", () => {
       senderPostalCode: "1000",
       senderOfficeCode: "1056",
       senderOfficeName: "Sofia Center 1",
+      senderSpeedyOfficeId: "",
+      senderSpeedyOfficeName: "",
       recipientName: "Ivan Petrov",
       recipientPhone: "+359888123456",
       recipientCity: "Sofia",
