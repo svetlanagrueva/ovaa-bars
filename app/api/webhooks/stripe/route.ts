@@ -1,8 +1,187 @@
 import { NextResponse } from "next/server"
+import { Resend } from "resend"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
+import { sanitizeError } from "@/lib/logger"
+import { requireEnv } from "@/lib/env"
 import type Stripe from "stripe"
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Fire-and-forget admin alert for events that need operator attention
+// (refunds issued outside the admin UI, disputes, etc.).
+function alertAdmin(subject: string, body: string) {
+  if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
+  const resend = new Resend(process.env.RESEND_API_KEY)
+  resend.emails.send({
+    from: requireEnv("EMAIL_FROM"),
+    to: process.env.ADMIN_EMAIL,
+    subject,
+    text: body,
+  }).catch((err) => {
+    console.error(`Failed to send admin alert "${subject}":`, sanitizeError(err))
+  })
+}
+
+// Lookup helper: find the local order for a Stripe refund by its PaymentIntent.
+// Returns null (with a logged warning) when no matching order exists — the
+// refund is for a payment that didn't come through our system.
+async function findOrderForRefund(
+  refund: Stripe.Refund,
+): Promise<{ id: string } | null> {
+  const paymentIntentId = typeof refund.payment_intent === "string"
+    ? refund.payment_intent
+    : refund.payment_intent?.id ?? null
+  if (!paymentIntentId) {
+    console.error(`Refund ${refund.id} has no payment_intent`)
+    return null
+  }
+  const supabase = await createClient()
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("stripe_payment_intent_id", paymentIntentId)
+    .single()
+  if (!order) {
+    console.error(`No order found for payment intent ${paymentIntentId} (refund ${refund.id})`)
+    return null
+  }
+  return order
+}
+
+// Lookup helper for dispute events (same PI→order pattern as refunds).
+async function findOrderForDispute(
+  dispute: Stripe.Dispute,
+): Promise<{ id: string } | null> {
+  const paymentIntentId = typeof dispute.payment_intent === "string"
+    ? dispute.payment_intent
+    : dispute.payment_intent?.id ?? null
+  if (!paymentIntentId) {
+    console.error(`Dispute ${dispute.id} has no payment_intent`)
+    return null
+  }
+  const supabase = await createClient()
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("stripe_payment_intent_id", paymentIntentId)
+    .single()
+  if (!order) {
+    console.error(`No order found for payment intent ${paymentIntentId} (dispute ${dispute.id})`)
+    return null
+  }
+  return order
+}
+
+// Idempotent upsert of a Stripe Refund into order_refunds.
+// Natural key: stripe_refund_id (unique partial index). First arrival wins,
+// subsequent arrivals (retries, cross-event overlap) are no-ops.
+//
+// Status handling:
+//   - succeeded: insert the row (money moved; record it).
+//   - failed: admin alert, no DB write — phase 1 doesn't store rows for
+//     money that never moved. Phase 2 can reconsider once we issue
+//     refunds ourselves and want to track pending lifecycle.
+//   - canceled: informational alert, no DB write.
+//   - pending / requires_action: silent skip. A subsequent refund.updated
+//     or refund.failed will transition state and we act then.
+async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
+  if (refund.status === "failed") {
+    await alertRefundFailed(refund)
+    return
+  }
+  if (refund.status === "canceled") {
+    await alertRefundCanceled(refund)
+    return
+  }
+  if (refund.status !== "succeeded") {
+    // pending / requires_action — skip silently; we act on the eventual
+    // transition event.
+    return
+  }
+
+  const order = await findOrderForRefund(refund)
+  if (!order) return
+
+  const supabase = await createClient()
+
+  // Fast path: if the Stripe refund ID is already in our table, do nothing.
+  // Covers the admin-UI-then-webhook ordering — admin recorded the refund
+  // first with the Stripe ID, webhook arrival has nothing to add.
+  const { data: existing } = await supabase
+    .from("order_refunds")
+    .select("id")
+    .eq("stripe_refund_id", refund.id)
+    .maybeSingle()
+  if (existing) return
+
+  const { error: insertError } = await supabase
+    .from("order_refunds")
+    .insert({
+      order_id: order.id,
+      stripe_refund_id: refund.id,
+      amount_cents: refund.amount,
+      method: "stripe",
+      source: "stripe_webhook",
+      reason: refund.reason ?? "Stripe webhook: refund recorded from gateway event",
+      recorded_by: "stripe-webhook",
+      refunded_at: new Date(refund.created * 1000).toISOString(),
+    })
+
+  if (insertError) {
+    // 23505 on stripe_refund_id means a concurrent upsert beat us. That's
+    // the idempotent success case; treat as handled.
+    if (insertError.code !== "23505") {
+      console.error(`Failed to insert order_refunds row for refund ${refund.id}:`, sanitizeError(insertError))
+    }
+    return
+  }
+
+  alertAdmin(
+    `Stripe refund recorded — order ${String(order.id).slice(0, 8)}`,
+    `A refund of ${(refund.amount / 100).toFixed(2)} EUR was recorded for order ${order.id}.\n` +
+      `Stripe refund: ${refund.id}\n` +
+      `Reason (gateway): ${refund.reason ?? "n/a"}\n\n` +
+      `Open the order in the admin panel to add the internal reason and credit-note reference.`,
+  )
+}
+
+// Admin alert when a Stripe refund fails (card declined the refund, bank
+// account closed for SEPA refunds, etc.). No DB write — phase 1 doesn't
+// store rows for money that didn't move. The admin needs to see this
+// quickly to take manual action (retry, contact customer, etc.).
+async function alertRefundFailed(refund: Stripe.Refund): Promise<void> {
+  const order = await findOrderForRefund(refund)
+  if (!order) return
+  alertAdmin(
+    `⚠ Stripe refund FAILED — order ${String(order.id).slice(0, 8)}`,
+    `A Stripe refund failed for order ${order.id}. ACTION REQUIRED.\n\n` +
+      `Stripe refund: ${refund.id}\n` +
+      `Amount: ${(refund.amount / 100).toFixed(2)} EUR\n` +
+      `Failure reason: ${refund.failure_reason ?? "n/a"}\n` +
+      `Status: ${refund.status}\n\n` +
+      `Check Stripe dashboard (https://dashboard.stripe.com/refunds/${refund.id}), ` +
+      `retry the refund if appropriate, or contact the customer to arrange ` +
+      `alternative settlement.`,
+  )
+}
+
+// Admin alert when a Stripe refund was canceled (typically: admin canceled
+// a pending refund before it processed). Informational, not urgent.
+async function alertRefundCanceled(refund: Stripe.Refund): Promise<void> {
+  const order = await findOrderForRefund(refund)
+  if (!order) return
+  alertAdmin(
+    `Stripe refund canceled — order ${String(order.id).slice(0, 8)}`,
+    `A Stripe refund was canceled for order ${order.id}.\n\n` +
+      `Stripe refund: ${refund.id}\n` +
+      `Amount: ${(refund.amount / 100).toFixed(2)} EUR\n` +
+      `Status: ${refund.status}\n\n` +
+      `No money moved. If a refund is still needed, initiate a new one ` +
+      `in the Stripe dashboard.`,
+  )
+}
 
 export async function POST(request: Request) {
   const body = await request.text()
@@ -22,7 +201,7 @@ export async function POST(request: Request) {
   if (event.type === "checkout.session.expired") {
     const session = event.data.object as Stripe.Checkout.Session
     const orderId = session.metadata?.orderId
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const uuidRegex = UUID_REGEX
     if (orderId && uuidRegex.test(orderId)) {
       const supabase = await createClient()
 
@@ -33,21 +212,25 @@ export async function POST(request: Request) {
         .update({ status: "expired" })
         .eq("id", orderId)
         .eq("status", "pending")
-        .select("items")
+        .select("id")
 
       if (claimed && claimed.length > 0) {
-        const { PRODUCTS } = await import("@/lib/products")
-        const items = claimed[0].items as Array<{ productId: string; quantity: number }>
-        for (const item of items) {
-          const product = PRODUCTS.find((p) => p.id === item.productId)
-          if (!product) continue
-          const { error: restoreErr } = await supabase.rpc("restore_inventory", {
-            p_sku: product.sku,
-            p_quantity: item.quantity,
-            p_order_id: orderId,
-          })
-          if (restoreErr) {
-            console.error(`Failed to restore inventory for ${product.sku} on expired session ${orderId}:`, restoreErr)
+        const { data: items, error: itemsErr } = await supabase
+          .from("order_items")
+          .select("sku, quantity")
+          .eq("order_id", orderId)
+        if (itemsErr || !items) {
+          console.error(`Failed to load order_items for expired session ${orderId}:`, sanitizeError(itemsErr))
+        } else {
+          for (const item of items) {
+            const { error: restoreErr } = await supabase.rpc("restore_inventory", {
+              p_sku: item.sku,
+              p_quantity: item.quantity,
+              p_order_id: orderId,
+            })
+            if (restoreErr) {
+              console.error(`Failed to restore inventory for ${item.sku} on expired session ${orderId}:`, sanitizeError(restoreErr))
+            }
           }
         }
       }
@@ -62,7 +245,7 @@ export async function POST(request: Request) {
     }
 
     const orderId = session.metadata?.orderId
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const uuidRegex = UUID_REGEX
     if (!orderId || !uuidRegex.test(orderId)) {
       console.error("Stripe webhook: missing or invalid orderId in session metadata")
       return NextResponse.json({ error: "Invalid orderId in metadata" }, { status: 400 })
@@ -125,6 +308,245 @@ export async function POST(request: Request) {
 
     notifyAdminNewOrder(order, "card")
     sendOrderConfirmationEmail(order)
+  }
+
+  // ─── Refund lifecycle events ────────────────────────────────────────────
+  //
+  // refund.created         — initial refund event; usually status='succeeded'
+  //                          for card, 'pending' for SEPA/bank-debit
+  // refund.updated         — status transition (pending → succeeded|failed|canceled)
+  // refund.failed          — explicit failure event; also surfaces as
+  //                          refund.updated with status='failed'. Subscribing
+  //                          to both is defensive — handler dedupes internally.
+  // charge.refunded        — legacy fan-in event; newer Stripe API versions
+  //                          don't auto-expand charge.refunds so we list
+  //                          explicitly.
+  //
+  // All paths converge on upsertRefundFromStripe, which branches by
+  // refund.status: 'succeeded' → insert a row (idempotent via stripe_refund_id),
+  // 'failed' → admin alert, 'canceled' → informational alert, pending →
+  // silent skip (we'll act on the eventual transition).
+  if (
+    event.type === "refund.created" ||
+    event.type === "refund.updated" ||
+    event.type === "refund.failed"
+  ) {
+    const refund = event.data.object as Stripe.Refund
+    await upsertRefundFromStripe(refund)
+  }
+
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object as Stripe.Charge
+    const refunds = await stripe.refunds.list({ charge: charge.id, limit: 10 })
+    for (const refund of refunds.data) {
+      await upsertRefundFromStripe(refund)
+    }
+  }
+
+  // ─── payment_intent.payment_failed ──────────────────────────────────────
+  // 3DS challenge failed, card declined post-authorization, etc. Without
+  // this, the order would sit in `pending` and inventory stay reserved
+  // until the session expired (up to 24h). Flipping to `expired` immediately
+  // releases inventory.
+  if (event.type === "payment_intent.payment_failed") {
+    const paymentIntent = event.data.object as Stripe.PaymentIntent
+    // Stripe Checkout propagates session metadata to the PaymentIntent.
+    const orderId = paymentIntent.metadata?.orderId
+    if (orderId && UUID_REGEX.test(orderId)) {
+      const supabase = await createClient()
+
+      const { data: claimed } = await supabase
+        .from("orders")
+        .update({ status: "expired" })
+        .eq("id", orderId)
+        .eq("status", "pending")
+        .select("id")
+
+      if (claimed && claimed.length > 0) {
+        // Restore inventory for the failed order. Same pattern as the
+        // checkout.session.expired handler.
+        const { data: items, error: itemsErr } = await supabase
+          .from("order_items")
+          .select("sku, quantity")
+          .eq("order_id", orderId)
+        if (itemsErr || !items) {
+          console.error(`Failed to load order_items for payment-failed order ${orderId}:`, sanitizeError(itemsErr))
+        } else {
+          for (const item of items) {
+            const { error: restoreErr } = await supabase.rpc("restore_inventory", {
+              p_sku: item.sku,
+              p_quantity: item.quantity,
+              p_order_id: orderId,
+            })
+            if (restoreErr) {
+              console.error(`Failed to restore inventory for ${item.sku} on payment-failed order ${orderId}:`, sanitizeError(restoreErr))
+            }
+          }
+        }
+
+        // Audit event (keeps a record of WHY the order expired).
+        const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+          p_order_id: orderId,
+          p_outcome_type: "payment_failed",
+          p_payload: {
+            payment_intent_id: paymentIntent.id,
+            failure_code: paymentIntent.last_payment_error?.code ?? null,
+            failure_message: paymentIntent.last_payment_error?.message ?? null,
+          },
+          p_actor: "stripe-webhook",
+        })
+        if (outcomeErr) {
+          console.error(`Failed to record payment_failed outcome for ${orderId}:`, sanitizeError(outcomeErr))
+        }
+      }
+    }
+  }
+
+  // ─── Dispute lifecycle ──────────────────────────────────────────────────
+  //
+  // charge.dispute.created           — chargeback filed, evidence window opens
+  // charge.dispute.closed            — resolved (status = won | lost | warning_closed | ...)
+  // charge.dispute.funds_reinstated  — we won AND Stripe restored the held funds
+  //
+  // All three converge on record_order_outcome with a dispute-specific
+  // event type so the timeline shows the full lifecycle. The loss case
+  // produces money movement through the existing refund.created handler;
+  // no duplicate refund handling needed here.
+  //
+  // charge.dispute.updated (evidence submitted, status transitions short of
+  // closure) is deliberately not handled — too noisy for the audit log.
+  if (event.type === "charge.dispute.created") {
+    const dispute = event.data.object as Stripe.Dispute
+    const order = await findOrderForDispute(dispute)
+    if (order) {
+      const supabase = await createClient()
+      const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+        p_order_id: order.id,
+        p_outcome_type: "dispute_opened",
+        p_payload: {
+          dispute_id: dispute.id,
+          amount: dispute.amount,
+          reason: dispute.reason,
+          status: dispute.status,
+          evidence_due_by: dispute.evidence_details?.due_by ?? null,
+        },
+        p_actor: "stripe-webhook",
+      })
+      if (outcomeErr) {
+        console.error(`Failed to record dispute_opened outcome for ${order.id}:`, sanitizeError(outcomeErr))
+      }
+
+      const dueBy = dispute.evidence_details?.due_by
+        ? new Date(dispute.evidence_details.due_by * 1000).toISOString().slice(0, 10)
+        : "unknown"
+      alertAdmin(
+        `⚠ Chargeback opened — order ${String(order.id).slice(0, 8)}`,
+        `A chargeback (dispute) was filed on order ${order.id}.\n\n` +
+          `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +
+          `Reason: ${dispute.reason}\n` +
+          `Status: ${dispute.status}\n` +
+          `Evidence due by: ${dueBy}\n` +
+          `Dispute ID: ${dispute.id}\n\n` +
+          `Respond in the Stripe dashboard: https://dashboard.stripe.com/disputes/${dispute.id}`,
+      )
+    }
+  }
+
+  // Dispute resolved — the outcome hinges on dispute.status. Admin alert
+  // wording branches on won vs lost so the operator immediately knows
+  // whether to expect funds back or treat the money as gone.
+  if (event.type === "charge.dispute.closed") {
+    const dispute = event.data.object as Stripe.Dispute
+    const order = await findOrderForDispute(dispute)
+    if (order) {
+      const supabase = await createClient()
+      const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+        p_order_id: order.id,
+        p_outcome_type: "dispute_closed",
+        p_payload: {
+          dispute_id: dispute.id,
+          amount: dispute.amount,
+          reason: dispute.reason,
+          status: dispute.status, // 'won' | 'lost' | 'warning_closed' | ...
+        },
+        p_actor: "stripe-webhook",
+      })
+      if (outcomeErr) {
+        console.error(`Failed to record dispute_closed outcome for ${order.id}:`, sanitizeError(outcomeErr))
+      }
+
+      const orderShort = String(order.id).slice(0, 8)
+      const amt = (dispute.amount / 100).toFixed(2)
+      const disputeUrl = `https://dashboard.stripe.com/disputes/${dispute.id}`
+      if (dispute.status === "won") {
+        alertAdmin(
+          `✓ Dispute WON — order ${orderShort}`,
+          `The chargeback on order ${order.id} was resolved in our favor.\n\n` +
+            `Amount: ${amt} EUR\n` +
+            `Reason (original): ${dispute.reason}\n` +
+            `Dispute: ${dispute.id}\n\n` +
+            `Stripe will reinstate the held funds. A separate ` +
+            `charge.dispute.funds_reinstated event will fire when the money ` +
+            `is back in the merchant balance.\n\n` +
+            `Dashboard: ${disputeUrl}`,
+        )
+      } else if (dispute.status === "lost") {
+        alertAdmin(
+          `⚠ Dispute LOST — order ${orderShort}`,
+          `The chargeback on order ${order.id} was resolved against us.\n\n` +
+            `Amount: ${amt} EUR\n` +
+            `Reason: ${dispute.reason}\n` +
+            `Dispute: ${dispute.id}\n\n` +
+            `The disputed amount has been refunded to the cardholder by ` +
+            `Stripe. A refund.created event already (or will) record this ` +
+            `in order_refunds with source='stripe_webhook'.\n\n` +
+            `Dashboard: ${disputeUrl}`,
+        )
+      } else {
+        // warning_closed, needs_response, under_review, etc. — less common
+        // terminal states; admin should glance at the dashboard.
+        alertAdmin(
+          `Dispute closed (${dispute.status}) — order ${orderShort}`,
+          `The dispute on order ${order.id} reached terminal status "${dispute.status}".\n\n` +
+            `Amount: ${amt} EUR\n` +
+            `Dispute: ${dispute.id}\n\n` +
+            `Dashboard: ${disputeUrl}`,
+        )
+      }
+    }
+  }
+
+  // Funds_reinstated fires only when we won AND Stripe has actually moved
+  // the money back into the merchant balance. Separate from closed.won
+  // because the money movement can trail the resolution slightly.
+  if (event.type === "charge.dispute.funds_reinstated") {
+    const dispute = event.data.object as Stripe.Dispute
+    const order = await findOrderForDispute(dispute)
+    if (order) {
+      const supabase = await createClient()
+      const { error: outcomeErr } = await supabase.rpc("record_order_outcome", {
+        p_order_id: order.id,
+        p_outcome_type: "dispute_funds_reinstated",
+        p_payload: {
+          dispute_id: dispute.id,
+          amount: dispute.amount,
+          status: dispute.status,
+        },
+        p_actor: "stripe-webhook",
+      })
+      if (outcomeErr) {
+        console.error(`Failed to record dispute_funds_reinstated outcome for ${order.id}:`, sanitizeError(outcomeErr))
+      }
+
+      alertAdmin(
+        `✓ Dispute funds restored — order ${String(order.id).slice(0, 8)}`,
+        `Stripe has reinstated the held funds from the won dispute on ` +
+          `order ${order.id}.\n\n` +
+          `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +
+          `Dispute: ${dispute.id}\n\n` +
+          `Dashboard: https://dashboard.stripe.com/disputes/${dispute.id}`,
+      )
+    }
   }
 
   return NextResponse.json({ received: true })

@@ -32,7 +32,7 @@ Continue building your app on:
 ## Setup
 Supabase setup
 1. Go to https://supabase.com and create a free project                                                                                                                       
-2. Go to SQL Editor → paste the contents of supabase-schema.sql → click Run
+2. Go to SQL Editor → apply each file in `supabase/migrations/` in filename order (the prefix is a UTC timestamp that defines the apply order). For a fresh setup there's typically only `20260420120000_initial_schema.sql`. See `supabase/migrations/README.md` for the workflow.
 3. Go to Project Settings → API and copy:
   - Project URL → paste into NEXT_PUBLIC_SUPABASE_URL in .env.local
   - service_role secret key → paste into SUPABASE_SERVICE_ROLE_KEY
@@ -52,6 +52,50 @@ Test card numbers (use with `sk_test_` key only):
 | Declined | `4000 0000 0000 0002` | Any 3 digits | Any future date |
 
 Full list: https://docs.stripe.com/testing
+
+Stripe webhook setup
+
+The webhook endpoint lives at `POST /api/webhooks/stripe` and drives order confirmation, inventory restoration on abandoned/failed checkouts, refund recording, and dispute alerting. **`STRIPE_WEBHOOK_SECRET` is hard-required** (checked at server boot in `lib/env.ts`) — set it before the first deploy.
+
+Subscribe the endpoint to these **10 events** in the Stripe Dashboard (Developers → Webhooks → Add endpoint):
+
+| Event | Handles |
+|---|---|
+| `checkout.session.completed` | Primary happy path — flips the order `pending → confirmed`, sets `paid_at`, captures PaymentIntent + receipt URL, fires confirmation email to customer and new-order alert to admin. |
+| `checkout.session.expired` | Customer abandoned the Stripe checkout (default 24h TTL). Flips `pending → expired` and releases the reserved inventory back to stock. |
+| `payment_intent.payment_failed` | 3DS challenge failed / card declined post-authorization. Same effect as `checkout.session.expired` but fires within seconds instead of up to 24h — cuts the stuck-pending window. |
+| `refund.created` | Primary refund event. Upserts `order_refunds` keyed on `stripe_refund_id` (partial unique index, idempotent). Alerts admin to annotate reason + credit-note reference. |
+| `refund.updated` | Status transitions (pending → succeeded\|failed). Same handler as `refund.created`; idempotent upsert. |
+| `refund.failed` | Explicit failure event. No DB write (phase 1 doesn't track money-didn't-move rows), but fires an ⚠-subject admin alert with `failure_reason` so operator can retry or contact customer. |
+| `charge.refunded` | Legacy fan-in event. Newer Stripe API versions don't auto-expand `charge.refunds`, so the handler explicitly calls `stripe.refunds.list({ charge: id })` and upserts each — redundant with `refund.created` but idempotent (same `stripe_refund_id` natural key dedupes). Safe to keep subscribed as a belt-and-braces fallback. |
+| `charge.dispute.created` | Chargeback filed. Writes a `dispute_opened` outcome event into `order_audit_events` with the dispute details, fires a prominent admin alert including evidence-due-by date and Stripe dispute URL. |
+| `charge.dispute.closed` | Dispute resolved. Writes a `dispute_closed` outcome event carrying the final `dispute.status` (`won` / `lost` / `warning_closed` / etc.). Admin alert wording branches on status: won → "funds will be reinstated"; lost → "refunded to cardholder, see order_refunds"; other → neutral "closed with status X". |
+| `charge.dispute.funds_reinstated` | We won AND Stripe restored the held funds to the merchant balance. Distinct from `closed.won` because the money movement trails the resolution slightly. Writes a `dispute_funds_reinstated` outcome event + "funds restored" admin alert. |
+
+**Local development:**
+
+```
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+```
+
+Copy the `whsec_...` signing secret from the `stripe listen` output → `STRIPE_WEBHOOK_SECRET` in `.env.local`. The CLI forwards all events by default, no per-event subscription needed locally.
+
+Trigger specific events for testing:
+
+```
+stripe trigger checkout.session.completed
+stripe trigger refund.created
+stripe trigger charge.dispute.created
+```
+
+**Production:**
+
+1. In Stripe Dashboard → Developers → Webhooks → Add endpoint. URL: `https://<your-domain>/api/webhooks/stripe`.
+2. Select the 8 events listed above.
+3. Copy the endpoint signing secret (`whsec_...`) → Vercel project env → `STRIPE_WEBHOOK_SECRET`.
+4. Redeploy so the new env value takes effect. `instrumentation.ts` runs `checkEnvAtBoot` and fails loudly in Vercel logs if the secret is missing.
+
+**Admin-issued refunds:** phase 1 workflow is manual — admin issues the Stripe refund in the Stripe Dashboard (Payments → select → Refund), then pastes the `re_...` refund ID into the admin panel. The admin-panel server action calls `stripe.refunds.retrieve(id)` to verify the refund exists, `status='succeeded'`, `payment_intent` matches this order, and `amount` matches before inserting the `order_refunds` row. Phantom IDs / typos / wrong-order pastes are rejected upfront with a Bulgarian error message. See `.claude/rules/admin-panel.md` § Refunds for the two-step flow detail.
 
 Delivery integrations
 
@@ -117,7 +161,7 @@ SELLER_IBAN=BG12AAAA12341234123412
 SELLER_BANK=Банка АД
 ```
 
-The full database schema (including invoice, sales, and promo code tables) is in `supabase-schema.sql`. Run it in Supabase SQL Editor on initial setup.
+The database schema lives in `supabase/migrations/`. Apply migration files in filename order via Supabase SQL Editor on initial setup. See `supabase/migrations/README.md` for the full workflow and naming convention.
 
 Admin panel
 

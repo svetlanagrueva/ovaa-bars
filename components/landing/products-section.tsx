@@ -33,7 +33,7 @@ export function ProductsSection({ products, inventoryMap }: ProductsSectionProps
             <ProductCard
               key={product.id}
               product={product}
-              soldOut={product.id in inventoryMap && inventoryMap[product.id] === 0}
+              soldOut={product.id in inventoryMap && inventoryMap[product.id] <= 0}
             />
           ))}
         </div>

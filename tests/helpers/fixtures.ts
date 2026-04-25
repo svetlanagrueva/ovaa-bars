@@ -29,7 +29,10 @@ export const validSpeedyOffice = {
 }
 
 export const validCartItems = [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }]
+// dark chocolate priceInCents=2570 × 2 = 5140
+export const validCartSubtotal = 5140
 
 export const singleCartItem = [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }]
+export const singleCartSubtotal = 2570
 
 export const validUUID = "550e8400-e29b-41d4-a716-446655440000"

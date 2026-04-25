@@ -49,7 +49,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
   }
 
   const otherProducts = products.filter((p) => p.id !== product.id)
-  const isSoldOut = (id: string) => inventoryMap.has(id) && inventoryMap.get(id) === 0
+  const isSoldOut = (id: string) => inventoryMap.has(id) && (inventoryMap.get(id) ?? 0) <= 0
   const otherProductsSoldOut = Object.fromEntries(
     otherProducts.map((p) => [p.id, isSoldOut(p.id)])
   )

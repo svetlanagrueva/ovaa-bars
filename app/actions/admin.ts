@@ -12,6 +12,10 @@ import { headers } from "next/headers"
 import { createShipment as createSpeedyShipment } from "@/lib/speedy"
 import { createShipment as createEcontShipment } from "@/lib/econt"
 import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
+import { requireEnv } from "@/lib/env"
+import { stripe } from "@/lib/stripe"
+import { sanitizeError } from "@/lib/logger"
+import { sendOrderConfirmationEmail, sendDeliveryEmail } from "@/lib/email-sender"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -74,6 +78,7 @@ export interface DashboardStats {
   pendingOrders: number
   invoicesAwaiting: number
   awaitingSettlement: number
+  inventoryDebtSkus: number
   recentOrders: Array<{
     id: string
     created_at: string
@@ -125,6 +130,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
     awaitingSettlement: s.awaiting_settlement ?? 0,
+    inventoryDebtSkus: s.inventory_debt_skus ?? 0,
     recentOrders: recentOrders || [],
   }
 }
@@ -158,10 +164,14 @@ export interface OrderDetail extends OrderSummary {
   items: Array<{
     productId: string
     productName: string
+    sku: string
     quantity: number
     priceInCents: number
+    cancelledQuantity: number
+    lineNo: number
   }>
   needs_invoice: boolean
+  invoice_type: "individual" | "company" | null
   invoice_company_name: string | null
   invoice_eik: string | null
   invoice_vat_number: string | null
@@ -178,6 +188,7 @@ export interface OrderDetail extends OrderSummary {
   stripe_payment_intent_id: string | null
   stripe_receipt_url: string | null
   order_confirmation_sent_at: string | null
+  delivery_email_sent_at: string | null
   invoice_number: string | null
   invoice_date: string | null
   promo_code: string | null
@@ -188,19 +199,46 @@ export interface OrderDetail extends OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   cancelled_at: string | null
-  admin_notes: Array<{ text: string; created_at: string }>
+  admin_notes: Array<{ text: string; created_at: string; author?: string }>
   cancellation_reason: string | null
-  invoice_egn: string | null
   invoice_sent_at: string | null
   paid_at: string | null
   courier_ppp_ref: string | null
   settlement_ref: string | null
   settlement_amount: number | null
-  refunded_at: string | null
-  refund_amount: number | null
-  refund_reason: string | null
-  refund_method: string | null
+  cod_confirmed_at: string | null
+  cod_confirmed_by: string | null
+  refunds: OrderRefund[]
+  // Inventory movements of type return_in / damaged for this order, used by
+  // the admin UI to show the kредитно-известие breakdown per refund (linked
+  // via inventory_log.reference_id = order_refunds.id). No FK relationship
+  // exists in the DB (reference_id is polymorphic text), so we fetch
+  // separately and match client-side.
+  inventoryReturns: OrderInventoryReturn[]
+}
+
+export interface OrderInventoryReturn {
+  id: number
+  sku: string
+  quantity: number
+  type: "return_in" | "damaged"
+  reference_id: string | null
+  created_at: string
+}
+
+export interface OrderRefund {
+  id: string
+  order_id: string
+  stripe_refund_id: string | null
+  amount_cents: number
+  method: "stripe" | "bank_transfer"
+  source: "admin_ui" | "stripe_webhook"
+  reason: string | null
   credit_note_ref: string | null
+  recorded_by: string
+  refunded_at: string
+  created_at: string
+  updated_at: string
 }
 
 interface OrderQueryParams {
@@ -274,7 +312,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   await requireAdmin()
   const supabase = await createClient()
 
-  const page = params?.page ?? 0
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
   const from = page * ORDERS_PAGE_SIZE
   const to = from + ORDERS_PAGE_SIZE - 1
 
@@ -375,7 +413,7 @@ export async function getInvoices(params?: InvoiceQueryParams & { page?: number 
   await requireAdmin()
   const supabase = await createClient()
 
-  const page = params?.page ?? 0
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
   const from = page * ORDERS_PAGE_SIZE
   const to = from + ORDERS_PAGE_SIZE - 1
 
@@ -440,17 +478,62 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
 
   const supabase = await createClient()
 
-  const { data, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
+  const [orderResult, returnsResult] = await Promise.all([
+    supabase
+      .from("orders")
+      .select(`
+        *,
+        items:order_items(
+          productId:product_id,
+          productName:product_name,
+          sku,
+          quantity,
+          priceInCents:unit_price_cents,
+          cancelledQuantity:cancelled_quantity,
+          lineNo:line_no
+        ),
+        refunds:order_refunds(
+          id,
+          order_id,
+          stripe_refund_id,
+          amount_cents,
+          method,
+          source,
+          reason,
+          credit_note_ref,
+          recorded_by,
+          refunded_at,
+          created_at,
+          updated_at
+        )
+      `)
+      .eq("id", orderId)
+      .order("refunded_at", { foreignTable: "order_refunds", ascending: false })
+      .single(),
+    // inventory_log has no FK to order_refunds (reference_id is polymorphic
+    // text), so PostgREST can't nest it under refunds. Fetch separately and
+    // let the client match by reference_id = refund.id.
+    supabase
+      .from("inventory_log")
+      .select("id, sku, quantity, type, reference_id, created_at")
+      .eq("order_id", orderId)
+      .eq("reference_type", "return")
+      .order("created_at", { ascending: true }),
+  ])
 
-  if (error || !data) {
+  if (orderResult.error || !orderResult.data) {
     throw new Error("Order not found")
   }
 
-  return data
+  const returns = (returnsResult.data ?? []) as OrderInventoryReturn[]
+  if (returnsResult.error) {
+    // Don't block the order view on a returns fetch error — just log and
+    // show an empty list. The credit-note breakdown will degrade gracefully
+    // to the flat-amount view.
+    console.error(`Failed to fetch inventory returns for order ${orderId}:`, returnsResult.error)
+  }
+
+  return { ...orderResult.data, inventoryReturns: returns }
 }
 
 // Valid status transitions
@@ -546,20 +629,22 @@ export async function updateOrderStatus(
 
   // Restore inventory on cancellation
   if (newStatus === "cancelled") {
-    const items = order.items as Array<{ productId: string; quantity: number }>
-    for (const item of items) {
-      const product = PRODUCTS.find((p) => p.id === item.productId)
-      if (!product) {
-        console.error(`Cannot restore inventory: unknown productId ${item.productId}`)
-        continue
-      }
-      const { error: restoreErr } = await supabase.rpc("restore_inventory", {
-        p_sku: product.sku,
-        p_quantity: item.quantity,
-        p_order_id: orderId,
-      })
-      if (restoreErr) {
-        console.error(`Failed to restore inventory for ${product.sku} on order ${orderId}:`, restoreErr)
+    const { data: items, error: itemsErr } = await supabase
+      .from("order_items")
+      .select("sku, quantity")
+      .eq("order_id", orderId)
+    if (itemsErr || !items) {
+      console.error(`Failed to load order_items for cancellation of ${orderId}:`, itemsErr)
+    } else {
+      for (const item of items) {
+        const { error: restoreErr } = await supabase.rpc("restore_inventory", {
+          p_sku: item.sku,
+          p_quantity: item.quantity,
+          p_order_id: orderId,
+        })
+        if (restoreErr) {
+          console.error(`Failed to restore inventory for ${item.sku} on order ${orderId}:`, restoreErr)
+        }
       }
     }
   }
@@ -613,8 +698,14 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
     .single()
 
   if (error || !order) throw new Error("Order not found")
-  const items = order.items as Array<{ productName: string; quantity: number }>
-  const contents = items.map((i) => `${i.productName} x${i.quantity}`).join(", ")
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("order_items")
+    .select("product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no")
+  if (itemsErr || !items) throw new Error("Failed to load order items")
+  const contents = items.map((i) => `${i.product_name} x${i.quantity}`).join(", ")
   const partner = order.logistics_partner || ""
   const isCod = order.payment_method === "cod"
   const isOffice = partner.endsWith("-office")
@@ -769,24 +860,17 @@ export async function addAdminNote(orderId: string, note: string) {
 
   const supabase = await createClient()
 
-  // Fetch current notes
-  const { data: order, error: fetchError } = await supabase
-    .from("orders")
-    .select("admin_notes")
-    .eq("id", orderId)
-    .single()
-
-  if (fetchError || !order) throw new Error("Поръчката не е намерена")
-
-  const existingNotes = Array.isArray(order.admin_notes) ? order.admin_notes : []
-  const newNote = { text: trimmed, created_at: new Date().toISOString() }
-
-  const { error } = await supabase
-    .from("orders")
-    .update({ admin_notes: [...existingNotes, newNote] })
-    .eq("id", orderId)
+  // Atomic append via the add_admin_note RPC — kills the read-modify-write
+  // race of the previous fetch → spread → update pattern.
+  const { error } = await supabase.rpc("add_admin_note", {
+    p_order_id: orderId,
+    p_text: trimmed,
+  })
 
   if (error) {
+    if (error.message?.includes("not found")) {
+      throw new Error("Поръчката не е намерена")
+    }
     console.error("Failed to add admin note:", error)
     throw new Error("Грешка при добавяне на бележка")
   }
@@ -856,7 +940,7 @@ export async function recordCodSettlement(
     courierPppRef?: string
     settlementRef?: string
     settlementAmount?: number
-    paidAt?: string
+    paidAt: string
   },
 ): Promise<{ success: true }> {
   await requireAdmin()
@@ -875,11 +959,15 @@ export async function recordCodSettlement(
       throw new Error("Получената сума трябва да е положително число")
     }
   }
-  if (data.paidAt) {
-    const parsed = new Date(data.paidAt)
-    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
-    if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
+  // Date is required: the admin must affirm WHEN the courier transferred the
+  // money, not accept an implicit "today" that could silently be wrong (e.g.
+  // settlement actually arrived 2 weeks ago but admin only recorded it today).
+  if (!data.paidAt || !data.paidAt.trim()) {
+    throw new Error("Датата на плащане е задължителна")
   }
+  const parsed = new Date(data.paidAt)
+  if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
+  if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
 
   const supabase = await createClient()
 
@@ -896,20 +984,14 @@ export async function recordCodSettlement(
     throw new Error("Плащане може да се запише само за доставени поръчки")
   }
 
-  let paidAtValue: string
-  if (data.paidAt) {
-    // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
-    // other events (creation, delivery) that happened earlier that day
-    const d = new Date(data.paidAt)
-    d.setUTCHours(23, 59, 59, 0)
-    // Settlement cannot be before delivery
-    if (order.delivered_at && d < new Date(order.delivered_at)) {
-      throw new Error("Датата на плащане не може да е преди доставката")
-    }
-    paidAtValue = d.toISOString()
-  } else {
-    paidAtValue = new Date().toISOString()
+  // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
+  // other events (creation, delivery) that happened earlier that day.
+  const paidDate = new Date(data.paidAt)
+  paidDate.setUTCHours(23, 59, 59, 0)
+  if (order.delivered_at && paidDate < new Date(order.delivered_at)) {
+    throw new Error("Датата на плащане не може да е преди доставката")
   }
+  const paidAtValue = paidDate.toISOString()
 
   const updateData: Record<string, unknown> = {
     paid_at: paidAtValue,
@@ -937,7 +1019,464 @@ export async function recordCodSettlement(
   return { success: true }
 }
 
+// ─── COD phone confirmation ─────────────────────────────────────────────────
+// Bulgarian COD operational reality: admin should call the customer to verify
+// phone + address + intent before generating the shipment, or parcels get
+// refused at the door. This records the moment the call was completed.
+// Paired with a UI soft-block warning on generate-shipment for COD+unconfirmed
+// orders. Policy becomes a recorded system event.
+export async function markCodConfirmed(orderId: string): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+
+  // Verify order is COD and in a pre-ship state — confirming after ship is
+  // meaningless (parcel already in courier hands). Shipped/delivered orders
+  // can't go back for a confirmation.
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, payment_method, status, cod_confirmed_at")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.payment_method !== "cod") {
+    throw new Error("Потвърждението на обаждането е само за поръчки с наложен платеж")
+  }
+  if (order.status !== "confirmed") {
+    throw new Error(
+      `Потвърждението важи само за потвърдени поръчки (текущ статус: ${order.status})`,
+    )
+  }
+  if (order.cod_confirmed_at) {
+    throw new Error("Обаждането вече е потвърдено за тази поръчка")
+  }
+
+  // Idempotent via .is(cod_confirmed_at, null) — a concurrent second click
+  // returns zero rows and surfaces the "already confirmed" message cleanly.
+  const { data: updated, error } = await supabase
+    .from("orders")
+    .update({
+      cod_confirmed_at: new Date().toISOString(),
+      cod_confirmed_by: "admin",
+    })
+    .eq("id", orderId)
+    .is("cod_confirmed_at", null)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to mark COD as confirmed:", error)
+    throw new Error("Грешка при потвърждаване на обаждането")
+  }
+  if (!updated || updated.length === 0) {
+    throw new Error("Обаждането вече е потвърдено за тази поръчка")
+  }
+
+  return { success: true }
+}
+
+// ─── Order edit (contact + quantity) ────────────────────────────────────────
+// Bulgarian COD reality: 10-20% of orders need post-confirmation
+// corrections — wrong вход/етаж/апартамент, typo'd phone, "add one more
+// box". Without these actions admin's only recourse is cancel + reorder,
+// which burns customer trust and internal time. Scope is deliberately
+// narrow:
+//   - Contact edits: fields that admin corrects most often. email stays
+//     out of the editable set pre-launch (case-sensitivity CHECK + email
+//     is also the unsubscribe key, so editing affects cross-table state).
+//   - Quantity edits: COD only, confirmed-but-not-shipped only. Card
+//     quantity increase routes through replaces_order_id (separate
+//     feature) because charging the delta requires a new Stripe session.
+//   - Fee recalc is NOT done on edit (shipping / cod / discount frozen
+//     at creation). Admin crossing a free-shipping threshold via edit
+//     does not get shipping refunded automatically.
+
+const CONTACT_FIELD_MAX = 500
+
+export async function updateOrderContact(
+  orderId: string,
+  data: {
+    firstName?: string
+    lastName?: string
+    phone?: string
+    email?: string
+    address?: string
+    postalCode?: string
+    city?: string
+    notes?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  // Per-field validation. Only fields that were actually provided are
+  // validated; undefined values pass through untouched. The client is
+  // expected to send only fields that actually changed (compared to the
+  // current order values), so unchanged-but-already-empty legacy data
+  // doesn't trip a non-empty validation it never validated at intake.
+  const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const updatePayload: Record<string, unknown> = {}
+
+  if (data.firstName !== undefined) {
+    const trimmed = data.firstName.trim()
+    if (!trimmed) throw new Error("Името не може да е празно")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Името е твърде дълго")
+    updatePayload.first_name = trimmed
+  }
+  if (data.lastName !== undefined) {
+    const trimmed = data.lastName.trim()
+    if (!trimmed) throw new Error("Фамилията не може да е празна")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Фамилията е твърде дълга")
+    updatePayload.last_name = trimmed
+  }
+  if (data.phone !== undefined) {
+    const trimmed = data.phone.trim()
+    if (!trimmed) throw new Error("Телефонът не може да е празен")
+    if (!PHONE_REGEX.test(trimmed)) throw new Error("Невалиден формат на телефон")
+    updatePayload.phone = trimmed
+  }
+  if (data.email !== undefined) {
+    // Lowercase to satisfy chk_orders_email_lowercase. Note: email is the
+    // unsubscribe key — changing it decouples the order from the
+    // email_unsubscribes row that was tied to the old address. Caller
+    // should warn the admin in the UI.
+    const trimmed = data.email.trim().toLowerCase()
+    if (!trimmed) throw new Error("Имейлът не може да е празен")
+    if (!EMAIL_REGEX.test(trimmed)) throw new Error("Невалиден формат на имейл")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Имейлът е твърде дълъг")
+    updatePayload.email = trimmed
+  }
+  if (data.address !== undefined) {
+    const trimmed = data.address.trim()
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Адресът е твърде дълъг")
+    updatePayload.address = trimmed
+  }
+  if (data.postalCode !== undefined) {
+    const trimmed = data.postalCode.trim()
+    if (trimmed.length > 20) throw new Error("Невалиден пощенски код")
+    updatePayload.postal_code = trimmed
+  }
+  if (data.city !== undefined) {
+    const trimmed = data.city.trim()
+    if (!trimmed) throw new Error("Градът не може да е празен")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Градът е твърде дълъг")
+    updatePayload.city = trimmed
+  }
+  if (data.notes !== undefined) {
+    const trimmed = data.notes
+    if (trimmed.length > 2000) throw new Error("Бележките са твърде дълги")
+    updatePayload.notes = trimmed
+  }
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new Error("Няма промени за записване")
+  }
+
+  const supabase = await createClient()
+
+  // Gate on status='confirmed' — editing shipped orders silently on the
+  // courier side is a support nightmare; pending orders are pre-payment
+  // and will be re-submitted by the customer; cancelled/expired/delivered
+  // are terminal. Atomic update via `.eq("status", "confirmed")` protects
+  // against a status-change race.
+  const { data: updated, error } = await supabase
+    .from("orders")
+    .update(updatePayload)
+    .eq("id", orderId)
+    .eq("status", "confirmed")
+    .select("id")
+
+  if (error) {
+    console.error("Failed to update order contact:", error)
+    throw new Error("Грешка при записване на промените")
+  }
+  if (!updated || updated.length === 0) {
+    // Pre-check the order to produce a specific error: might be wrong id,
+    // wrong status, or nothing changed at the DB layer (values equal to old).
+    const { data: existing } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", orderId)
+      .single()
+    if (!existing) throw new Error("Поръчката не е намерена")
+    throw new Error(
+      `Редакцията е допустима само за потвърдени поръчки (текущ статус: ${existing.status})`,
+    )
+  }
+
+  return { success: true }
+}
+
+// COD-only, pre-ship-only. Delegates all the cross-table atomicity to the
+// edit_order_quantity RPC (which does FOR UPDATE on order_items, reservation
+// delta via reserve_inventory / restore_inventory, order_items.quantity
+// update, orders.total_amount recalc — all in one transaction). Server action
+// layers: pre-flight validation (friendly errors, payment method gating) and
+// the order_items_changed audit emission (can't easily emit from the RPC
+// because the event belongs to the admin intent, not the SQL op).
+export async function updateOrderQuantity(
+  orderId: string,
+  sku: string,
+  newQuantity: number,
+): Promise<{ success: true; newTotalCents: number }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  if (!sku || typeof sku !== "string") throw new Error("SKU е задължителен")
+  const validSkus = PRODUCTS.map((p) => p.sku)
+  if (!validSkus.includes(sku)) throw new Error("Невалиден SKU")
+
+  if (!Number.isInteger(newQuantity) || newQuantity < 1 || newQuantity > 100) {
+    throw new Error("Количеството трябва да е цяло число между 1 и 100")
+  }
+
+  const supabase = await createClient()
+
+  // Pre-check: COD, confirmed, no tracking number yet. Tracking number
+  // means shipment generation has started — editing quantity after that
+  // would desync the courier label, the real cart, and the COD amount
+  // the courier will collect. Not supported pre-launch.
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, payment_method, status, tracking_number")
+    .eq("id", orderId)
+    .single()
+
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.payment_method !== "cod") {
+    throw new Error(
+      "Редакция на количества за картови поръчки изисква нова поръчка — използвайте „Замяна на поръчка\" (replaces_order_id)",
+    )
+  }
+  if (order.status !== "confirmed") {
+    throw new Error(
+      `Редакция на количества е допустима само за потвърдени поръчки (текущ статус: ${order.status})`,
+    )
+  }
+  if (order.tracking_number) {
+    throw new Error("Товарителницата вече е генерирана — не може да се променя количество")
+  }
+
+  // Capture the old quantity for the audit payload — after the RPC runs,
+  // we can't distinguish old from new.
+  const { data: itemRow, error: itemErr } = await supabase
+    .from("order_items")
+    .select("quantity, unit_price_cents, product_name")
+    .eq("order_id", orderId)
+    .eq("sku", sku)
+    .single()
+
+  if (itemErr || !itemRow) {
+    throw new Error(`Артикулът ${sku} не е част от тази поръчка`)
+  }
+  const oldQuantity = itemRow.quantity as number
+
+  // The RPC handles FOR UPDATE + reserve/restore + row updates atomically.
+  // Any invariant violation (insufficient stock, over-restore) raises from
+  // the nested RPC and aborts the whole transaction.
+  const { data: newTotalData, error: rpcError } = await supabase.rpc("edit_order_quantity", {
+    p_order_id: orderId,
+    p_sku: sku,
+    p_new_quantity: newQuantity,
+  })
+
+  if (rpcError) {
+    const raw = rpcError.message ?? ""
+    // reserve_inventory's friendly error → surface it with the product name
+    if (raw.includes("Insufficient stock for SKU")) {
+      throw new Error(`Няма достатъчна наличност за ${itemRow.product_name}`)
+    }
+    console.error("edit_order_quantity RPC failed:", rpcError)
+    throw new Error("Грешка при редакция на количеството")
+  }
+
+  const newTotalCents = Number(newTotalData) || 0
+
+  // Emit audit event via record_order_outcome. The RPC's allow-list was
+  // extended with 'order_items_changed' in the same migration.
+  // Non-fatal: if the audit insert fails, the quantity change is already
+  // committed — log and move on, don't leak an error to the admin for
+  // an audit-only concern.
+  if (oldQuantity !== newQuantity) {
+    const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+      p_order_id: orderId,
+      p_outcome_type: "order_items_changed",
+      p_payload: {
+        sku,
+        product_name: itemRow.product_name,
+        old_quantity: oldQuantity,
+        new_quantity: newQuantity,
+        delta: newQuantity - oldQuantity,
+        new_total_cents: newTotalCents,
+      },
+      p_actor: "admin",
+    })
+    if (auditErr) {
+      console.error("Failed to emit order_items_changed audit:", auditErr)
+    }
+  }
+
+  return { success: true, newTotalCents }
+}
+
+// ─── Email resends ──────────────────────────────────────────────────────────
+// Admin can manually resend transactional emails from the order detail page.
+// Common triggers: customer says "I didn't get the email", email landed in
+// spam, address typo corrected via updateOrderContact.
+//
+// The existing helpers in lib/email-sender.ts are already fire-and-forget and
+// safe to call again. Their timestamp-update guards (first-write-wins via
+// .is(..., null)) preserve the original first-sent time across resends —
+// the audit event is the record of the resend.
+//
+// Each resend writes an email_resent outcome event so the timeline shows
+// which email was re-sent and when.
+
+async function emitEmailResentAudit(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+  emailType: "order_confirmation" | "shipping" | "delivery",
+) {
+  const { error } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "email_resent",
+    p_payload: { email_type: emailType },
+    p_actor: "admin",
+  })
+  if (error) {
+    console.error(`Failed to emit email_resent audit (${emailType}):`, error)
+  }
+}
+
+export async function resendOrderConfirmationEmail(
+  orderId: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Поръчката не е намерена")
+
+  // Don't resend for pending orders — they haven't been confirmed yet, so the
+  // "order confirmation" wording would be wrong (no receipt URL for card,
+  // no COD acceptance).
+  if (order.status === "pending") {
+    throw new Error("Потвърждение на поръчка се изпраща след потвърждение на плащането")
+  }
+  if (order.status === "cancelled" || order.status === "expired") {
+    throw new Error(
+      `Не може да се изпрати потвърждение за ${order.status === "cancelled" ? "отказана" : "изтекла"} поръчка`,
+    )
+  }
+
+  await sendOrderConfirmationEmail(order as Record<string, unknown>)
+  await emitEmailResentAudit(supabase, orderId, "order_confirmation")
+
+  return { success: true }
+}
+
+export async function resendShippingEmail(
+  orderId: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Поръчката не е намерена")
+
+  // Shipping email is only meaningful once a tracking number is assigned.
+  // status='shipped' implies tracking_number was set (generate-shipment
+  // atomically moves the status), but the placeholder value is a distinct
+  // not-yet-ready state — rare edge case, refuse it explicitly.
+  if (!order.tracking_number || order.tracking_number === "__generating__") {
+    throw new Error("Пратката още не е генерирана — няма номер за изпращане")
+  }
+
+  await sendShippingEmail(order as Record<string, unknown>, order.tracking_number as string)
+  await emitEmailResentAudit(supabase, orderId, "shipping")
+
+  return { success: true }
+}
+
+export async function resendDeliveryEmail(
+  orderId: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+
+  const supabase = await createClient()
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single()
+
+  if (error || !order) throw new Error("Поръчката не е намерена")
+
+  if (order.status !== "delivered") {
+    throw new Error(
+      `Потвърждение за доставка се изпраща само за доставени поръчки (текущ статус: ${order.status})`,
+    )
+  }
+
+  // force: true bypasses the delivery_email_sent_at early-return so the email
+  // actually fires. The timestamp update inside sendDeliveryEmail keeps its
+  // .is(..., null) guard, so the original first-sent time is preserved.
+  await sendDeliveryEmail(order as Record<string, unknown>, { force: true })
+  await emitEmailResentAudit(supabase, orderId, "delivery")
+
+  return { success: true }
+}
+
 // ─── Refund tracking ─────────────────────────────────────────────────────────
+// Refunds live in the order_refunds child table (one row per refund, many per
+// order). Single-responsibility: recordRefund writes ONLY to order_refunds.
+// Stock movements linked to a refund are recorded by a separate server action
+// (recordStockMovement) — the UI orchestrates the "refund → stock outcome"
+// flow as two explicit steps, preserving the three-layer separation:
+//   refund = money     (recordRefund writes here)
+//   inventory = goods  (recordStockMovement writes here, with
+//                       reference_type='return', reference_id=<refund.id>)
+//   outcome = audit    (recordOrderOutcome writes here, separately)
+//
+// Idempotency for webhook-originated rows is via UNIQUE stripe_refund_id;
+// admin-originated refunds supply a client_idempotency_key so a retry
+// re-resolves to the same row without double-insert.
+//
+// Phase 1 (current): admin issues Stripe refunds in the Stripe dashboard,
+// then records them here with the Stripe refund ID. COD refunds are
+// bank-transfer only, no gateway ID. The webhook creates rows the admin
+// hasn't recorded yet and admin can annotate afterward (reason,
+// credit_note_ref) via updateRefundAnnotation.
+//
+// Phase 2: the admin UI will call stripe.refunds.create() directly and
+// insert the row synchronously — same table, same shape, no schema change.
 
 export async function recordRefund(
   orderId: string,
@@ -947,12 +1486,17 @@ export async function recordRefund(
     refundMethod: "stripe" | "bank_transfer"
     refundedAt?: string
     creditNoteRef?: string
+    stripeRefundId?: string
+    clientIdempotencyKey: string
   },
-): Promise<{ success: true }> {
+): Promise<{ success: true; refundId: string }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!uuidRegex.test(data.clientIdempotencyKey)) {
+    throw new Error("Невалиден idempotency key")
+  }
 
   // Validate refund amount
   if (!Number.isInteger(data.refundAmount) || data.refundAmount < 1) {
@@ -975,6 +1519,20 @@ export async function recordRefund(
     throw new Error("Референцията на кредитното известие е твърде дълга")
   }
 
+  // Validate Stripe refund ID (required for method=stripe)
+  const trimmedStripeRefundId = data.stripeRefundId?.trim() || null
+  if (data.refundMethod === "stripe") {
+    if (!trimmedStripeRefundId) {
+      throw new Error("Stripe refund ID е задължителен за Stripe възстановяване")
+    }
+    if (!/^re_[a-zA-Z0-9]+$/.test(trimmedStripeRefundId)) {
+      throw new Error("Невалиден формат на Stripe refund ID (очаква се re_...)")
+    }
+  }
+  if (data.refundMethod === "bank_transfer" && trimmedStripeRefundId) {
+    throw new Error("Банковите преводи нямат Stripe refund ID")
+  }
+
   // Validate refundedAt
   let refundedAtValue: string
   if (data.refundedAt) {
@@ -991,18 +1549,113 @@ export async function recordRefund(
     refundedAtValue = new Date().toISOString()
   }
 
-  // Fetch order
   const supabase = await createClient()
+
+  // Fast-path idempotency: if a refund with this client_idempotency_key
+  // exists, this is a retry. Return the existing ID without re-inserting.
+  const { data: existingRefunds, error: existingError } = await supabase
+    .from("order_refunds")
+    .select("id, order_id")
+    .eq("client_idempotency_key", data.clientIdempotencyKey)
+  if (existingError) {
+    console.error("Failed to check refund idempotency:", existingError)
+    throw new Error("Грешка при проверка на idempotency")
+  }
+
+  if (existingRefunds && existingRefunds.length > 0) {
+    const existing = existingRefunds[0]
+    if (existing.order_id !== orderId) {
+      throw new Error("Idempotency key принадлежи на друга поръчка")
+    }
+    return { success: true, refundId: existing.id }
+  }
+
+  // No existing row — run full validation + insert.
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, refunded_at")
+    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, stripe_payment_intent_id")
     .eq("id", orderId)
     .single()
 
   if (fetchError || !order) throw new Error("Поръчката не е намерена")
   if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
-  if (data.refundAmount > order.total_amount) {
-    throw new Error("Сумата за възстановяване не може да надвишава общата сума на поръчката")
+  if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
+    throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
+  }
+
+  // For Stripe refunds, verify the pasted refund ID against Stripe before
+  // committing a row. A typo or paste-from-wrong-order would otherwise create
+  // a phantom row pointing at a non-existent or mismatched Stripe refund,
+  // discoverable only by later reconciliation or never. One API call here
+  // trades ~200ms for data integrity. Four checks:
+  //   1. The refund exists in Stripe (resource_missing → friendly error).
+  //   2. refund.status === 'succeeded' — money actually moved. Pending or
+  //      failed refunds must not be logged as money-moved events.
+  //   3. refund.payment_intent matches order.stripe_payment_intent_id —
+  //      the refund belongs to THIS order, not a different one the admin
+  //      accidentally copied from.
+  //   4. refund.amount matches data.refundAmount — admin's local total
+  //      equals the Stripe-side total. Divergence signals a typo in one
+  //      of the two fields.
+  if (data.refundMethod === "stripe" && trimmedStripeRefundId) {
+    let stripeRefund
+    try {
+      stripeRefund = await stripe.refunds.retrieve(trimmedStripeRefundId)
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code
+      if (code === "resource_missing") {
+        throw new Error(
+          `Stripe refund ID "${trimmedStripeRefundId}" не е намерен в Stripe — проверете ID в Stripe Dashboard`,
+        )
+      }
+      console.error(
+        `Failed to retrieve Stripe refund ${trimmedStripeRefundId}:`,
+        sanitizeError(err),
+      )
+      throw new Error("Грешка при проверка на Stripe refund — опитайте отново")
+    }
+
+    if (stripeRefund.status !== "succeeded") {
+      throw new Error(
+        `Stripe refund не е успешно приключил (статус: ${stripeRefund.status}). Изчакайте да приключи или проверете в Stripe Dashboard.`,
+      )
+    }
+
+    const refundPI =
+      typeof stripeRefund.payment_intent === "string"
+        ? stripeRefund.payment_intent
+        : stripeRefund.payment_intent?.id ?? null
+    if (refundPI !== order.stripe_payment_intent_id) {
+      throw new Error(
+        `Stripe refund ID не принадлежи на тази поръчка (PaymentIntent в Stripe: ${refundPI ?? "липсва"}, очакван: ${order.stripe_payment_intent_id})`,
+      )
+    }
+
+    if (stripeRefund.amount !== data.refundAmount) {
+      throw new Error(
+        `Сумата не съвпада със Stripe (въведено: ${(data.refundAmount / 100).toFixed(2)} лв, Stripe: ${(stripeRefund.amount / 100).toFixed(2)} лв). Проверете refund ID или сумата.`,
+      )
+    }
+  }
+
+  // Sum existing refunds for friendly overshoot message (trigger is backstop).
+  const { data: sumRows, error: sumError } = await supabase
+    .from("order_refunds")
+    .select("amount_cents")
+    .eq("order_id", orderId)
+  if (sumError) {
+    console.error("Failed to fetch existing refunds:", sumError)
+    throw new Error("Грешка при проверка на предишни възстановявания")
+  }
+  const alreadyRefunded = (sumRows ?? []).reduce(
+    (sum, r) => sum + (r.amount_cents ?? 0),
+    0,
+  )
+  if (alreadyRefunded + data.refundAmount > order.total_amount) {
+    const remaining = order.total_amount - alreadyRefunded
+    throw new Error(
+      `Сумата за възстановяване не може да надвишава остатъка по поръчката (${(remaining / 100).toFixed(2)} лв)`,
+    )
   }
 
   // Validate refundedAt not before delivered_at
@@ -1014,46 +1667,262 @@ export async function recordRefund(
     }
   }
 
-  // Conditional credit_note_ref validation
+  // Conditional credit_note_ref validation: invoice issued → credit note required
   if (order.needs_invoice && order.invoice_number && !trimmedCreditNote) {
     throw new Error("За поръчка с издадена фактура е необходима референция на кредитно известие")
   }
-  if ((!order.needs_invoice || !order.invoice_number) && trimmedCreditNote) {
-    // Ignore credit note ref if no invoice was issued — don't error, just drop it
-  }
+  // If no invoice was issued, silently drop credit_note_ref (not an error).
+  const creditNoteRefForInsert =
+    order.needs_invoice && order.invoice_number ? trimmedCreditNote : null
 
-  // Build update payload
-  const updateData: Record<string, unknown> = {
-    refunded_at: refundedAtValue,
-    refund_amount: data.refundAmount,
-    refund_reason: trimmedReason,
-    refund_method: data.refundMethod,
-  }
-  if (order.needs_invoice && order.invoice_number && trimmedCreditNote) {
-    updateData.credit_note_ref = trimmedCreditNote
-  }
-
-  // Atomic update with idempotency guard
-  const { data: updated, error: updateError } = await supabase
-    .from("orders")
-    .update(updateData)
-    .eq("id", orderId)
-    .is("refunded_at", null)
+  const { data: inserted, error: insertError } = await supabase
+    .from("order_refunds")
+    .insert({
+      order_id: orderId,
+      stripe_refund_id: trimmedStripeRefundId,
+      amount_cents: data.refundAmount,
+      method: data.refundMethod,
+      source: "admin_ui",
+      reason: trimmedReason,
+      credit_note_ref: creditNoteRefForInsert,
+      recorded_by: "admin",
+      refunded_at: refundedAtValue,
+      client_idempotency_key: data.clientIdempotencyKey,
+    })
     .select("id")
+    .single()
 
-  if (updateError) {
-    console.error("Failed to record refund:", updateError)
+  if (insertError) {
+    if (insertError.code === "23505") {
+      // Ambiguous — could be client_idempotency_key (concurrent retry) or
+      // stripe_refund_id (webhook recorded this refund already). Fetch by
+      // the client key to disambiguate.
+      const { data: recovered } = await supabase
+        .from("order_refunds")
+        .select("id, order_id")
+        .eq("client_idempotency_key", data.clientIdempotencyKey)
+      if (recovered && recovered.length > 0 && recovered[0].order_id === orderId) {
+        return { success: true, refundId: recovered[0].id }
+      }
+      // Must have been the stripe_refund_id unique — same Stripe refund
+      // already in the table (webhook beat us, or dupe paste).
+      throw new Error("Това Stripe възстановяване вече е записано за тази поръчка")
+    }
+    console.error("Failed to record refund:", insertError)
     throw new Error("Грешка при записване на възстановяване")
   }
 
+  return { success: true, refundId: inserted!.id }
+}
+
+// Admin-annotation edits on existing refund rows (reason, credit_note_ref).
+// Typically used to annotate webhook-originated refunds that arrived before
+// the admin had a chance to record intent. Does NOT emit an audit event —
+// annotations are not money movements.
+export async function updateRefundAnnotation(
+  refundId: string,
+  data: {
+    reason?: string
+    creditNoteRef?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(refundId)) throw new Error("Невалиден формат на възстановяване")
+
+  const updatePayload: Record<string, unknown> = {}
+
+  if (data.reason !== undefined) {
+    const trimmed = data.reason.trim()
+    if (!trimmed) throw new Error("Причината за възстановяване е задължителна")
+    if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+    updatePayload.reason = trimmed
+  }
+
+  if (data.creditNoteRef !== undefined) {
+    const trimmed = data.creditNoteRef.trim()
+    if (trimmed.length > 100) {
+      throw new Error("Референцията на кредитното известие е твърде дълга")
+    }
+    updatePayload.credit_note_ref = trimmed || null
+  }
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new Error("Няма промени за записване")
+  }
+
+  const supabase = await createClient()
+  const { data: updated, error } = await supabase
+    .from("order_refunds")
+    .update(updatePayload)
+    .eq("id", refundId)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to update refund annotation:", error)
+    throw new Error("Грешка при записване на промените")
+  }
+
   if (!updated || updated.length === 0) {
-    throw new Error("Възстановяването вече е записано за тази поръчка")
+    throw new Error("Възстановяването не е намерено")
   }
 
   return { success: true }
 }
 
 // ─── Complaints register (ЗЗП чл. 127) ──────────────────────────────────────
+
+// ─── Post-shipment outcome events ───────────────────────────────────────
+// Records a domain event (delivery_refused / package_lost / returned / recalled)
+// via the record_order_outcome RPC and appends a human-readable summary to
+// admin_notes so the event appears in the existing order timeline UI.
+//
+// Strictly single-responsibility: this records the *event*, nothing else.
+// The order status is not rewound (per the three-layer design:
+// status / refund / inventory + outcome events) and no linked refund or
+// inventory writes happen here. Those are separate concerns handled by
+// recordRefund (money, with its own inventoryAdjustments for returned
+// goods) and recordStockMovement (pure stock). The admin UI coordinates
+// them as a guided multi-step flow — one user interaction, three
+// independent server actions — preserving clean separation between audit,
+// money, and goods.
+
+const OUTCOME_TYPES = ["delivery_refused", "package_lost", "returned", "recalled"] as const
+type OutcomeType = (typeof OUTCOME_TYPES)[number]
+
+const OUTCOME_LABELS: Record<OutcomeType, string> = {
+  delivery_refused: "Отказана доставка",
+  package_lost: "Изгубена пратка",
+  returned: "Върнат продукт",
+  recalled: "Изтеглен продукт",
+}
+
+export async function recordOrderOutcome(
+  orderId: string,
+  data: {
+    outcomeType: OutcomeType
+    note: string
+    // Type-specific fields. Validated per outcomeType below.
+    courierRef?: string
+    returnRef?: string
+    recallRef?: string
+    recallReason?: string
+    condition?: "sellable" | "damaged"
+    expectedReturnAt?: string
+    confirmedLostAt?: string
+    receivedAt?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  if (!OUTCOME_TYPES.includes(data.outcomeType)) {
+    throw new Error("Невалиден тип събитие")
+  }
+
+  const trimmedNote = data.note?.trim()
+  if (!trimmedNote || trimmedNote.length < 10) {
+    throw new Error("Описанието трябва да бъде поне 10 символа")
+  }
+  if (trimmedNote.length > 2000) {
+    throw new Error("Описанието е твърде дълго")
+  }
+
+  // Type-specific required-field validation.
+  const courierRef = data.courierRef?.trim() || null
+  const returnRef = data.returnRef?.trim() || null
+  const recallRef = data.recallRef?.trim() || null
+  const recallReason = data.recallReason?.trim() || null
+
+  if (data.outcomeType === "package_lost" && !courierRef) {
+    throw new Error("Референция на куриерска претенция е задължителна")
+  }
+  if (data.outcomeType === "returned") {
+    if (!returnRef) throw new Error("Референция на връщане е задължителна")
+    if (data.condition !== "sellable" && data.condition !== "damaged") {
+      throw new Error("Укажете състояние на върнатия продукт")
+    }
+  }
+  if (data.outcomeType === "recalled") {
+    if (!recallRef) throw new Error("Референция на изтегляне е задължителна")
+    if (!recallReason) throw new Error("Причината за изтегляне е задължителна")
+  }
+
+  // Date validation helpers (ISO or YYYY-MM-DD).
+  const parseOptionalDate = (value: string | undefined, label: string): string | null => {
+    if (!value) return null
+    const date = new Date(value)
+    if (isNaN(date.getTime())) throw new Error(`Невалидна дата: ${label}`)
+    return date.toISOString()
+  }
+  const expectedReturnAt = parseOptionalDate(data.expectedReturnAt, "очаквано връщане")
+  const confirmedLostAt = parseOptionalDate(data.confirmedLostAt, "изгубване")
+  const receivedAt = parseOptionalDate(data.receivedAt, "получаване")
+
+  const supabase = await createClient()
+
+  // Order must exist and be in a post-shipment state — outcomes don't apply
+  // to pending/confirmed orders (nothing's been shipped yet) or terminal
+  // cancelled/expired (use normal refund flow for any late reversal).
+  const { data: order, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, status")
+    .eq("id", orderId)
+    .single()
+  if (fetchError || !order) throw new Error("Поръчката не е намерена")
+  if (order.status !== "shipped" && order.status !== "delivered") {
+    throw new Error(`Това събитие може да се докладва само след изпращане (текущ статус: ${order.status})`)
+  }
+
+  const payload: Record<string, unknown> = { note: trimmedNote }
+  if (courierRef) payload.courier_ref = courierRef
+  if (returnRef) payload.return_ref = returnRef
+  if (recallRef) payload.recall_ref = recallRef
+  if (recallReason) payload.recall_reason = recallReason
+  if (data.condition) payload.condition = data.condition
+  if (expectedReturnAt) payload.expected_return_at = expectedReturnAt
+  if (confirmedLostAt) payload.confirmed_lost_at = confirmedLostAt
+  if (receivedAt) payload.received_at = receivedAt
+
+  const { error: rpcError } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: data.outcomeType,
+    p_payload: payload,
+    p_actor: "admin",
+  })
+  if (rpcError) {
+    console.error("Failed to record order outcome:", rpcError)
+    throw new Error("Грешка при записване на събитие")
+  }
+
+  // Bridge to the existing timeline until the admin-panel timeline reads
+  // from order_audit_events directly. Human-readable summary as an admin
+  // note makes the outcome visible immediately.
+  const summaryParts: string[] = [OUTCOME_LABELS[data.outcomeType]]
+  if (data.outcomeType === "returned" && data.condition) {
+    summaryParts.push(data.condition === "sellable" ? "годно" : "негодно")
+  }
+  if (returnRef) summaryParts.push(`реф. ${returnRef}`)
+  if (recallRef) summaryParts.push(`реф. ${recallRef}`)
+  if (courierRef) summaryParts.push(`куриер ${courierRef}`)
+  const summaryHeader = summaryParts.join(" — ")
+  const noteBody = recallReason ? `${recallReason}\n\n${trimmedNote}` : trimmedNote
+  const fullNote = `[${summaryHeader}] ${noteBody}`
+
+  const { error: noteError } = await supabase.rpc("add_admin_note", {
+    p_order_id: orderId,
+    p_text: fullNote.slice(0, 2000),
+  })
+  if (noteError) {
+    // Audit event already recorded — the note failure is non-fatal.
+    console.error("Failed to append admin note for outcome:", noteError)
+  }
+
+  return { success: true }
+}
 
 export async function recordComplaint(
   orderId: string,
@@ -1200,26 +2069,32 @@ export async function getOrderComplaints(orderId: string): Promise<Complaint[]> 
   return (data || []) as Complaint[]
 }
 
-function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
+async function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
   if (!process.env.RESEND_API_KEY) return
+
+  const supabase = await createClient()
+  const { data: orderItems, error: itemsErr } = await supabase
+    .from("order_items")
+    .select("product_name, quantity, unit_price_cents")
+    .eq("order_id", order.id as string)
+    .order("line_no")
+  if (itemsErr || !orderItems) {
+    console.error(`Failed to load order_items for shipping email on ${order.id}:`, itemsErr)
+    return
+  }
 
   const resend = new Resend(process.env.RESEND_API_KEY)
   const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
-  const orderItems = order.items as Array<{
-    productName: string
-    quantity: number
-    priceInCents: number
-  }>
 
   const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
+    .map((item) => `${item.product_name} x ${item.quantity} - ${formatPrice(item.unit_price_cents * item.quantity)}`)
     .join("\n")
 
   const econtOfficeLine = order.econt_office_name ? `\nОфис: ${order.econt_office_name}\n${order.econt_office_address || ""}` : ""
   const speedyOfficeLine = order.speedy_office_name ? `\nОфис: ${order.speedy_office_name}\n${order.speedy_office_address || ""}` : ""
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    from: requireEnv("EMAIL_FROM"),
     to: order.email as string,
     subject: `Поръчка #${(order.id as string).slice(0, 8)} - Изпратена`,
     text: `
@@ -1600,12 +2475,15 @@ export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]
   }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export async function addInventoryBatch(data: {
   sku: string
   quantity: number
   batchId: string
   expiryDate: string
   notes: string
+  idempotencyKey: string
 }): Promise<{ success: true }> {
   await requireAdmin()
 
@@ -1616,10 +2494,12 @@ export async function addInventoryBatch(data: {
   }
   if (!data.batchId?.trim()) throw new Error("Номерът на партидата е задължителен")
   if (data.batchId.length > 100) throw new Error("Номерът на партидата е твърде дълъг")
-  if (data.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.expiryDate)) {
+  if (!data.expiryDate) throw new Error("Срокът на годност е задължителен")
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data.expiryDate)) {
     throw new Error("Невалидна дата на годност")
   }
   if (data.notes && data.notes.length > 500) throw new Error("Бележката е твърде дълга")
+  if (!UUID_REGEX.test(data.idempotencyKey)) throw new Error("Невалиден idempotency key")
 
   const supabase = await createClient()
   const { error } = await supabase.from("inventory_log").insert({
@@ -1627,14 +2507,20 @@ export async function addInventoryBatch(data: {
     type: "batch_in",
     quantity: data.quantity,
     batch_id: data.batchId.trim(),
-    expiry_date: data.expiryDate || null,
+    expiry_date: data.expiryDate,
     notes: data.notes?.trim() || null,
     reference_type: "internal" as const,
     reference_id: data.batchId.trim(),
     created_by: "admin",
+    idempotency_key: data.idempotencyKey,
   })
 
   if (error) {
+    // 23505 = unique_violation on idempotency_key; treat as idempotent no-op.
+    // The original submission already recorded this movement.
+    if (error.code === "23505") {
+      return { success: true }
+    }
     console.error("Failed to insert inventory batch:", error)
     throw new Error("Грешка при добавяне на наличност")
   }
@@ -1679,8 +2565,11 @@ export async function recordStockMovement(data: {
   batchId?: string
   expiryDate?: string
   orderId?: string
+  idempotencyKey: string
 }): Promise<{ success: true }> {
   await requireAdmin()
+
+  if (!UUID_REGEX.test(data.idempotencyKey)) throw new Error("Невалиден idempotency key")
 
   // Validate SKU
   const validSkus = PRODUCTS.map((p) => p.sku)
@@ -1733,9 +2622,11 @@ export async function recordStockMovement(data: {
     throw new Error("Невалидна дата на годност")
   }
 
-  // Validate orderId — only for return_in
-  if (data.orderId && data.type !== "return_in") {
-    throw new Error("Поръчка може да се свърже само при връщане")
+  // Validate orderId — allowed on return_in (sellable return) and damaged
+  // (damaged return). On other movement types, order_id wouldn't have
+  // meaningful semantics under the current reference_type rules.
+  if (data.orderId && data.type !== "return_in" && data.type !== "damaged") {
+    throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (data.orderId && !uuidRegex.test(data.orderId)) {
@@ -1743,6 +2634,64 @@ export async function recordStockMovement(data: {
   }
 
   const supabase = await createClient()
+
+  // Order-scoped return cap: when the movement is tied to a specific
+  // customer order return (order_id + reference_type='return' +
+  // return_in|damaged), validate:
+  //   (a) the SKU was actually part of that order
+  //   (b) sum(prior return-scoped movements for this (order, sku)) +
+  //       this quantity ≤ sum(order_out quantities for this (order, sku))
+  // Matches the DB trigger enforce_order_return_cap (migration
+  // 20260423210000) — same cap, same Bulgarian wording. App-layer runs
+  // first for friendlier UX; trigger is the backstop.
+  //
+  // Warehouse-internal damage (reference_type='internal', no orderId)
+  // deliberately bypasses this — you can write off spoilage or breakage
+  // unrelated to any customer shipment. Adjustments (gain/loss) also
+  // bypass — they're per-SKU reconciliation, not per-order returns.
+  const isOrderReturn =
+    data.orderId &&
+    data.referenceType === "return" &&
+    (data.type === "return_in" || data.type === "damaged")
+
+  if (isOrderReturn) {
+    const { data: orderItems, error: itemsErr } = await supabase
+      .from("order_items")
+      .select("sku, quantity")
+      .eq("order_id", data.orderId!)
+    if (itemsErr) {
+      console.error("Failed to load order_items for return-cap validation:", itemsErr)
+      throw new Error("Грешка при проверка на артикулите на поръчката")
+    }
+    const orderSkuQty = (orderItems ?? []).find((i) => i.sku === data.sku)?.quantity ?? 0
+    if (orderSkuQty === 0) {
+      throw new Error(`SKU ${data.sku} не е част от тази поръчка`)
+    }
+
+    // Sum prior return-scoped movements (return_in + damaged with
+    // reference_type='return') for this (order_id, sku).
+    const { data: priorReturns, error: priorErr } = await supabase
+      .from("inventory_log")
+      .select("quantity")
+      .eq("order_id", data.orderId!)
+      .eq("sku", data.sku)
+      .eq("reference_type", "return")
+      .in("type", ["return_in", "damaged"])
+    if (priorErr) {
+      console.error("Failed to load prior returns:", priorErr)
+      throw new Error("Грешка при проверка на предишни връщания")
+    }
+    const priorQty = (priorReturns ?? []).reduce((s, r) => s + (r.quantity as number), 0)
+
+    if (priorQty + data.quantity > orderSkuQty) {
+      // Wording matches the DB trigger verbatim so the admin sees
+      // consistent Bulgarian copy whichever layer rejects the insert.
+      throw new Error(
+        `Не можете да върнете/бракувате повече бройки от изпратените за този артикул по тази поръчка (SKU ${data.sku}, изпратени ${orderSkuQty}, вече върнати ${priorQty}, опит за ${data.quantity})`,
+      )
+    }
+  }
+
   const { error } = await supabase.from("inventory_log").insert({
     sku: data.sku,
     type: data.type,
@@ -1754,9 +2703,14 @@ export async function recordStockMovement(data: {
     expiry_date: data.expiryDate || null,
     order_id: data.orderId || null,
     created_by: "admin",
+    idempotency_key: data.idempotencyKey,
   })
 
   if (error) {
+    // Idempotency key collision — same operation already recorded.
+    if (error.code === "23505") {
+      return { success: true }
+    }
     console.error("Failed to record stock movement:", error)
     throw new Error("Грешка при записване на движение")
   }
@@ -1764,3 +2718,165 @@ export async function recordStockMovement(data: {
   return { success: true }
 }
 
+// ─── Recall / batch traceability export ─────────────────────────────────────
+// Food-safety recall workflow: given a SKU (and optional date range), list
+// all orders containing that SKU that might need customer contact.
+//
+// Pre-launch, we don't track batch → order mapping (would need FIFO batch
+// consumption). So the recall set is always "all orders with this SKU in
+// the date range" — an over-approximation. Admin does the final triage
+// by phone. This is acceptable for our volume; if we ever ship enough to
+// make the over-approximation expensive, we add a per-order batch
+// allocation at ship time.
+//
+// Status scope: `confirmed`, `shipped`, `delivered`. Covers the three
+// audiences:
+//   - confirmed: not yet shipped → can be cancelled + refunded
+//   - shipped: in transit → notify, ask customer not to consume
+//   - delivered: possibly consumed → notify, offer refund/replacement,
+//     ask about symptoms if food-safety issue
+// Excluded: pending (no payment = no goods reserved), cancelled, expired
+// (terminal — no goods at risk).
+
+export interface RecallCandidate {
+  orderId: string
+  shortId: string
+  createdAt: string
+  shippedAt: string | null
+  deliveredAt: string | null
+  status: "confirmed" | "shipped" | "delivered"
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  city: string
+  address: string | null
+  postalCode: string | null
+  quantity: number
+  trackingNumber: string | null
+  logisticsPartner: string | null
+}
+
+export async function getRecallCandidates(
+  sku: string,
+  fromDate?: string,
+  toDate?: string,
+): Promise<RecallCandidate[]> {
+  await requireAdmin()
+
+  const validSkus = PRODUCTS.map((p) => p.sku)
+  if (!validSkus.includes(sku)) throw new Error("Невалиден SKU")
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (fromDate && !dateRegex.test(fromDate)) throw new Error("Невалидна начална дата")
+  if (toDate && !dateRegex.test(toDate)) throw new Error("Невалидна крайна дата")
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error("Началната дата не може да е след крайната")
+  }
+
+  const supabase = await createClient()
+
+  // Query from order_items so the SKU filter hits the right column. The
+  // !inner join restricts to items whose parent order matches the
+  // status + date filters. cardinality is many-to-one (one order per
+  // item) — PostgREST returns `orders` as a single object, not an array.
+  let query = supabase
+    .from("order_items")
+    .select(`
+      quantity,
+      sku,
+      orders!inner (
+        id,
+        created_at,
+        shipped_at,
+        delivered_at,
+        status,
+        first_name,
+        last_name,
+        email,
+        phone,
+        city,
+        address,
+        postal_code,
+        tracking_number,
+        logistics_partner
+      )
+    `)
+    .eq("sku", sku)
+    .in("orders.status", ["confirmed", "shipped", "delivered"])
+
+  if (fromDate) {
+    query = query.gte("orders.created_at", `${fromDate}T00:00:00.000Z`)
+  }
+  if (toDate) {
+    // End-of-day inclusive: orders placed any time on the to-date are
+    // included. Matches how admins mentally read "до 2026-04-24".
+    query = query.lte("orders.created_at", `${toDate}T23:59:59.999Z`)
+  }
+
+  const { data, error } = await query
+  if (error) {
+    console.error("Failed to fetch recall candidates:", error)
+    throw new Error("Грешка при извличане на кандидати за изтегляне")
+  }
+
+  type OrderShape = {
+    id: string
+    created_at: string
+    shipped_at: string | null
+    delivered_at: string | null
+    status: "confirmed" | "shipped" | "delivered"
+    first_name: string
+    last_name: string
+    email: string
+    phone: string
+    city: string
+    address: string | null
+    postal_code: string | null
+    tracking_number: string | null
+    logistics_partner: string | null
+  }
+  type ItemShape = { quantity: number; sku: string; orders: OrderShape | OrderShape[] }
+
+  const rows = (data ?? []) as unknown as ItemShape[]
+
+  const candidates: RecallCandidate[] = rows.map((row) => {
+    // PostgREST sometimes types the to-one relation as an array in the
+    // generated types. At runtime it's a single object when the FK is
+    // to-one; handle both for safety.
+    const o = Array.isArray(row.orders) ? row.orders[0] : row.orders
+    return {
+      orderId: o.id,
+      shortId: o.id.slice(0, 8),
+      createdAt: o.created_at,
+      shippedAt: o.shipped_at,
+      deliveredAt: o.delivered_at,
+      status: o.status,
+      firstName: o.first_name,
+      lastName: o.last_name,
+      email: o.email,
+      phone: o.phone,
+      city: o.city,
+      address: o.address,
+      postalCode: o.postal_code,
+      quantity: row.quantity,
+      trackingNumber: o.tracking_number,
+      logisticsPartner: o.logistics_partner,
+    }
+  })
+
+  // Sort delivered last, shipped middle, confirmed first (so admin works
+  // through escalating risk in the same order they'd dial the phone).
+  const statusOrder: Record<RecallCandidate["status"], number> = {
+    confirmed: 0,
+    shipped: 1,
+    delivered: 2,
+  }
+  candidates.sort((a, b) => {
+    const cmp = statusOrder[a.status] - statusOrder[b.status]
+    if (cmp !== 0) return cmp
+    return (b.createdAt || "").localeCompare(a.createdAt || "")
+  })
+
+  return candidates
+}

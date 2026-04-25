@@ -1,14 +1,18 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, recordRefund, recordComplaint, resolveComplaint, getOrderComplaints, type OrderDetail, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
+import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 
@@ -48,24 +52,106 @@ export default function AdminOrderDetailPage({
   const [shipmentLoading, setShipmentLoading] = useState(false)
   const [shipmentSuccess, setShipmentSuccess] = useState<string | null>(null)
   const [selectedOfficeNumericId, setSelectedOfficeNumericId] = useState<number | null>(null)
+  // Sender / recipient sections start collapsed to a summary line — admin
+  // sees pre-filled data without a dropdown overwhelming the view, expands
+  // only when they actually need to change something. Mirrors Shopify's
+  // "Edit" toggle on Ship-from / Ship-to in the fulfillment panel.
+  const [senderEditing, setSenderEditing] = useState(false)
+  const [recipientEditing, setRecipientEditing] = useState(false)
   const [officePickerError, setOfficePickerError] = useState(false)
   const [newNote, setNewNote] = useState("")
   const [notesSaving, setNotesSaving] = useState(false)
   const [settlementPppRef, setSettlementPppRef] = useState("")
   const [settlementRef, setSettlementRef] = useState("")
   const [settlementAmountInput, setSettlementAmountInput] = useState("")
-  const [settlementPaidAt, setSettlementPaidAt] = useState("")
+  const [settlementPaidAt, setSettlementPaidAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
+  const [codConfirmLoading, setCodConfirmLoading] = useState(false)
 
-  // Refund state
+  // Order edit — contact info state
+  const [contactEditing, setContactEditing] = useState(false)
+  const [contactFirstName, setContactFirstName] = useState("")
+  const [contactLastName, setContactLastName] = useState("")
+  const [contactPhone, setContactPhone] = useState("")
+  const [contactEmail, setContactEmail] = useState("")
+  const [contactAddress, setContactAddress] = useState("")
+  const [contactPostalCode, setContactPostalCode] = useState("")
+  const [contactCity, setContactCity] = useState("")
+  const [contactNotes, setContactNotes] = useState("")
+  const [contactSaving, setContactSaving] = useState(false)
+  // Errors from updateOrderContact need to surface inside the contact card
+  // itself — actionError is shared with the Действия card much further down,
+  // so a validation rejection scrolled out of view and the admin saw nothing.
+  const [contactError, setContactError] = useState("")
+
+  // Order edit — COD quantity state (per-SKU)
+  const [qtyEditing, setQtyEditing] = useState<Record<string, number | null>>({})
+  const [qtySaving, setQtySaving] = useState<Record<string, boolean>>({})
+
+  // Exception-flow dialogs. Refund / complaint / outcome are rare actions
+  // (<5% of orders touch any of them), so they live behind the "Още действия"
+  // dropdown rather than the main panel. Same Shopify pattern: keep the
+  // routine flow uncluttered, exception flows one click away.
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false)
+  const [complaintDialogOpen, setComplaintDialogOpen] = useState(false)
+  const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false)
+
+  // Email resend state — per-email-type loading flag and a transient
+  // "sent just now" marker so the admin gets immediate feedback (the
+  // audit event timestamps aren't re-read into state on every resend).
+  type EmailKind = "order_confirmation" | "shipping" | "delivery"
+  const [emailResendLoading, setEmailResendLoading] = useState<Record<EmailKind, boolean>>({
+    order_confirmation: false,
+    shipping: false,
+    delivery: false,
+  })
+  const [emailResendJustSent, setEmailResendJustSent] = useState<Record<EmailKind, boolean>>({
+    order_confirmation: false,
+    shipping: false,
+    delivery: false,
+  })
+  const [emailResendError, setEmailResendError] = useState("")
+
+  // Refund state — Step 1 form fields
   const [refundAmount, setRefundAmount] = useState("")
   const [refundReason, setRefundReason] = useState("")
   const [refundMethod, setRefundMethod] = useState<"stripe" | "bank_transfer">("stripe")
   const [refundDate, setRefundDate] = useState("")
   const [refundCreditNote, setRefundCreditNote] = useState("")
+  const [refundStripeId, setRefundStripeId] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
-  const [refundSaved, setRefundSaved] = useState(false)
+  // client_idempotency_key for the refund insert. Regenerated after the
+  // whole "refund → stock outcome" flow completes (not just after the refund
+  // step), so a retry during Step 2 still resolves to the same refund row.
+  const [refundClientKey, setRefundClientKey] = useState<string>(() => crypto.randomUUID())
+
+  // Two-step state machine. 'form' = refund form visible; 'stock' = refund
+  // saved, stock-outcome panel visible; 'complete' = both done, dismiss banner.
+  type RefundStep = "form" | "stock" | "complete"
+  const [refundStep, setRefundStep] = useState<RefundStep>("form")
+  const [savedRefundId, setSavedRefundId] = useState<string | null>(null)
+  const [savedRefundAmountCents, setSavedRefundAmountCents] = useState<number>(0)
+
+  // Step 2 — per-SKU stock-outcome form state.
+  const [stockQty, setStockQty] = useState<Record<string, string>>({})
+  const [stockDisposition, setStockDisposition] = useState<Record<string, "sellable" | "damaged">>({})
+  // Per-(sku,disposition) UUID used as recordStockMovement idempotency key.
+  // Generated when entering Step 2, preserved across retries, cleared on
+  // flow completion so a new refund gets new keys.
+  const [stockKeys, setStockKeys] = useState<Record<string, string>>({})
+  const [stockLoading, setStockLoading] = useState(false)
+  const [stockProgress, setStockProgress] = useState<{
+    done: number
+    total: number
+    failed: Array<{ sku: string; disposition: string; message: string }>
+  } | null>(null)
+
+  // Step 2 alternative: skip-with-reason.
+  type SkipReason = "" | "no_return" | "package_lost" | "customer_keeps" | "other"
+  const [skipReason, setSkipReason] = useState<SkipReason>("")
+  const [skipOtherNote, setSkipOtherNote] = useState("")
+  const [skipLoading, setSkipLoading] = useState(false)
 
   // Complaint state
   const [complaints, setComplaints] = useState<Complaint[]>([])
@@ -77,6 +163,34 @@ export default function AdminOrderDetailPage({
   const [resolveResolution, setResolveResolution] = useState("")
   const [resolveStatus, setResolveStatus] = useState<"resolved" | "rejected">("resolved")
   const [resolveLoading, setResolveLoading] = useState(false)
+
+  // Post-shipment outcome state
+  type OutcomeType = "" | "delivery_refused" | "package_lost" | "returned" | "recalled"
+  const [outcomeType, setOutcomeType] = useState<OutcomeType>("")
+  const [outcomeNote, setOutcomeNote] = useState("")
+  const [outcomeCourierRef, setOutcomeCourierRef] = useState("")
+  const [outcomeReturnRef, setOutcomeReturnRef] = useState("")
+  const [outcomeRecallRef, setOutcomeRecallRef] = useState("")
+  const [outcomeRecallReason, setOutcomeRecallReason] = useState("")
+  const [outcomeCondition, setOutcomeCondition] = useState<"sellable" | "damaged" | "">("")
+  const [outcomeLoading, setOutcomeLoading] = useState(false)
+  const [outcomeSaved, setOutcomeSaved] = useState(false)
+  // Which outcome type was just saved — drives the post-save "next step"
+  // callout (different outcomes suggest different follow-ups).
+  const [outcomeSavedType, setOutcomeSavedType] = useState<Exclude<OutcomeType, "">|"">("")
+  // Context from the just-saved outcome, preserved across the outcome form's
+  // field reset so the callout's "Open refund form" shortcut can prefill
+  // the refund form. Cleared when the refund flow is dismissed or completed.
+  const [savedOutcomeNote, setSavedOutcomeNote] = useState<string>("")
+  const [savedOutcomeRef, setSavedOutcomeRef] = useState<string>("")
+  // Set when the refund form was opened FROM an outcome callout. Drives
+  // the "linked to outcome X" banner at the top of the refund card so
+  // the admin sees the provenance of the prefilled values. Cleared on
+  // flow reset.
+  const [outcomeLinkedContext, setOutcomeLinkedContext] = useState<{
+    outcomeType: Exclude<OutcomeType, "">
+    ref: string
+  } | null>(null)
 
   useEffect(() => {
     getOrder(id)
@@ -112,6 +226,34 @@ export default function AdminOrderDetailPage({
     }
   }
 
+  // Single resend helper, called from each dropdown item. Confirms intent,
+  // calls the right server action, sets a transient "just sent" marker the
+  // top-of-page banner reads to surface success / error.
+  async function handleEmailResend(kind: EmailKind) {
+    const labels: Record<EmailKind, string> = {
+      order_confirmation: "потвърждение за поръчка",
+      shipping: "известие за изпратена пратка",
+      delivery: "потвърждение за доставка",
+    }
+    if (!window.confirm(`Изпрати ${labels[kind]} отново до клиента?`)) return
+    setEmailResendError("")
+    setEmailResendLoading((s) => ({ ...s, [kind]: true }))
+    setEmailResendJustSent((s) => ({ ...s, [kind]: false }))
+    try {
+      if (kind === "order_confirmation") await resendOrderConfirmationEmail(id)
+      else if (kind === "shipping") await resendShippingEmail(id)
+      else await resendDeliveryEmail(id)
+      setEmailResendJustSent((s) => ({ ...s, [kind]: true }))
+      // Auto-clear the success banner after a few seconds so it doesn't
+      // linger on the page indefinitely.
+      setTimeout(() => setEmailResendJustSent((s) => ({ ...s, [kind]: false })), 4000)
+    } catch (err) {
+      setEmailResendError(err instanceof Error ? err.message : "Грешка при повторно изпращане")
+    } finally {
+      setEmailResendLoading((s) => ({ ...s, [kind]: false }))
+    }
+  }
+
   if (loading) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-8">
@@ -144,9 +286,123 @@ export default function AdminOrderDetailPage({
         <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>
           {STATUS_LABELS[order.status] || order.status}
         </Badge>
+        {/* Exception flows: refund / complaint / outcome live behind this
+            dropdown so the main panel stays focused on routine actions
+            (status, settlement, contact edits, invoice). Mirrors Shopify's
+            "More actions" pattern. Items are gated by order state — only
+            show what's actionable on the current order. */}
+        {(() => {
+          const canRefund = !!order.paid_at
+          const canOutcome = order.status === "shipped" || order.status === "delivered"
+          // Email gating mirrors the underlying server actions' state checks.
+          const canEmailConfirm = order.status !== "pending" && order.status !== "cancelled" && order.status !== "expired"
+          const canEmailShipping = !!order.tracking_number && order.tracking_number !== "__generating__"
+          const canEmailDelivery = order.status === "delivered"
+          const hasAnyEmail = canEmailConfirm || canEmailShipping || canEmailDelivery
+          // Single-button fallback only when literally only complaint is
+          // actionable (terminal-state orders, fresh pending orders).
+          if (!canRefund && !canOutcome && !hasAnyEmail) {
+            return (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-8 text-xs"
+                onClick={() => setComplaintDialogOpen(true)}
+              >
+                Регистрирай рекламация
+              </Button>
+            )
+          }
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="ml-auto h-8 text-xs">
+                  Още действия ▾
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                {canRefund && (
+                  <DropdownMenuItem onClick={() => setRefundDialogOpen(true)}>
+                    Запиши възстановяване
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => setComplaintDialogOpen(true)}>
+                  Регистрирай рекламация
+                  {complaints.filter((c) => c.status === "open").length > 0 && (
+                    <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                      {complaints.filter((c) => c.status === "open").length}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+                {canOutcome && (
+                  <DropdownMenuItem onClick={() => setOutcomeDialogOpen(true)}>
+                    Следдоставно събитие
+                  </DropdownMenuItem>
+                )}
+                {hasAnyEmail && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {canEmailConfirm && (
+                      <DropdownMenuItem
+                        disabled={emailResendLoading.order_confirmation}
+                        onClick={() => handleEmailResend("order_confirmation")}
+                      >
+                        Изпрати потвърждение за поръчка
+                      </DropdownMenuItem>
+                    )}
+                    {canEmailShipping && (
+                      <DropdownMenuItem
+                        disabled={emailResendLoading.shipping}
+                        onClick={() => handleEmailResend("shipping")}
+                      >
+                        Изпрати известие за изпращане
+                      </DropdownMenuItem>
+                    )}
+                    {canEmailDelivery && (
+                      <DropdownMenuItem
+                        disabled={emailResendLoading.delivery}
+                        onClick={() => handleEmailResend("delivery")}
+                      >
+                        Изпрати потвърждение за доставка
+                      </DropdownMenuItem>
+                    )}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        })()}
       </div>
 
-      {order.payment_method === "cod" && order.status === "confirmed" && (
+      {/* Transient feedback for email resends. Success banner auto-clears
+          after ~4s via the timeout in handleEmailResend; error banner stays
+          until the next resend attempt clears it. Both render only when
+          relevant — no permanent screen real estate. */}
+      {(emailResendJustSent.order_confirmation || emailResendJustSent.shipping || emailResendJustSent.delivery) && (
+        <div className="mb-4 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-900">
+          ✓ Имейлът е изпратен повторно до клиента.
+        </div>
+      )}
+      {emailResendError && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <span>{emailResendError}</span>
+          <button
+            type="button"
+            onClick={() => setEmailResendError("")}
+            className="shrink-0 text-xs underline hover:no-underline"
+          >
+            Затвори
+          </button>
+        </div>
+      )}
+
+      {/* COD phone confirmation banner. Three states for confirmed COD orders:
+          1. Unconfirmed → amber "please call" + tel link + "Mark as confirmed" button
+          2. Confirmed → green banner with timestamp (admin can still see the record)
+          3. Shipped/delivered → banner hidden (the call is no longer actionable)
+          This turns the old policy reminder into an operational gate: pairing with
+          the soft-block warning on generate-shipment below.  */}
+      {order.payment_method === "cod" && order.status === "confirmed" && !order.cod_confirmed_at && (
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
           <p className="text-sm font-medium text-amber-900">
             Обади се на клиента за потвърждение преди изпращане
@@ -157,23 +413,200 @@ export default function AdminOrderDetailPage({
           >
             {order.phone}
           </a>
+          <div className="mt-3">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={codConfirmLoading}
+              onClick={async () => {
+                setCodConfirmLoading(true)
+                setActionError("")
+                try {
+                  await markCodConfirmed(id)
+                  const updated = await getOrder(id)
+                  setOrder(updated)
+                } catch (err) {
+                  setActionError(err instanceof Error ? err.message : "Грешка при потвърждаване")
+                } finally {
+                  setCodConfirmLoading(false)
+                }
+              }}
+            >
+              {codConfirmLoading ? "Записване..." : "Маркирай обаждането като потвърдено"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {order.payment_method === "cod" && order.status === "confirmed" && order.cod_confirmed_at && (
+        <div className="mb-6 rounded-lg border border-green-300 bg-green-50 p-4 text-sm text-green-900">
+          ✓ Обаждането е потвърдено на{" "}
+          {new Date(order.cod_confirmed_at).toLocaleDateString("bg-BG", {
+            day: "2-digit", month: "2-digit", year: "numeric",
+            hour: "2-digit", minute: "2-digit",
+          })}
+          {order.cod_confirmed_by && order.cod_confirmed_by !== "admin" && (
+            <span className="ml-1 text-green-900/70">от {order.cod_confirmed_by}</span>
+          )}
         </div>
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Customer info */}
+        {/* Customer info — read-only by default, inline edit for status=confirmed.
+            Edit produces a single UPDATE on orders; the AFTER UPDATE trigger emits
+            a contact_info_changed event with per-field {old, new} pairs. Fields
+            not editable here: email (stays out of the edit surface because of the
+            lowercase CHECK + it's also the unsubscribe key). Admin who truly needs
+            to correct an email does it via direct DB or support. */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="text-base">Клиент</CardTitle>
+            {order.status === "confirmed" && !contactEditing && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px]"
+                onClick={() => {
+                  setContactFirstName(order.first_name)
+                  setContactLastName(order.last_name)
+                  setContactPhone(order.phone)
+                  setContactEmail(order.email)
+                  setContactAddress(order.address ?? "")
+                  setContactPostalCode(order.postal_code ?? "")
+                  setContactCity(order.city)
+                  setContactNotes(order.notes ?? "")
+                  setActionError("")
+                  setContactError("")
+                  setContactEditing(true)
+                }}
+              >
+                Редактирай
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <div><span className="text-muted-foreground">Име:</span> {order.first_name} {order.last_name}</div>
-            <div><span className="text-muted-foreground">Имейл:</span> {order.email}</div>
-            <div><span className="text-muted-foreground">Телефон:</span> {order.phone}</div>
-            <div><span className="text-muted-foreground">Град:</span> {order.city}</div>
-            {order.address && <div><span className="text-muted-foreground">Адрес:</span> {order.address}</div>}
-            {order.postal_code && <div><span className="text-muted-foreground">Пощенски код:</span> {order.postal_code}</div>}
-            {order.notes && <div><span className="text-muted-foreground">Бележки:</span> {order.notes}</div>}
+            {!contactEditing && (
+              <>
+                <div><span className="text-muted-foreground">Име:</span> {order.first_name} {order.last_name}</div>
+                <div><span className="text-muted-foreground">Имейл:</span> {order.email}</div>
+                <div><span className="text-muted-foreground">Телефон:</span> {order.phone}</div>
+                <div><span className="text-muted-foreground">Град:</span> {order.city}</div>
+                {order.address && <div><span className="text-muted-foreground">Адрес:</span> {order.address}</div>}
+                {order.postal_code && <div><span className="text-muted-foreground">Пощенски код:</span> {order.postal_code}</div>}
+                {order.notes && <div><span className="text-muted-foreground">Бележки:</span> {order.notes}</div>}
+              </>
+            )}
+            {contactEditing && (
+              <div className="space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Име</label>
+                    <Input value={contactFirstName} onChange={(e) => setContactFirstName(e.target.value)} className="h-8" maxLength={200} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Фамилия</label>
+                    <Input value={contactLastName} onChange={(e) => setContactLastName(e.target.value)} className="h-8" maxLength={200} />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Имейл</label>
+                  <Input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    className="h-8"
+                    maxLength={500}
+                  />
+                  {contactEmail.trim().toLowerCase() !== order.email && (
+                    <p className="mt-1 text-[11px] text-amber-700">
+                      Промяната на имейла прекъсва връзката с предишния отписващ адрес. Новият имейл наследява статуса на абонамент за маркетинг от своята основна стойност в email_unsubscribes.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                  <Input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className="h-8" maxLength={40} />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr,auto]">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                    <Input value={contactCity} onChange={(e) => setContactCity(e.target.value)} className="h-8" maxLength={200} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Пощенски код</label>
+                    <Input value={contactPostalCode} onChange={(e) => setContactPostalCode(e.target.value)} className="h-8 w-28" maxLength={20} />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                  <Input value={contactAddress} onChange={(e) => setContactAddress(e.target.value)} className="h-8" maxLength={500} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Бележки от клиента</label>
+                  <textarea
+                    value={contactNotes}
+                    onChange={(e) => setContactNotes(e.target.value)}
+                    rows={2}
+                    maxLength={2000}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+                {contactError && (
+                  <p className="text-sm text-red-600">{contactError}</p>
+                )}
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    disabled={contactSaving}
+                    onClick={async () => {
+                      setContactSaving(true)
+                      setContactError("")
+                      // Only send fields the admin actually changed. Pre-filled
+                      // values that match the order's current state pass
+                      // through as undefined and skip server-side validation,
+                      // so legacy data with empty city / etc. doesn't trip a
+                      // non-empty rule on a no-op edit.
+                      const payload: Parameters<typeof updateOrderContact>[1] = {}
+                      if (contactFirstName !== order.first_name) payload.firstName = contactFirstName
+                      if (contactLastName !== order.last_name) payload.lastName = contactLastName
+                      if (contactPhone !== order.phone) payload.phone = contactPhone
+                      if (contactEmail.trim().toLowerCase() !== order.email) payload.email = contactEmail
+                      if (contactAddress !== (order.address ?? "")) payload.address = contactAddress
+                      if (contactPostalCode !== (order.postal_code ?? "")) payload.postalCode = contactPostalCode
+                      if (contactCity !== order.city) payload.city = contactCity
+                      if (contactNotes !== (order.notes ?? "")) payload.notes = contactNotes
+                      if (Object.keys(payload).length === 0) {
+                        setContactError("Няма промени за записване")
+                        setContactSaving(false)
+                        return
+                      }
+                      try {
+                        await updateOrderContact(id, payload)
+                        const refreshed = await getOrder(id)
+                        setOrder(refreshed)
+                        setContactEditing(false)
+                      } catch (err) {
+                        setContactError(err instanceof Error ? err.message : "Грешка при записване")
+                      } finally {
+                        setContactSaving(false)
+                      }
+                    }}
+                  >
+                    {contactSaving ? "Записване..." : "Запази"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={contactSaving}
+                    onClick={() => {
+                      setContactEditing(false)
+                      setContactError("")
+                    }}
+                  >
+                    Отказ
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -198,19 +631,102 @@ export default function AdminOrderDetailPage({
           </CardContent>
         </Card>
 
-        {/* Items */}
+        {/* Items — per-line quantity edit for COD + confirmed + no tracking.
+            Atomic via edit_order_quantity RPC: reserves/restores inventory,
+            updates order_items, recomputes total_amount in one transaction. */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Продукти</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {order.items.map((item, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <span>{item.productName} x {item.quantity}</span>
-                  <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
-                </div>
-              ))}
+              {(() => {
+                const canEditQty =
+                  order.payment_method === "cod" &&
+                  order.status === "confirmed" &&
+                  !order.tracking_number
+                return order.items.map((item, i) => {
+                  const editing = qtyEditing[item.sku] ?? null
+                  const saving = qtySaving[item.sku] ?? false
+                  return (
+                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                      <div className="min-w-0 flex-1 truncate">
+                        {item.productName}
+                        {!canEditQty || editing === null ? (
+                          <span> x {item.quantity}</span>
+                        ) : null}
+                      </div>
+                      {canEditQty && editing === null && (
+                        <>
+                          <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: item.quantity })}
+                          >
+                            Редактирай
+                          </Button>
+                        </>
+                      )}
+                      {canEditQty && editing !== null && (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            step="1"
+                            value={editing}
+                            onChange={(e) => {
+                              const n = parseInt(e.target.value, 10)
+                              setQtyEditing({
+                                ...qtyEditing,
+                                [item.sku]: Number.isInteger(n) && n >= 1 ? n : editing,
+                              })
+                            }}
+                            className="h-7 w-16"
+                            disabled={saving}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            disabled={saving || editing === item.quantity}
+                            onClick={async () => {
+                              if (editing === null) return
+                              setQtySaving({ ...qtySaving, [item.sku]: true })
+                              setActionError("")
+                              try {
+                                await updateOrderQuantity(id, item.sku, editing)
+                                const refreshed = await getOrder(id)
+                                setOrder(refreshed)
+                                setQtyEditing({ ...qtyEditing, [item.sku]: null })
+                              } catch (err) {
+                                setActionError(err instanceof Error ? err.message : "Грешка при редакция")
+                              } finally {
+                                setQtySaving({ ...qtySaving, [item.sku]: false })
+                              }
+                            }}
+                          >
+                            {saving ? "..." : "Запиши"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            disabled={saving}
+                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: null })}
+                          >
+                            Отказ
+                          </Button>
+                        </div>
+                      )}
+                      {!canEditQty && (
+                        <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                      )}
+                    </div>
+                  )
+                })
+              })()}
               {(() => {
                 const subtotal = order.items.reduce((s, item) => s + item.priceInCents * item.quantity, 0)
                 return (
@@ -297,9 +813,11 @@ export default function AdminOrderDetailPage({
             {order.invoice_date && (
               <div><span className="text-muted-foreground">Дата:</span> {new Date(order.invoice_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
             )}
+            {order.invoice_type && (
+              <div><span className="text-muted-foreground">Тип:</span> {order.invoice_type === "company" ? "Юридическо лице" : "Физическо лице"}</div>
+            )}
             {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
             {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
-            {order.invoice_egn && <div><span className="text-muted-foreground">ЕГН:</span> {order.invoice_egn}</div>}
             {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
             {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
             {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
@@ -411,34 +929,38 @@ export default function AdminOrderDetailPage({
         </Card>
       )}
 
-      {/* Refund status card */}
-      {order.refunded_at && (
+      {/* Refunds list */}
+      {order.refunds.length > 0 && (
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle className="text-base">Възстановяване</CardTitle>
+            <CardTitle className="text-base">Възстановявания</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-blue-900">
-              Възстановено на {new Date(order.refunded_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-            </div>
-            {order.refund_amount != null && (
-              <div>
-                <span className="text-muted-foreground">Сума:</span>{" "}
-                <span className="font-medium">{formatPrice(order.refund_amount)}</span>
-                {order.refund_amount !== order.total_amount && (
-                  <span className="ml-2 text-xs text-muted-foreground">(частично)</span>
-                )}
-              </div>
-            )}
-            {order.refund_method && (
-              <div><span className="text-muted-foreground">Метод:</span> {order.refund_method === "stripe" ? "Stripe" : "Банков превод"}</div>
-            )}
-            {order.refund_reason && (
-              <div><span className="text-muted-foreground">Причина:</span> {order.refund_reason}</div>
-            )}
-            {order.credit_note_ref && (
-              <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{order.credit_note_ref}</span></div>
-            )}
+          <CardContent className="space-y-3 text-sm">
+            {(() => {
+              const totalRefunded = order.refunds.reduce((sum, r) => sum + r.amount_cents, 0)
+              const fullyRefunded = totalRefunded >= order.total_amount
+              return (
+                <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-blue-900">
+                  {fullyRefunded ? "Изцяло възстановена" : "Частично възстановена"}:{" "}
+                  <span className="font-medium">{formatPrice(totalRefunded)}</span>
+                  {" / "}
+                  <span>{formatPrice(order.total_amount)}</span>
+                </div>
+              )
+            })()}
+            {order.refunds.map((r) => (
+              <RefundRow
+                key={r.id}
+                refund={r}
+                orderId={order.id}
+                orderItems={order.items}
+                inventoryReturns={order.inventoryReturns.filter(ret => ret.reference_id === r.id)}
+                onSaved={async () => {
+                  const refreshed = await getOrder(id)
+                  setOrder(refreshed)
+                }}
+              />
+            ))}
           </CardContent>
         </Card>
       )}
@@ -461,7 +983,11 @@ export default function AdminOrderDetailPage({
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
-                { label: "Възстановяване", date: order.refunded_at, detail: order.refund_amount != null ? `${formatPrice(order.refund_amount)} (${order.refund_method === "stripe" ? "Stripe" : "Банков превод"})` : undefined },
+                ...order.refunds.map((r) => ({
+                  label: "Възстановяване",
+                  date: r.refunded_at,
+                  detail: `${formatPrice(r.amount_cents)} (${r.method === "stripe" ? "Stripe" : "Банков превод"})`,
+                })),
                 ...complaints.filter(c => c.reported_at).map(c => ({ label: "Рекламация", date: c.reported_at, detail: `#${c.complaint_ref}` })),
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
                 ...order.admin_notes.map((note) => ({
@@ -576,142 +1102,255 @@ export default function AdminOrderDetailPage({
               {!order.tracking_number && (order.logistics_partner?.startsWith("speedy") || order.logistics_partner?.startsWith("econt")) && (
                 <>
                   {!shipmentOpen ? (
-                    <Button
-                      variant="outline"
-                      onClick={async () => {
-                        setActionError("")
-                        try {
-                          const { form, display } = await getShipmentDefaults(id)
-                          setShipmentForm(form)
-                          setShipmentDisplay(display)
-                          setSelectedOfficeNumericId(
-                            display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
-                          )
-                          setOfficePickerError(false)
-                          setShipmentOpen(true)
-                        } catch (err) {
-                          setActionError(err instanceof Error ? err.message : "Грешка")
-                        }
-                      }}
-                    >
-                      Генерирай товарителница ({order.logistics_partner?.startsWith("speedy") ? "Speedy" : "Еконт"})
-                    </Button>
+                    <div className="space-y-2">
+                      {/* Soft-block warning: COD orders should have the phone
+                          confirmation recorded before shipping. We don't block
+                          the button — admin can proceed — but the warning is
+                          visible and the action requires a second click, which
+                          is the "soft block" (prompt-based) per the 2026-04-24
+                          ops plan. Promote to hard block only if abuse appears. */}
+                      {order.payment_method === "cod" && !order.cod_confirmed_at && (
+                        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          ⚠ Обаждането за потвърждение на COD поръчката не е маркирано. Препоръчително е да потвърдите обаждането преди да генерирате товарителница (намалява отказите на доставка).
+                        </div>
+                      )}
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          // Soft block: if COD is unconfirmed, require explicit
+                          // acknowledgement via a native confirm() dialog. The
+                          // wording makes the deliberate-override character
+                          // obvious — admin has to actively say "да, въпреки това".
+                          if (order.payment_method === "cod" && !order.cod_confirmed_at) {
+                            const proceed = window.confirm(
+                              "Обаждането за потвърждение не е маркирано. Сигурни ли сте, че искате да генерирате товарителницата без потвърдено обаждане?",
+                            )
+                            if (!proceed) return
+                          }
+                          setActionError("")
+                          try {
+                            const { form, display } = await getShipmentDefaults(id)
+                            setShipmentForm(form)
+                            setShipmentDisplay(display)
+                            setSelectedOfficeNumericId(
+                              display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
+                            )
+                            setOfficePickerError(false)
+                            setShipmentOpen(true)
+                          } catch (err) {
+                            setActionError(err instanceof Error ? err.message : "Грешка")
+                          }
+                        }}
+                      >
+                        Генерирай товарителница ({order.logistics_partner?.startsWith("speedy") ? "Speedy" : "Еконт"})
+                      </Button>
+                    </div>
                   ) : shipmentForm && (
                     <div className="rounded-lg border border-border p-4 space-y-4">
                       <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold">
                           Товарителница — {shipmentDisplay?.courier === "speedy" ? "Speedy" : "Еконт"} ({shipmentDisplay?.deliveryType === "office" ? "до офис" : "до адрес"})
                         </h3>
-                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false) }}>Затвори</button>
+                        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false); setSenderEditing(false); setRecipientEditing(false) }}>Затвори</button>
                       </div>
 
-                      {/* Sender */}
+                      {/* Sender — collapsed summary by default; "Промени"
+                          expands to editable fields. Pre-filled from
+                          SELLER_* env vars. For Econt sender, edit mode adds
+                          an office picker so admin can pick a different
+                          drop-off office without typing the code by hand. */}
                       <div className="space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Подател</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
-                            <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
-                            <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
-                          </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Подател</p>
+                          {!senderEditing && (
+                            <button
+                              type="button"
+                              onClick={() => setSenderEditing(true)}
+                              className="text-xs text-blue-600 hover:underline"
+                            >
+                              Промени
+                            </button>
+                          )}
                         </div>
-                        {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
-                            <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                        {!senderEditing ? (
+                          <div className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
+                            <p className="font-medium">{shipmentForm.senderName || "—"}</p>
+                            <p className="text-xs text-muted-foreground">{shipmentForm.senderPhone || "—"}</p>
+                            {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Офис код (Еконт): <span className="font-mono">{shipmentForm.senderOfficeCode}</span>
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {[shipmentForm.senderAddress, shipmentForm.senderCity, shipmentForm.senderPostalCode].filter(Boolean).join(", ") || "—"}
+                              </p>
+                            )}
                           </div>
                         ) : (
-                          <div className="grid gap-2 sm:grid-cols-3">
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Град</label>
-                              <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                          <>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
+                                <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                                <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
+                              </div>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
-                              <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                            {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
+                              <>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
+                                  <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Или избери офис от списъка</label>
+                                  <EcontOfficePicker
+                                    selectedOfficeId={null}
+                                    onSelect={(office: EcontOfficeOption) => {
+                                      setShipmentForm({ ...shipmentForm, senderOfficeCode: office.code })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                </div>
+                              </>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                                  <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                                  <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                                  <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="pt-1">
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSenderEditing(false)}>Готово</Button>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
-                              <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
-                            </div>
-                          </div>
+                          </>
                         )}
                       </div>
 
-                      {/* Receiver */}
+                      {/* Receiver — collapsed summary by default. Customer
+                          chose office (or address) at checkout, so the
+                          pre-filled value is almost always correct. "Промени
+                          офис" expands the picker for the rare case admin
+                          needs to switch (customer called to change
+                          delivery, picked wrong office, etc.). */}
                       <div className="space-y-2 border-t pt-3">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Получател</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Име</label>
-                            <Input value={shipmentForm.recipientName} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientName: e.target.value })} />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
-                            <Input value={shipmentForm.recipientPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPhone: e.target.value })} />
-                          </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Получател</p>
+                          {!recipientEditing && (
+                            <button
+                              type="button"
+                              onClick={() => setRecipientEditing(true)}
+                              className="text-xs text-blue-600 hover:underline"
+                            >
+                              {shipmentDisplay?.deliveryType === "office" ? "Промени офис" : "Промени"}
+                            </button>
+                          )}
                         </div>
-                        {shipmentDisplay?.deliveryType === "office" ? (
-                          <div className="space-y-3">
-                            {shipmentDisplay?.courier === "speedy" ? (
-                              <SpeedyOfficePicker
-                                selectedOfficeId={selectedOfficeNumericId}
-                                onSelect={(office: SpeedyOfficeOption) => {
-                                  setSelectedOfficeNumericId(office.id)
-                                  setShipmentForm({ ...shipmentForm, recipientOfficeId: String(office.id), recipientOfficeName: office.name })
-                                }}
-                                onError={setOfficePickerError}
-                              />
+                        {!recipientEditing ? (
+                          <div className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
+                            <p className="font-medium">{shipmentForm.recipientName || "—"}</p>
+                            <p className="text-xs text-muted-foreground">{shipmentForm.recipientPhone || "—"}</p>
+                            {shipmentDisplay?.deliveryType === "office" ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Офис: <span className="font-medium text-foreground">{shipmentForm.recipientOfficeName || "—"}</span>
+                                {(shipmentForm.recipientOfficeId || shipmentForm.recipientOfficeCode) && (
+                                  <span className="ml-1 font-mono">
+                                    ({shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode})
+                                  </span>
+                                )}
+                              </p>
                             ) : (
-                              <EcontOfficePicker
-                                selectedOfficeId={selectedOfficeNumericId}
-                                onSelect={(office: EcontOfficeOption) => {
-                                  setSelectedOfficeNumericId(office.id)
-                                  setShipmentForm({ ...shipmentForm, recipientOfficeCode: office.code, recipientOfficeName: office.name })
-                                }}
-                                onError={setOfficePickerError}
-                              />
-                            )}
-                            {officePickerError && (
-                              <p className="text-sm text-red-600">
-                                Офисите не могат да бъдат заредени. Използвайте ръчно въвеждане на товарителница.
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {[shipmentForm.recipientAddress, shipmentForm.recipientCity, shipmentForm.recipientPostalCode].filter(Boolean).join(", ") || "—"}
                               </p>
                             )}
-                            <div className="grid gap-2 sm:grid-cols-3">
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">
-                                  Офис {shipmentDisplay?.courier === "speedy" ? "ID" : "код"}
-                                </label>
-                                <Input
-                                  value={shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
-                                  disabled
-                                  className="bg-secondary"
-                                />
-                              </div>
-                              <div className="sm:col-span-2">
-                                <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
-                                <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
-                              </div>
-                            </div>
                           </div>
                         ) : (
-                          <div className="grid gap-2 sm:grid-cols-3">
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Град</label>
-                              <Input value={shipmentForm.recipientCity} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientCity: e.target.value })} />
+                          <>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Име</label>
+                                <Input value={shipmentForm.recipientName} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientName: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                                <Input value={shipmentForm.recipientPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPhone: e.target.value })} />
+                              </div>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
-                              <Input value={shipmentForm.recipientAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientAddress: e.target.value })} />
+                            {shipmentDisplay?.deliveryType === "office" ? (
+                              <div className="space-y-3">
+                                {shipmentDisplay?.courier === "speedy" ? (
+                                  <SpeedyOfficePicker
+                                    selectedOfficeId={selectedOfficeNumericId}
+                                    onSelect={(office: SpeedyOfficeOption) => {
+                                      setSelectedOfficeNumericId(office.id)
+                                      setShipmentForm({ ...shipmentForm, recipientOfficeId: String(office.id), recipientOfficeName: office.name })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                ) : (
+                                  <EcontOfficePicker
+                                    selectedOfficeId={selectedOfficeNumericId}
+                                    onSelect={(office: EcontOfficeOption) => {
+                                      setSelectedOfficeNumericId(office.id)
+                                      setShipmentForm({ ...shipmentForm, recipientOfficeCode: office.code, recipientOfficeName: office.name })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                )}
+                                {officePickerError && (
+                                  <p className="text-sm text-red-600">
+                                    Офисите не могат да бъдат заредени. Използвайте ръчно въвеждане на товарителница.
+                                  </p>
+                                )}
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  <div>
+                                    <label className="mb-1 block text-xs text-muted-foreground">
+                                      Офис {shipmentDisplay?.courier === "speedy" ? "ID" : "код"}
+                                    </label>
+                                    <Input
+                                      value={shipmentDisplay?.courier === "speedy" ? shipmentForm.recipientOfficeId : shipmentForm.recipientOfficeCode}
+                                      disabled
+                                      className="bg-secondary"
+                                    />
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+                                    <Input value={shipmentForm.recipientOfficeName} disabled className="bg-secondary" />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                                  <Input value={shipmentForm.recipientCity} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientCity: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                                  <Input value={shipmentForm.recipientAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientAddress: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                                  <Input value={shipmentForm.recipientPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPostalCode: e.target.value })} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="pt-1">
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setRecipientEditing(false)}>Готово</Button>
                             </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
-                              <Input value={shipmentForm.recipientPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, recipientPostalCode: e.target.value })} />
-                            </div>
-                          </div>
+                          </>
                         )}
                       </div>
 
@@ -748,6 +1387,8 @@ export default function AdminOrderDetailPage({
                               setShipmentOpen(false)
                               setSelectedOfficeNumericId(null)
                               setOfficePickerError(false)
+                              setSenderEditing(false)
+                              setRecipientEditing(false)
                               const updated = await getOrder(id)
                               setOrder(updated)
                               setShipmentSuccess(tn)
@@ -760,7 +1401,7 @@ export default function AdminOrderDetailPage({
                         >
                           {shipmentLoading ? "Генериране..." : "Изпрати към куриера"}
                         </Button>
-                        <Button variant="ghost" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false) }}>Отказ</Button>
+                        <Button variant="ghost" onClick={() => { setShipmentOpen(false); setSelectedOfficeNumericId(null); setOfficePickerError(false); setSenderEditing(false); setRecipientEditing(false) }}>Отказ</Button>
                       </div>
                     </div>
                   )}
@@ -850,16 +1491,17 @@ export default function AdminOrderDetailPage({
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане</label>
+                    <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане *</label>
                     <Input
                       type="date"
+                      required
                       value={settlementPaidAt}
                       min={order.delivered_at ? new Date(order.delivered_at).toISOString().slice(0, 10) : undefined}
                       max={new Date().toISOString().slice(0, 10)}
                       onChange={(e) => { setSettlementPaidAt(e.target.value); setSettlementSaved(false) }}
                       className="h-8"
                     />
-                    <p className="mt-1 text-[10px] text-muted-foreground">Дата на банковия превод от куриера. Ако е празно, ще се запише днешна дата.</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">Действителната дата на банковия превод от куриера — не днешна дата по подразбиране.</p>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">Получена сума (лв)</label>
@@ -897,7 +1539,7 @@ export default function AdminOrderDetailPage({
                 <div className="flex items-center gap-3">
                   <Button
                     size="sm"
-                    disabled={settlementLoading}
+                    disabled={settlementLoading || !settlementPaidAt}
                     onClick={async () => {
                       setSettlementLoading(true)
                       setActionError("")
@@ -908,7 +1550,7 @@ export default function AdminOrderDetailPage({
                           courierPppRef: settlementPppRef.trim() || undefined,
                           settlementRef: settlementRef.trim() || undefined,
                           settlementAmount: amountCents,
-                          paidAt: settlementPaidAt || undefined,
+                          paidAt: settlementPaidAt,
                         })
                         const updated = await getOrder(id)
                         setOrder(updated)
@@ -941,99 +1583,421 @@ export default function AdminOrderDetailPage({
             </div>
           )}
 
-          {/* Refund form — visible when paid but not yet refunded */}
-          {order.paid_at && !order.refunded_at && (
-            <div className="space-y-3 border-t pt-4 mt-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Възстановяване на сума</p>
-              {order.delivered_at && (() => {
-                const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
-                const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-                return (
-                  <div className={`rounded-md px-3 py-2 text-sm ${
-                    daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
-                    : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
-                    : "border border-border bg-secondary text-foreground"
-                  }`}>
-                    {daysLeft <= 0
-                      ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
-                      : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
-                    }
+          {/* Two-step refund flow lives in a Dialog (triggered from the "Още
+              действия" dropdown in the page header). The form is rare —
+              keeping it always-rendered cluttered the main panel. Same Step 1
+              records the refund row; Step 2 separately records any physical
+              stock outcome (per-SKU recordStockMovement calls) OR captures a
+              "no stock movement" reason via addAdminNote. Each server action
+              stays single-responsibility; the UI does the coordination. */}
+          <Dialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Запиши възстановяване</DialogTitle>
+              </DialogHeader>
+              {(() => {
+            const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+            const remainingCents = order.total_amount - alreadyRefunded
+            if (!order.paid_at) return null
+
+            const resetFlow = () => {
+              setRefundAmount("")
+              setRefundReason("")
+              setRefundCreditNote("")
+              setRefundStripeId("")
+              setStockQty({})
+              setStockDisposition({})
+              setStockKeys({})
+              setStockProgress(null)
+              setSkipReason("")
+              setSkipOtherNote("")
+              setSavedRefundId(null)
+              setSavedRefundAmountCents(0)
+              setOutcomeLinkedContext(null)
+              setSavedOutcomeNote("")
+              setSavedOutcomeRef("")
+              setRefundStep("form")
+              // New UUIDs only on full flow completion — retries during
+              // Step 2 keep the same key so recordRefund idempotency holds.
+              setRefundClientKey(crypto.randomUUID())
+            }
+
+            const outcomeLabels: Record<"delivery_refused" | "package_lost" | "returned" | "recalled", string> = {
+              delivery_refused: "Отказана доставка",
+              package_lost: "Изгубена пратка",
+              returned: "Върнат продукт",
+              recalled: "Изтеглен продукт",
+            }
+
+            return (
+              <div id="refund-card" className="space-y-3 border-t pt-4 mt-4 rounded-md transition-shadow">
+                {/* "Linked to outcome" banner — surfaces provenance when the
+                    form was opened from the outcome callout and the values
+                    are prefilled. Visible on Step 1 only (Step 2/complete
+                    have their own status indicators). Dismissible — some
+                    admins may want to strip the prefill and start fresh. */}
+                {refundStep === "form" && outcomeLinkedContext && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    <div className="flex items-start justify-between gap-3">
+                      <span>
+                        Възстановяване, свързано с: <strong>{outcomeLabels[outcomeLinkedContext.outcomeType]}</strong>
+                        {outcomeLinkedContext.ref && <span className="ml-1">(реф. <span className="font-mono">{outcomeLinkedContext.ref}</span>)</span>}
+                        . Сумата и причината са попълнени от събитието — редактирайте ги свободно.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOutcomeLinkedContext(null)
+                          setRefundAmount("")
+                          setRefundReason("")
+                        }}
+                        className="shrink-0 text-[11px] underline hover:no-underline"
+                      >
+                        Изчисти
+                      </button>
+                    </div>
                   </div>
-                )
-              })()}
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
-                  <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => { setRefundDate(e.target.value); setRefundSaved(false) }} className="h-8" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
-                  <Input type="number" step="0.01" min="0.01" placeholder={(order.total_amount / 100).toFixed(2)} value={refundAmount} onChange={(e) => { setRefundAmount(e.target.value); setRefundSaved(false) }} className="h-8" />
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
-                  <select value={refundMethod} onChange={(e) => { setRefundMethod(e.target.value as "stripe" | "bank_transfer"); setRefundSaved(false) }} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
-                    <option value="stripe">Stripe</option>
-                    <option value="bank_transfer">Банков превод</option>
-                  </select>
-                </div>
-                {order.needs_invoice && order.invoice_number && (
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-                    <Input value={refundCreditNote} onChange={(e) => { setRefundCreditNote(e.target.value); setRefundSaved(false) }} placeholder="Задължително" className="h-8" maxLength={100} />
+                )}
+                {/* ─── Step 1: refund form ─────────────────────────────── */}
+                {refundStep === "form" && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Стъпка 1 — запиши възстановяване</p>
+                      <p className="text-xs text-muted-foreground">
+                        Остава за възстановяване: <span className="font-medium text-foreground">{formatPrice(remainingCents)}</span>
+                      </p>
+                    </div>
+                    {remainingCents <= 0 && (
+                      <p className="text-xs text-muted-foreground">Цялата сума по поръчката е възстановена.</p>
+                    )}
+                    {remainingCents > 0 && (
+                      <>
+                        {order.delivered_at && (() => {
+                          const deadline = new Date(new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000)
+                          const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                          return (
+                            <div className={`rounded-md px-3 py-2 text-sm ${
+                              daysLeft <= 0 ? "border border-muted bg-secondary text-muted-foreground"
+                              : daysLeft <= 3 ? "border border-amber-300 bg-amber-50 text-amber-900"
+                              : "border border-border bg-secondary text-foreground"
+                            }`}>
+                              {daysLeft <= 0
+                                ? `14-дневният срок за отказ е изтекъл (${deadline.toLocaleDateString("bg-BG")})`
+                                : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} от правото на отказ (до ${deadline.toLocaleDateString("bg-BG")})`
+                              }
+                            </div>
+                          )
+                        })()}
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
+                            <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setRefundDate(e.target.value)} className="h-8" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                            <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} className="h-8" />
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Метод</label>
+                            <select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as "stripe" | "bank_transfer")} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                              <option value="stripe">Stripe</option>
+                              <option value="bank_transfer">Банков превод</option>
+                            </select>
+                          </div>
+                          {order.needs_invoice && order.invoice_number && (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+                              <Input value={refundCreditNote} onChange={(e) => setRefundCreditNote(e.target.value)} placeholder="Задължително" className="h-8" maxLength={100} />
+                            </div>
+                          )}
+                        </div>
+                        {refundMethod === "stripe" && (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID (от Stripe Dashboard)</label>
+                            <Input value={refundStripeId} onChange={(e) => setRefundStripeId(e.target.value)} placeholder="re_..." className="h-8 font-mono" maxLength={100} />
+                          </div>
+                        )}
+                        <div>
+                          <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
+                          <Input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
+                            setRefundLoading(true)
+                            setActionError("")
+                            try {
+                              const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
+                              const amountCents = Math.round(amountFloat * 100)
+                              const result = await recordRefund(id, {
+                                refundAmount: amountCents,
+                                refundReason: refundReason.trim(),
+                                refundMethod,
+                                refundedAt: refundDate || undefined,
+                                creditNoteRef: refundCreditNote.trim() || undefined,
+                                stripeRefundId: refundMethod === "stripe" ? refundStripeId.trim() : undefined,
+                                clientIdempotencyKey: refundClientKey,
+                              })
+                              const updated = await getOrder(id)
+                              setOrder(updated)
+                              setSavedRefundId(result.refundId)
+                              setSavedRefundAmountCents(amountCents)
+                              setRefundStep("stock")
+                            } catch (err) {
+                              setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
+                            } finally {
+                              setRefundLoading(false)
+                            }
+                          }}>
+                            {refundLoading ? "Записване..." : "Запиши възстановяване"}
+                          </Button>
+                        </div>
+                        {order.payment_method === "card" && (
+                          <p className="text-xs text-muted-foreground">
+                            Издайте възстановяване в{" "}
+                            <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
+                            {", копирайте refund ID (re_...) и го попълнете тук. Ако webhook вече е записал възстановяването, редактирайте го от списъка по-горе."}
+                          </p>
+                        )}
+                        {order.payment_method === "cod" && (
+                          <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* ─── Step 2: stock outcome ────────────────────────────── */}
+                {refundStep === "stock" && savedRefundId && (
+                  <>
+                    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                      ✓ Възстановяване {formatPrice(savedRefundAmountCents)} записано. <span className="text-[11px] opacity-75">(#{savedRefundId.slice(0, 8)})</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Стъпка 2 — запиши стоково движение</p>
+                    </div>
+
+                    {/* Path A: per-SKU physical return */}
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Физически върнати артикули</p>
+                      <p className="mb-2 text-[11px] text-muted-foreground">Отбележете количеството и състоянието на върнатите артикули. Нулеви стойности не създават движение.</p>
+                      <div className="space-y-2">
+                        {order.items.map((item) => {
+                          const qtyStr = stockQty[item.sku] ?? ""
+                          const disposition = stockDisposition[item.sku] ?? "sellable"
+                          return (
+                            <div key={item.sku} className="flex items-center gap-2 text-sm">
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate">{item.productName}</div>
+                                <div className="text-[11px] text-muted-foreground">Поръчани: {item.quantity} · <span className="font-mono">{item.sku}</span></div>
+                              </div>
+                              <Input
+                                type="number"
+                                min="0"
+                                max={item.quantity}
+                                step="1"
+                                placeholder="0"
+                                value={qtyStr}
+                                onChange={(e) => setStockQty({ ...stockQty, [item.sku]: e.target.value })}
+                                className="h-8 w-20"
+                              />
+                              <select
+                                value={disposition}
+                                onChange={(e) => setStockDisposition({ ...stockDisposition, [item.sku]: e.target.value as "sellable" | "damaged" })}
+                                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                              >
+                                <option value="sellable">Годен за продажба</option>
+                                <option value="damaged">Негоден (брак)</option>
+                              </select>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {stockProgress && (
+                        <div className="mt-3 rounded-md bg-muted/30 px-3 py-2 text-xs">
+                          Запис: {stockProgress.done} / {stockProgress.total}
+                          {stockProgress.failed.length > 0 && (
+                            <div className="mt-1 text-red-700">
+                              Грешки ({stockProgress.failed.length}): {stockProgress.failed.map((f) => `${f.sku}/${f.disposition}`).join(", ")}.
+                              Натиснете „Запиши стоково движение&rdquo; отново, за да опитате останалите (вече записаните няма да се дублират).
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          disabled={stockLoading || skipLoading}
+                          onClick={async () => {
+                            const movements = order.items
+                              .map((item) => {
+                                const qtyStr = stockQty[item.sku] ?? ""
+                                const qty = qtyStr ? parseInt(qtyStr, 10) : 0
+                                if (!qty || qty < 1) return null
+                                return {
+                                  sku: item.sku,
+                                  quantity: qty,
+                                  disposition: (stockDisposition[item.sku] ?? "sellable") as "sellable" | "damaged",
+                                }
+                              })
+                              .filter((m): m is NonNullable<typeof m> => m !== null)
+                            if (movements.length === 0) {
+                              setActionError('Въведете поне едно количество, или изберете „Няма физическо връщане" по-долу')
+                              return
+                            }
+                            setStockLoading(true)
+                            setActionError("")
+                            // Generate UUIDs per (sku, disposition) if not already
+                            // present. Preserved across retries so failures in
+                            // the middle of the loop can be safely retried.
+                            const keysDraft: Record<string, string> = { ...stockKeys }
+                            for (const m of movements) {
+                              const k = `${m.sku}::${m.disposition}`
+                              if (!keysDraft[k]) keysDraft[k] = crypto.randomUUID()
+                            }
+                            setStockKeys(keysDraft)
+
+                            const failed: Array<{ sku: string; disposition: string; message: string }> = []
+                            let done = 0
+                            setStockProgress({ done: 0, total: movements.length, failed: [] })
+                            for (const m of movements) {
+                              const k = `${m.sku}::${m.disposition}`
+                              try {
+                                await recordStockMovement({
+                                  sku: m.sku,
+                                  type: m.disposition === "sellable" ? "return_in" : "damaged",
+                                  quantity: m.quantity,
+                                  referenceType: "return",
+                                  referenceId: savedRefundId,
+                                  notes: m.disposition === "damaged"
+                                    ? `Повреден при връщане (refund ${savedRefundId.slice(0, 8)})`
+                                    : undefined,
+                                  orderId: id,
+                                  idempotencyKey: keysDraft[k],
+                                })
+                                done += 1
+                                setStockProgress({ done, total: movements.length, failed: [...failed] })
+                              } catch (err) {
+                                failed.push({
+                                  sku: m.sku,
+                                  disposition: m.disposition,
+                                  message: err instanceof Error ? err.message : "Грешка",
+                                })
+                                setStockProgress({ done, total: movements.length, failed: [...failed] })
+                              }
+                            }
+                            setStockLoading(false)
+                            if (failed.length === 0) {
+                              const refreshed = await getOrder(id)
+                              setOrder(refreshed)
+                              setRefundStep("complete")
+                            } else {
+                              setActionError(failed[0].message)
+                            }
+                          }}
+                        >
+                          {stockLoading ? "Записване..." : "Запиши стоково движение"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Path B: skip with reason */}
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Или — няма физическо връщане</p>
+                      <div className="space-y-1 text-sm">
+                        {([
+                          ["no_return", "Goodwill възстановяване — не се очаква връщане"],
+                          ["package_lost", "Изгубена пратка"],
+                          ["customer_keeps", "Клиентът задържа стоката"],
+                          ["other", "Друго"],
+                        ] as const).map(([val, label]) => (
+                          <label key={val} className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="skipReason"
+                              value={val}
+                              checked={skipReason === val}
+                              onChange={(e) => setSkipReason(e.target.value as SkipReason)}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                        {skipReason === "other" && (
+                          <Input
+                            value={skipOtherNote}
+                            onChange={(e) => setSkipOtherNote(e.target.value)}
+                            placeholder="Уточнете…"
+                            className="h-8 mt-2"
+                            maxLength={500}
+                          />
+                        )}
+                      </div>
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={skipLoading || stockLoading || !skipReason || (skipReason === "other" && !skipOtherNote.trim())}
+                          onClick={async () => {
+                            setSkipLoading(true)
+                            setActionError("")
+                            const reasonLabel: Record<Exclude<SkipReason, "">, string> = {
+                              no_return: "Goodwill — не се очаква връщане",
+                              package_lost: "Изгубена пратка",
+                              customer_keeps: "Клиентът задържа стоката",
+                              other: `Друго: ${skipOtherNote.trim()}`,
+                            }
+                            const label = skipReason ? reasonLabel[skipReason] : ""
+                            try {
+                              await addAdminNote(
+                                id,
+                                `[Възстановяване #${savedRefundId.slice(0, 8)}] Стоково движение пропуснато: ${label}`.slice(0, 2000),
+                              )
+                              const refreshed = await getOrder(id)
+                              setOrder(refreshed)
+                              setRefundStep("complete")
+                            } catch (err) {
+                              setActionError(err instanceof Error ? err.message : "Грешка при записване")
+                            } finally {
+                              setSkipLoading(false)
+                            }
+                          }}
+                        >
+                          {skipLoading ? "Записване..." : "Потвърди пропускане"}
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* ─── Step 3: complete ─────────────────────────────────── */}
+                {refundStep === "complete" && (
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+                    <p className="font-medium text-green-900">✓ Възстановяване и стоково движение приключени.</p>
+                    <div className="mt-2">
+                      <Button size="sm" variant="outline" onClick={resetFlow}>
+                        Запиши ново възстановяване
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
-                <Input value={refundReason} onChange={(e) => { setRefundReason(e.target.value); setRefundSaved(false) }} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
-              </div>
-              <div className="flex items-center gap-3">
-                <Button size="sm" disabled={refundLoading || !refundReason.trim()} onClick={async () => {
-                  setRefundLoading(true)
-                  setActionError("")
-                  try {
-                    const amountFloat = refundAmount ? parseFloat(refundAmount) : order.total_amount / 100
-                    const amountCents = Math.round(amountFloat * 100)
-                    await recordRefund(id, {
-                      refundAmount: amountCents,
-                      refundReason: refundReason.trim(),
-                      refundMethod,
-                      refundedAt: refundDate || undefined,
-                      creditNoteRef: refundCreditNote.trim() || undefined,
-                    })
-                    const updated = await getOrder(id)
-                    setOrder(updated)
-                    setRefundSaved(true)
-                  } catch (err) {
-                    setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
-                  } finally {
-                    setRefundLoading(false)
-                  }
-                }}>
-                  {refundLoading ? "Записване..." : "Запиши възстановяване"}
-                </Button>
-                {refundSaved && <span className="text-xs text-muted-foreground">Записано</span>}
-              </div>
-              {order.payment_method === "card" && (
-                <p className="text-xs text-muted-foreground">
-                  Издайте възстановяване в{" "}
-                  <a href={order.stripe_payment_intent_id ? `https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}` : "https://dashboard.stripe.com/payments"} target="_blank" rel="noreferrer" className="underline">Stripe Dashboard</a>
-                  {" "}и след това запишете тук.
-                </p>
-              )}
-              {order.payment_method === "cod" && (
-                <p className="text-xs text-muted-foreground">Направете банков превод към IBAN на клиента и след това запишете тук.</p>
-              )}
-              <p className="text-xs text-muted-foreground">За връщане на стока в наличност или бракуване, използвайте <a href="/admin/inventory" className="underline">Движение на склад</a>.</p>
-            </div>
-          )}
+            )
+          })()}
+            </DialogContent>
+          </Dialog>
 
-          {/* Complaints section */}
-          <div className="space-y-3 border-t pt-4 mt-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Рекламации</p>
+          {/* Complaints section — moved to dialog. Triggered from "Още
+              действия" dropdown. Existing complaints and the new-complaint
+              form all live here. */}
+          <Dialog open={complaintDialogOpen} onOpenChange={setComplaintDialogOpen}>
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Рекламации</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Регистрирайте рекламация по ЗЗП Чл. 127. Получавате уникален номер (RCL-YYYY-NNNN) за обратна връзка с клиента.</p>
             {complaints.length > 0 && (
               <div className="space-y-2">
                 {complaints.map((c) => (
@@ -1126,8 +2090,292 @@ export default function AdminOrderDetailPage({
               )}
             </div>
           </div>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
+
+      {/* Email resends are now in the "Още действия" dropdown at the page
+          header (with a separator from the exception flows). The previous
+          always-visible "Имейли" card was confusing — "не е отбелязан като
+          изпратен" read as a problem when in fact the helpers either had no
+          persisted timestamp (shipping) or the timestamp was first-write-wins
+          (so a missing value just meant no successful send had been recorded
+          yet, not that something was broken). Past sends are visible in the
+          History card via `email_resent` audit events and the persisted
+          first-sent timestamps. Sending state lives on the dropdown items;
+          completion / error feedback surfaces as a transient banner near the
+          dropdown. */}
+
+      {/* Post-shipment outcome events — moved to dialog. Triggered from "Още
+          действия" dropdown for shipped/delivered orders. The dialog body is
+          identical to the previous always-visible card. */}
+      <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Следдоставно събитие</DialogTitle>
+          </DialogHeader>
+          <div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Докладвайте изключение, без да променяте статуса на поръчката. Статусът остава какъвто е — паричните и физическите потоци се записват отделно (възстановяване, връщане в склада, брак).
+            </p>
+            <div className="space-y-2">
+              <select
+                value={outcomeType}
+                onChange={(e) => {
+                  setOutcomeType(e.target.value as OutcomeType)
+                  setOutcomeSaved(false)
+                }}
+                className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+              >
+                <option value="">Тип събитие...</option>
+                <option value="delivery_refused">Отказана доставка</option>
+                <option value="package_lost">Изгубена пратка</option>
+                <option value="returned">Върнат продукт</option>
+                <option value="recalled">Изтеглен продукт</option>
+              </select>
+
+              {outcomeType === "package_lost" && (
+                <Input
+                  value={outcomeCourierRef}
+                  onChange={(e) => setOutcomeCourierRef(e.target.value)}
+                  placeholder="Референция на куриерска претенция *"
+                  className="h-8"
+                  maxLength={100}
+                />
+              )}
+              {outcomeType === "delivery_refused" && (
+                <Input
+                  value={outcomeCourierRef}
+                  onChange={(e) => setOutcomeCourierRef(e.target.value)}
+                  placeholder="Референция на куриера (незадължително)"
+                  className="h-8"
+                  maxLength={100}
+                />
+              )}
+              {outcomeType === "returned" && (
+                <>
+                  <Input
+                    value={outcomeReturnRef}
+                    onChange={(e) => setOutcomeReturnRef(e.target.value)}
+                    placeholder="Референция на връщане *"
+                    className="h-8"
+                    maxLength={100}
+                  />
+                  <select
+                    value={outcomeCondition}
+                    onChange={(e) => setOutcomeCondition(e.target.value as "sellable" | "damaged" | "")}
+                    className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                  >
+                    <option value="">Състояние *</option>
+                    <option value="sellable">Годно за продажба</option>
+                    <option value="damaged">Негодно (брак)</option>
+                  </select>
+                </>
+              )}
+              {outcomeType === "recalled" && (
+                <>
+                  <Input
+                    value={outcomeRecallRef}
+                    onChange={(e) => setOutcomeRecallRef(e.target.value)}
+                    placeholder="Референция на изтегляне *"
+                    className="h-8"
+                    maxLength={100}
+                  />
+                  <Input
+                    value={outcomeRecallReason}
+                    onChange={(e) => setOutcomeRecallReason(e.target.value)}
+                    placeholder="Причина за изтегляне *"
+                    className="h-8"
+                    maxLength={500}
+                  />
+                </>
+              )}
+
+              <textarea
+                value={outcomeNote}
+                onChange={(e) => setOutcomeNote(e.target.value)}
+                placeholder="Описание (поне 10 символа) *"
+                rows={3}
+                maxLength={2000}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={outcomeLoading || !outcomeType || outcomeNote.trim().length < 10}
+                onClick={async () => {
+                  if (!outcomeType) return
+                  setOutcomeLoading(true)
+                  setOutcomeSaved(false)
+                  setActionError("")
+                  const submittedType = outcomeType
+                  try {
+                    await recordOrderOutcome(id, {
+                      outcomeType: submittedType,
+                      note: outcomeNote.trim(),
+                      courierRef: outcomeCourierRef.trim() || undefined,
+                      returnRef: outcomeReturnRef.trim() || undefined,
+                      recallRef: outcomeRecallRef.trim() || undefined,
+                      recallReason: outcomeRecallReason.trim() || undefined,
+                      condition: outcomeCondition || undefined,
+                    })
+                    setOutcomeSaved(true)
+                    setOutcomeSavedType(submittedType)
+                    // Stash the note + first available reference for the
+                    // callout-to-refund-form prefill. Must happen BEFORE
+                    // clearing the input state below.
+                    setSavedOutcomeNote(outcomeNote.trim())
+                    setSavedOutcomeRef(
+                      (outcomeReturnRef.trim() ||
+                        outcomeRecallRef.trim() ||
+                        outcomeCourierRef.trim()) ?? "",
+                    )
+                    setOutcomeType("")
+                    setOutcomeNote("")
+                    setOutcomeCourierRef("")
+                    setOutcomeReturnRef("")
+                    setOutcomeRecallRef("")
+                    setOutcomeRecallReason("")
+                    setOutcomeCondition("")
+                    // Reload order so the new admin note shows in the timeline.
+                    const refreshed = await getOrder(id)
+                    setOrder(refreshed)
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : "Грешка при записване на събитие")
+                  } finally {
+                    setOutcomeLoading(false)
+                  }
+                }}
+              >
+                {outcomeLoading ? "Записване..." : "Запиши събитие"}
+              </Button>
+
+              {/* Guided-flow post-save callout. Outcome is recorded
+                  standalone; this nudges the admin to the refund form
+                  (which already handles money + inventory together via
+                  recordRefund's inventoryAdjustments). Each server action
+                  stays single-responsibility; the UI does the coordination. */}
+              {outcomeSaved && outcomeSavedType && (() => {
+                const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+                const remainingCents = order.total_amount - alreadyRefunded
+                const hasRemaining = remainingCents > 0
+
+                // Map outcome type → Bulgarian label for the linked banner
+                // shown in the refund card once prefill has happened.
+                const outcomeLabels: Record<Exclude<OutcomeType, "">, string> = {
+                  delivery_refused: "Отказана доставка",
+                  package_lost: "Изгубена пратка",
+                  returned: "Върнат продукт",
+                  recalled: "Изтеглен продукт",
+                }
+
+                // Opens the refund card with values prefilled from the just-saved
+                // outcome: full remaining balance as amount, reason as
+                // "[<outcome label>] <note>" with optional reference. Focuses
+                // the amount input so the admin can tweak or Tab through.
+                const openLinkedRefund = () => {
+                  if (!outcomeSavedType) return
+                  const amountStr = (remainingCents / 100).toFixed(2)
+                  setRefundAmount(amountStr)
+                  const label = outcomeLabels[outcomeSavedType]
+                  const refPart = savedOutcomeRef ? ` (реф. ${savedOutcomeRef})` : ""
+                  const reasonText = `[${label}${refPart}] ${savedOutcomeNote}`.slice(0, 1000)
+                  setRefundReason(reasonText)
+                  setOutcomeLinkedContext({
+                    outcomeType: outcomeSavedType,
+                    ref: savedOutcomeRef,
+                  })
+                  // Make sure the flow is at Step 1 (form) even if the admin
+                  // was in the middle of a different refund flow somehow.
+                  setRefundStep("form")
+
+                  // Hand off from the outcome dialog to the refund dialog.
+                  // Close this one, open that one. Focus the amount input
+                  // after Radix has had a tick to mount the dialog content.
+                  setOutcomeDialogOpen(false)
+                  setRefundDialogOpen(true)
+                  setTimeout(() => {
+                    const input = document.querySelector<HTMLInputElement>(
+                      '#refund-card input[type="number"]',
+                    )
+                    input?.focus()
+                    input?.select()
+                  }, 100)
+
+                  setOutcomeSavedType("")
+                }
+
+                const guidance: Record<Exclude<OutcomeType, "">, {
+                  summary: string
+                  refundNow: boolean // show "Open refund form" primary CTA
+                  refundLater: boolean // show "По-късно" / "Разбрах" dismiss
+                }> = {
+                  delivery_refused: {
+                    // Parcel still inbound; usually admin refunds AFTER it arrives
+                    // and they've confirmed condition. But sometimes admin knows
+                    // they'll refund regardless (customer's already disputed, etc.),
+                    // so offer both paths.
+                    summary: "Пратката се връща. Обикновено възстановяването и движението в склада се записват след като пратката бъде инспектирана.",
+                    refundNow: true,
+                    refundLater: true,
+                  },
+                  package_lost: {
+                    summary: "Възстановете сумата на клиента. Движение в склада не се налага — стоката е изгубена.",
+                    refundNow: true,
+                    refundLater: true,
+                  },
+                  returned: {
+                    summary: "Запишете възстановяване и движение в склада (върнатите артикули се добавят към възстановяването).",
+                    refundNow: true,
+                    refundLater: true,
+                  },
+                  recalled: {
+                    summary: "Запишете възстановяване; върнатите стоки се отписват като брак.",
+                    refundNow: true,
+                    refundLater: true,
+                  },
+                }
+                const g = guidance[outcomeSavedType]
+
+                return (
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+                    <p className="font-medium text-green-900">
+                      ✓ Събитието е записано в историята на поръчката.
+                    </p>
+                    <p className="mt-1 text-xs text-green-900/80">
+                      <span className="font-medium">Следваща стъпка: </span>
+                      {g.summary}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {g.refundNow && hasRemaining && (
+                        <Button size="sm" variant="outline" onClick={openLinkedRefund}>
+                          Отвори формата за възстановяване
+                        </Button>
+                      )}
+                      {g.refundNow && !hasRemaining && (
+                        <p className="text-xs text-green-900/80">
+                          Цялата сума на поръчката вече е възстановена — няма остатък за възстановяване.
+                        </p>
+                      )}
+                      {g.refundLater && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setOutcomeSavedType("")}
+                        >
+                          {g.refundNow ? "По-късно" : "Разбрах"}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Shipment success modal */}
       {shipmentSuccess && (
@@ -1149,6 +2397,231 @@ export default function AdminOrderDetailPage({
             </p>
             <Button className="mt-5 w-full" onClick={() => setShipmentSuccess(null)}>
               Разбрах
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// One row in the refunds list. Shows the refund details, a computed
+// breakdown for кредитно известие (VAT 20% inclusive; copy-pasteable for
+// Microinvest), and an inline annotation edit for reason + credit_note_ref.
+// The breakdown is built from linked inventory_log rows
+// (inventory_log.reference_id = refund.id, reference_type = 'return').
+function RefundRow({
+  refund,
+  orderId,
+  orderItems,
+  inventoryReturns,
+  onSaved,
+}: {
+  refund: OrderRefund
+  orderId: string
+  orderItems: OrderDetail["items"]
+  inventoryReturns: OrderInventoryReturn[]
+  onSaved: () => Promise<void> | void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [reason, setReason] = useState(refund.reason ?? "")
+  const [creditNote, setCreditNote] = useState(refund.credit_note_ref ?? "")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle")
+
+  const breakdown = useMemo(
+    () =>
+      computeRefundBreakdown(
+        refund.amount_cents,
+        inventoryReturns.map((r) => ({ sku: r.sku, quantity: r.quantity, type: r.type })),
+        orderItems.map((i) => ({
+          sku: i.sku,
+          productName: i.productName,
+          unitPriceCents: i.priceInCents,
+        })),
+      ),
+    [refund.amount_cents, inventoryReturns, orderItems],
+  )
+
+  const copyText = useMemo(
+    () =>
+      formatBreakdownForCreditNote(breakdown, {
+        orderId,
+        refundedAt: refund.refunded_at,
+        method: refund.method,
+      }),
+    [breakdown, orderId, refund.refunded_at, refund.method],
+  )
+
+  const handleCopy = async () => {
+    // copyToClipboard tries the async clipboard API first (HTTPS /
+    // localhost), then falls back to document.execCommand('copy') via a
+    // hidden textarea for HTTP dev contexts and older browsers.
+    const ok = await copyToClipboard(copyText)
+    if (ok) {
+      setCopied("ok")
+    } else {
+      setCopied("failed")
+      console.error("Clipboard write failed — both async API and execCommand fallback unavailable")
+    }
+    setTimeout(() => setCopied("idle"), 2000)
+  }
+
+  return (
+    <div className="rounded-md border border-border p-3 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div>
+            <span className="font-medium">{formatPrice(refund.amount_cents)}</span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              {refund.method === "stripe" ? "Stripe" : "Банков превод"}
+            </span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              {refund.source === "stripe_webhook" ? "(webhook)" : "(админ)"}
+            </span>
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {new Date(refund.refunded_at).toLocaleDateString("bg-BG", {
+              day: "2-digit", month: "2-digit", year: "numeric",
+              hour: "2-digit", minute: "2-digit",
+            })}
+            {refund.stripe_refund_id && (
+              <span className="ml-2 font-mono">{refund.stripe_refund_id}</span>
+            )}
+          </div>
+        </div>
+        {!editing && (
+          <Button size="sm" variant="outline" onClick={() => { setEditing(true); setError("") }}>
+            Редактирай
+          </Button>
+        )}
+      </div>
+      {!editing && (
+        <div className="mt-2 space-y-1 text-xs">
+          {refund.reason && (
+            <div><span className="text-muted-foreground">Причина:</span> {refund.reason}</div>
+          )}
+          {refund.credit_note_ref && (
+            <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{refund.credit_note_ref}</span></div>
+          )}
+          {!refund.reason && !refund.credit_note_ref && (
+            <div className="text-muted-foreground italic">Няма анотации — редактирайте, за да добавите.</div>
+          )}
+        </div>
+      )}
+
+      {/* Credit-note breakdown (VAT 20% inclusive) — visible when not editing.
+          Helper for the admin when issuing кредитно известие in Microinvest. */}
+      {!editing && (
+        <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Данни за кредитно известие (ДДС 20%)
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className={`h-6 text-[11px] ${copied === "failed" ? "border-red-400 text-red-700" : ""}`}
+              onClick={handleCopy}
+            >
+              {copied === "ok" ? "Копирано ✓" : copied === "failed" ? "Не успя" : "Копирай"}
+            </Button>
+          </div>
+          {breakdown.lines.length > 0 ? (
+            <div className="mt-2 space-y-1 text-xs">
+              {breakdown.lines.map((line) => (
+                <div key={line.sku} className="grid grid-cols-[1fr_auto] gap-x-3">
+                  <div className="min-w-0">
+                    <div className="truncate">
+                      {line.productName}
+                      {line.type === "damaged" && (
+                        <span className="ml-2 text-muted-foreground">[брак]</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {line.quantity} бр. × {formatPrice(line.unitPriceCents)} ·{" "}
+                      <span className="font-mono">{line.sku}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div>{formatPrice(line.lineGrossCents)}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      ДДС {formatPrice(line.lineVatCents)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div className="mt-1 grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/60 pt-1 text-[11px]">
+                <span className="text-muted-foreground">Общо върнати:</span>
+                <span className="text-right">
+                  {formatPrice(breakdown.linesGrossCents)}{" "}
+                  <span className="text-muted-foreground">
+                    (нето {formatPrice(breakdown.linesNetCents)} + ДДС {formatPrice(breakdown.linesVatCents)})
+                  </span>
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Няма физически върнати артикули (възстановяване без връщане на стока).
+            </p>
+          )}
+          <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/60 pt-1 text-xs">
+            <span className="font-medium">Сума по възстановяване:</span>
+            <span className="text-right font-medium">
+              {formatPrice(breakdown.refundGrossCents)}{" "}
+              <span className="text-[10px] font-normal text-muted-foreground">
+                (нето {formatPrice(breakdown.refundNetCents)} + ДДС {formatPrice(breakdown.refundVatCents)})
+              </span>
+            </span>
+          </div>
+          {breakdown.lines.length > 0 && !breakdown.matchesLineSum && (
+            <p className="mt-2 text-[11px] text-amber-800">
+              Разлика с върнатите артикули: {formatPrice(breakdown.refundGrossCents - breakdown.linesGrossCents)}{" "}
+              (възможна такса обработка, доставка или частична отстъпка).
+            </p>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <div className="mt-3 space-y-2">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
+            <Input value={creditNote} onChange={(e) => setCreditNote(e.target.value)} placeholder="Незадължително" className="h-8" maxLength={100} />
+          </div>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+          <div className="flex items-center gap-2">
+            <Button size="sm" disabled={saving} onClick={async () => {
+              setSaving(true)
+              setError("")
+              try {
+                await updateRefundAnnotation(refund.id, {
+                  reason,
+                  creditNoteRef: creditNote,
+                })
+                setEditing(false)
+                await onSaved()
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Грешка при запис")
+              } finally {
+                setSaving(false)
+              }
+            }}>
+              {saving ? "Записване..." : "Запиши"}
+            </Button>
+            <Button size="sm" variant="outline" disabled={saving} onClick={() => {
+              setReason(refund.reason ?? "")
+              setCreditNote(refund.credit_note_ref ?? "")
+              setEditing(false)
+              setError("")
+            }}>
+              Отказ
             </Button>
           </div>
         </div>

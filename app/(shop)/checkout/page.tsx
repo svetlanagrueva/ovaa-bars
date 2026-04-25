@@ -40,7 +40,6 @@ interface BillingInfo {
   company: string
   eik: string
   vatNumber: string
-  egn: string
   city: string
   postalCode: string
 }
@@ -91,7 +90,6 @@ export default function CheckoutPage() {
     company: "",
     eik: "",
     vatNumber: "",
-    egn: "",
     city: "",
     postalCode: "",
   })
@@ -236,14 +234,16 @@ export default function CheckoutPage() {
 
       const invoiceData = wantsInvoice
         ? {
+            type: billingType,
             companyName: billingType === "company" ? billingInfo.company.trim() : "",
             eik: billingType === "company" ? billingInfo.eik.trim() : "",
             vatNumber: billingType === "company" ? billingInfo.vatNumber.trim() : "",
-            egn: billingType === "individual" ? billingInfo.egn.trim() : "",
             mol: billingName,
             invoiceAddress: computedInvoiceAddress,
           }
         : undefined
+
+      const clientSubtotal = totalPrice
 
       if (paymentMethod === "cod") {
         const result = await createCODOrder({
@@ -256,6 +256,7 @@ export default function CheckoutPage() {
           speedyOffice,
           promoCode: appliedPromo?.code,
           marketingConsent,
+          clientSubtotal,
         })
 
         if (result.success) {
@@ -274,6 +275,7 @@ export default function CheckoutPage() {
           speedyOffice,
           promoCode: appliedPromo?.code,
           marketingConsent,
+          clientSubtotal,
         })
 
         if (result.url) {
@@ -284,6 +286,44 @@ export default function CheckoutPage() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : ""
+
+      // Price drift — resync cart prices, inform the user, let them confirm again.
+      if (message.startsWith("PRICE_DRIFT")) {
+        try {
+          await useCartStore.getState().syncPrices()
+        } catch {
+          // syncPrices is fail-soft; the new prices will still be picked up
+          // on next render via /api/prices.
+        }
+        setError(
+          "Цените са обновени. Прегледайте сумата на поръчката в количката и продължете отново.",
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
+      // Insufficient stock for a specific product — raw RPC error exposes SKU
+      // codes, so the server translates to a sentinel + product name.
+      if (message.startsWith("INV_INSUFFICIENT:")) {
+        const productName = message.slice("INV_INSUFFICIENT:".length).trim()
+        setError(
+          `Не достига наличност от "${productName}". Моля, намалете количеството или опитайте по-късно.`,
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+      if (message.startsWith("INV_FAILED:")) {
+        const productName = message.slice("INV_FAILED:".length).trim()
+        setError(
+          `Грешка при резервация на "${productName}". Моля, опитайте отново след малко.`,
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
       const friendlyMessages: Record<string, string> = {
         "Invalid phone format": "Моля, въведете валиден телефонен номер.",
         "Invalid email format": "Моля, въведете валиден имейл адрес.",
@@ -660,18 +700,6 @@ export default function CheckoutPage() {
                                 required={wantsInvoice && billingType === "individual"}
                               />
                             </div>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="billingEgn">ЕГН *</Label>
-                            <Input
-                              id="billingEgn"
-                              name="egn"
-                              value={billingInfo.egn}
-                              onChange={handleBillingChange}
-                              required={wantsInvoice && billingType === "individual"}
-                              placeholder="10 цифри"
-                              maxLength={10}
-                            />
                           </div>
                         </>
                       )}

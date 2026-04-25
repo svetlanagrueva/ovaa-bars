@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server"
 import { Resend } from "resend"
 import { buildReviewRequestEmail, buildCrossSellEmail } from "@/lib/email-template"
 import { buildUnsubscribeUrl } from "@/lib/unsubscribe"
+import { sanitizeError } from "@/lib/logger"
+import { requireEnv } from "@/lib/env"
 
 export const maxDuration = 60
 
@@ -105,7 +107,7 @@ export async function GET(request: Request) {
       const { html, text, subject } = emailContent
 
       const result = await resend.emails.send({
-        from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+        from: requireEnv("EMAIL_FROM"),
         to: job.email,
         subject,
         html,
@@ -129,7 +131,7 @@ export async function GET(request: Request) {
 
       sent++
     } catch (err) {
-      console.error(`Failed to send ${job.email_type} to ${job.email}:`, err)
+      console.error(`Failed to send ${job.email_type} for log_id=${job.log_id} order=${job.order_id}:`, sanitizeError(err))
 
       const { error: updateError } = await supabase
         .from("marketing_email_log")

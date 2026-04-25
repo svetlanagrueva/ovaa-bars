@@ -2,23 +2,47 @@ import { Resend } from "resend"
 import { formatPrice } from "@/lib/products"
 import { buildOrderConfirmationEmail, buildDeliveryEmail } from "@/lib/email-template"
 import { createClient } from "@/lib/supabase/server"
+import { requireEnv } from "@/lib/env"
+
+/**
+ * Load order items in the shape email templates expect.
+ * Returns null on DB error so callers can bail early.
+ */
+async function fetchOrderItemsForEmail(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+): Promise<Array<{ productId: string; productName: string; quantity: number; priceInCents: number }> | null> {
+  const { data, error } = await supabase
+    .from("order_items")
+    .select("product_id, product_name, quantity, unit_price_cents")
+    .eq("order_id", orderId)
+    .order("line_no")
+  if (error || !data) {
+    console.error(`[email-sender] Failed to fetch order_items for ${orderId}:`, error)
+    return null
+  }
+  return data.map((row) => ({
+    productId: row.product_id,
+    productName: row.product_name,
+    quantity: row.quantity,
+    priceInCents: row.unit_price_cents,
+  }))
+}
 
 /**
  * Send order confirmation email to the customer.
  * Sets order_confirmation_sent_at on success.
  * Fire-and-forget — logs errors but never throws.
  */
-export function sendOrderConfirmationEmail(order: Record<string, unknown>) {
+export async function sendOrderConfirmationEmail(order: Record<string, unknown>) {
   if (!process.env.RESEND_API_KEY) return
 
   try {
+    const supabase = await createClient()
+    const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
+    if (!orderItems) return
+
     const resend = new Resend(process.env.RESEND_API_KEY)
-    const orderItems = order.items as Array<{
-      productId: string
-      productName: string
-      quantity: number
-      priceInCents: number
-    }>
 
     const subtotal = orderItems.reduce(
       (sum, item) => sum + item.priceInCents * item.quantity,
@@ -41,19 +65,21 @@ export function sendOrderConfirmationEmail(order: Record<string, unknown>) {
     })
 
     resend.emails.send({
-      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+      from: requireEnv("EMAIL_FROM"),
       to: order.email as string,
       subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
       html,
       text,
     }).then(async () => {
-      // Record that the confirmation email was sent
+      // Record that the confirmation email was sent. Idempotency guard:
+      // .is("order_confirmation_sent_at", null) — first writer wins, retries no-op.
       try {
         const supabase = await createClient()
         const { error: tsError } = await supabase
           .from("orders")
           .update({ order_confirmation_sent_at: new Date().toISOString() })
           .eq("id", order.id as string)
+          .is("order_confirmation_sent_at", null)
         if (tsError) {
           console.error(`Failed to record confirmation email timestamp for order ${order.id}:`, tsError)
         }
@@ -72,19 +98,24 @@ export function sendOrderConfirmationEmail(order: Record<string, unknown>) {
  * Send delivery confirmation email to the customer.
  * Fire-and-forget — logs errors but never throws.
  * Records delivery_email_sent_at on success, delivery_email_last_error on failure.
+ *
+ * `options.force`: bypass the `delivery_email_sent_at` early-return so admin
+ * can manually resend. The timestamp update still uses `.is(..., null)`
+ * (first-write-wins), so the original first-sent time is preserved.
  */
-export function sendDeliveryEmail(order: Record<string, unknown>) {
+export async function sendDeliveryEmail(
+  order: Record<string, unknown>,
+  options?: { force?: boolean },
+) {
   if (!process.env.RESEND_API_KEY) return
-  if (order.delivery_email_sent_at) return
+  if (order.delivery_email_sent_at && !options?.force) return
 
   try {
+    const supabase = await createClient()
+    const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
+    if (!orderItems) return
+
     const resend = new Resend(process.env.RESEND_API_KEY)
-    const orderItems = order.items as Array<{
-      productId: string
-      productName: string
-      quantity: number
-      priceInCents: number
-    }>
 
     const { html, text } = buildDeliveryEmail({
       orderId: order.id as string,
@@ -93,18 +124,21 @@ export function sendDeliveryEmail(order: Record<string, unknown>) {
     })
 
     resend.emails.send({
-      from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+      from: requireEnv("EMAIL_FROM"),
       to: order.email as string,
       subject: `Поръчка #${(order.id as string).slice(0, 8)} - Доставена`,
       html,
       text,
     }).then(async () => {
+      // Idempotency guard: .is("delivery_email_sent_at", null) — overlapping
+      // cron runs or retries cannot double-write the success timestamp.
       try {
         const supabase = await createClient()
         const { error: tsError } = await supabase
           .from("orders")
           .update({ delivery_email_sent_at: new Date().toISOString(), delivery_email_last_error: null })
           .eq("id", order.id as string)
+          .is("delivery_email_sent_at", null)
         if (tsError) {
           console.error(`Failed to record delivery email timestamp for order ${order.id}:`, tsError)
         }
@@ -113,12 +147,16 @@ export function sendDeliveryEmail(order: Record<string, unknown>) {
       }
     }).catch(async (err) => {
       console.error(`Failed to send delivery email for order ${order.id}:`, err)
+      // Only record the error if success hasn't been recorded concurrently —
+      // avoids overwriting a successful send's state with an error from a
+      // stale attempt.
       try {
         const supabase = await createClient()
         await supabase
           .from("orders")
           .update({ delivery_email_last_error: String(err) })
           .eq("id", order.id as string)
+          .is("delivery_email_sent_at", null)
       } catch (dbErr) {
         console.error(`Failed to record delivery email error for order ${order.id}:`, dbErr)
       }
@@ -132,11 +170,14 @@ export function sendDeliveryEmail(order: Record<string, unknown>) {
  * Send admin notification email about a new order.
  * Fire-and-forget — logs errors but never throws.
  */
-export function notifyAdminNewOrder(order: Record<string, unknown>, paymentMethod: string) {
+export async function notifyAdminNewOrder(order: Record<string, unknown>, paymentMethod: string) {
   if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
 
+  const supabase = await createClient()
+  const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
+  if (!orderItems) return
+
   const resend = new Resend(process.env.RESEND_API_KEY)
-  const orderItems = order.items as Array<{ productName: string; quantity: number; priceInCents: number }>
   const itemsList = orderItems
     .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
     .join("\n")

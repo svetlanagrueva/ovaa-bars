@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Package, FileText, Banknote } from "lucide-react"
+import { Package, FileText, Banknote, AlertTriangle } from "lucide-react"
 import { getDashboardStats, type DashboardStats } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -66,8 +66,23 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold mb-6">Табло</h1>
 
       {/* Action items */}
-      {(stats.invoicesAwaiting > 0 || stats.awaitingSettlement > 0) && (
+      {(stats.invoicesAwaiting > 0 || stats.awaitingSettlement > 0 || stats.inventoryDebtSkus > 0) && (
         <div className="mb-6 space-y-3">
+          {stats.inventoryDebtSkus > 0 && (
+            <Link href="/admin/inventory" className="block">
+              <div className="rounded-lg border border-red-300 bg-red-50 p-4 transition-colors hover:bg-red-100">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="h-5 w-5 text-red-700" />
+                  <div>
+                    <p className="text-sm font-medium text-red-900">
+                      {stats.inventoryDebtSkus} {stats.inventoryDebtSkus === 1 ? "SKU в оперативен дълг" : "SKU в оперативен дълг"}
+                    </p>
+                    <p className="text-xs text-red-700">Отрицателна наличност — нужна е реконсилиация</p>
+                  </div>
+                </div>
+              </div>
+            </Link>
+          )}
           {stats.awaitingSettlement > 0 && (
             <Link href="/admin/orders?status=delivered&paymentFilter=awaiting-settlement" className="block">
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 transition-colors hover:bg-amber-100">

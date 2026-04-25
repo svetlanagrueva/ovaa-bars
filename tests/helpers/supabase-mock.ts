@@ -13,6 +13,7 @@ export function createSupabaseMock() {
     delete: vi.fn(() => mock),
     eq: vi.fn(() => mock),
     neq: vi.fn(() => mock),
+    in: vi.fn(() => mock),
     order: vi.fn(() => mock),
     range: vi.fn(() => mock),
     limit: vi.fn(() => mock),
@@ -38,12 +39,15 @@ export function mockThenableResult(data: unknown, error: unknown = null, count: 
     neq: vi.fn(() => obj),
     is: vi.fn(() => obj),
     not: vi.fn(() => obj),
+    in: vi.fn(() => obj),
     ilike: vi.fn(() => obj),
     or: vi.fn(() => obj),
     gte: vi.fn(() => obj),
     lte: vi.fn(() => obj),
     select: vi.fn(() => obj),
     range: vi.fn(() => obj),
+    order: vi.fn(() => obj),
+    limit: vi.fn(() => obj),
     then(resolve: (v: unknown) => void) {
       resolve({ data, error, count })
     },
@@ -81,6 +85,7 @@ export function resetSupabaseMock(mock: Record<string, ReturnType<typeof vi.fn>>
   mock.delete = vi.fn(() => mock)
   mock.eq = vi.fn(() => mock)
   mock.neq = vi.fn(() => mock)
+  mock.in = vi.fn(() => mock)
   mock.order = vi.fn(() => mock)
   mock.range = vi.fn(() => mock)
   mock.limit = vi.fn(() => mock)
