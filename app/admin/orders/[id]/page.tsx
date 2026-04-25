@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 
@@ -215,6 +215,34 @@ export default function AdminOrderDetailPage({
     }
   }
 
+  // Single resend helper, called from each dropdown item. Confirms intent,
+  // calls the right server action, sets a transient "just sent" marker the
+  // top-of-page banner reads to surface success / error.
+  async function handleEmailResend(kind: EmailKind) {
+    const labels: Record<EmailKind, string> = {
+      order_confirmation: "потвърждение за поръчка",
+      shipping: "известие за изпратена пратка",
+      delivery: "потвърждение за доставка",
+    }
+    if (!window.confirm(`Изпрати ${labels[kind]} отново до клиента?`)) return
+    setEmailResendError("")
+    setEmailResendLoading((s) => ({ ...s, [kind]: true }))
+    setEmailResendJustSent((s) => ({ ...s, [kind]: false }))
+    try {
+      if (kind === "order_confirmation") await resendOrderConfirmationEmail(id)
+      else if (kind === "shipping") await resendShippingEmail(id)
+      else await resendDeliveryEmail(id)
+      setEmailResendJustSent((s) => ({ ...s, [kind]: true }))
+      // Auto-clear the success banner after a few seconds so it doesn't
+      // linger on the page indefinitely.
+      setTimeout(() => setEmailResendJustSent((s) => ({ ...s, [kind]: false })), 4000)
+    } catch (err) {
+      setEmailResendError(err instanceof Error ? err.message : "Грешка при повторно изпращане")
+    } finally {
+      setEmailResendLoading((s) => ({ ...s, [kind]: false }))
+    }
+  }
+
   if (loading) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-8">
@@ -255,11 +283,14 @@ export default function AdminOrderDetailPage({
         {(() => {
           const canRefund = !!order.paid_at
           const canOutcome = order.status === "shipped" || order.status === "delivered"
-          // Hide the dropdown entirely if every option is gated off, so we
-          // don't expose an empty menu.
-          if (!canRefund && !canOutcome) {
-            // Complaint is always available — show a single-item menu, but
-            // collapse it to a plain button to avoid pointless chevron.
+          // Email gating mirrors the underlying server actions' state checks.
+          const canEmailConfirm = order.status !== "pending" && order.status !== "cancelled" && order.status !== "expired"
+          const canEmailShipping = !!order.tracking_number && order.tracking_number !== "__generating__"
+          const canEmailDelivery = order.status === "delivered"
+          const hasAnyEmail = canEmailConfirm || canEmailShipping || canEmailDelivery
+          // Single-button fallback only when literally only complaint is
+          // actionable (terminal-state orders, fresh pending orders).
+          if (!canRefund && !canOutcome && !hasAnyEmail) {
             return (
               <Button
                 variant="outline"
@@ -278,7 +309,7 @@ export default function AdminOrderDetailPage({
                   Още действия ▾
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuContent align="end" className="w-64">
                 {canRefund && (
                   <DropdownMenuItem onClick={() => setRefundDialogOpen(true)}>
                     Запиши възстановяване
@@ -297,11 +328,62 @@ export default function AdminOrderDetailPage({
                     Следдоставно събитие
                   </DropdownMenuItem>
                 )}
+                {hasAnyEmail && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {canEmailConfirm && (
+                      <DropdownMenuItem
+                        disabled={emailResendLoading.order_confirmation}
+                        onClick={() => handleEmailResend("order_confirmation")}
+                      >
+                        Изпрати потвърждение за поръчка
+                      </DropdownMenuItem>
+                    )}
+                    {canEmailShipping && (
+                      <DropdownMenuItem
+                        disabled={emailResendLoading.shipping}
+                        onClick={() => handleEmailResend("shipping")}
+                      >
+                        Изпрати известие за изпращане
+                      </DropdownMenuItem>
+                    )}
+                    {canEmailDelivery && (
+                      <DropdownMenuItem
+                        disabled={emailResendLoading.delivery}
+                        onClick={() => handleEmailResend("delivery")}
+                      >
+                        Изпрати потвърждение за доставка
+                      </DropdownMenuItem>
+                    )}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )
         })()}
       </div>
+
+      {/* Transient feedback for email resends. Success banner auto-clears
+          after ~4s via the timeout in handleEmailResend; error banner stays
+          until the next resend attempt clears it. Both render only when
+          relevant — no permanent screen real estate. */}
+      {(emailResendJustSent.order_confirmation || emailResendJustSent.shipping || emailResendJustSent.delivery) && (
+        <div className="mb-4 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-900">
+          ✓ Имейлът е изпратен повторно до клиента.
+        </div>
+      )}
+      {emailResendError && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <span>{emailResendError}</span>
+          <button
+            type="button"
+            onClick={() => setEmailResendError("")}
+            className="shrink-0 text-xs underline hover:no-underline"
+          >
+            Затвори
+          </button>
+        </div>
+      )}
 
       {/* COD phone confirmation banner. Three states for confirmed COD orders:
           1. Unconfirmed → amber "please call" + tel link + "Mark as confirmed" button
@@ -1883,144 +1965,17 @@ export default function AdminOrderDetailPage({
         </CardContent>
       </Card>
 
-      {/* Emails — support tool for customers who claim they didn't get the
-          email. Rows render conditionally based on order state. Each row shows
-          the last-sent timestamp (where tracked) and a Resend button. The
-          underlying helpers are already idempotent at the timestamp layer
-          (first-write-wins via .is(..., null)), so the original first-sent
-          time is preserved across resends; the audit event is the record of
-          the resend itself. */}
-      {order.status !== "pending" && order.status !== "cancelled" && order.status !== "expired" && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-base">Имейли</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="mb-3 text-xs text-muted-foreground">
-              Изпрати повторно транзакционен имейл до клиента. Използвайте при оплаквания „не получих имейл“, имейл в спам, или след корекция на адреса.
-            </p>
-            {emailResendError && (
-              <p className="mb-3 text-sm text-red-600">{emailResendError}</p>
-            )}
-            <div className="space-y-3">
-              {/* Order confirmation — available once the order is confirmed. */}
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Потвърждение на поръчка</p>
-                  <p className="text-xs text-muted-foreground">
-                    {order.order_confirmation_sent_at
-                      ? `Първо изпратен на ${new Date(order.order_confirmation_sent_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`
-                      : "Не е отбелязан като изпратен"}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={emailResendLoading.order_confirmation}
-                  onClick={async () => {
-                    if (!window.confirm("Изпрати потвърждение на поръчката отново до клиента?")) return
-                    setEmailResendError("")
-                    setEmailResendLoading((s) => ({ ...s, order_confirmation: true }))
-                    setEmailResendJustSent((s) => ({ ...s, order_confirmation: false }))
-                    try {
-                      await resendOrderConfirmationEmail(id)
-                      setEmailResendJustSent((s) => ({ ...s, order_confirmation: true }))
-                    } catch (err) {
-                      setEmailResendError(err instanceof Error ? err.message : "Грешка при повторно изпращане")
-                    } finally {
-                      setEmailResendLoading((s) => ({ ...s, order_confirmation: false }))
-                    }
-                  }}
-                >
-                  {emailResendLoading.order_confirmation
-                    ? "Изпращане..."
-                    : emailResendJustSent.order_confirmation
-                      ? "✓ Изпратен"
-                      : "Изпрати повторно"}
-                </Button>
-              </div>
-
-              {/* Shipping notification — only once tracking exists. The
-                  helper has no persisted timestamp (fire-and-forget at original
-                  send) so we only show "може да се изпрати повторно". */}
-              {order.tracking_number && order.tracking_number !== "__generating__" && (
-                <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Известие за изпратена пратка</p>
-                    <p className="text-xs text-muted-foreground">
-                      Първото изпращане не се записва в базата — повторно може да се изпрати винаги след генериране на товарителница.
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={emailResendLoading.shipping}
-                    onClick={async () => {
-                      if (!window.confirm("Изпрати известие за изпратена пратка отново до клиента?")) return
-                      setEmailResendError("")
-                      setEmailResendLoading((s) => ({ ...s, shipping: true }))
-                      setEmailResendJustSent((s) => ({ ...s, shipping: false }))
-                      try {
-                        await resendShippingEmail(id)
-                        setEmailResendJustSent((s) => ({ ...s, shipping: true }))
-                      } catch (err) {
-                        setEmailResendError(err instanceof Error ? err.message : "Грешка при повторно изпращане")
-                      } finally {
-                        setEmailResendLoading((s) => ({ ...s, shipping: false }))
-                      }
-                    }}
-                  >
-                    {emailResendLoading.shipping
-                      ? "Изпращане..."
-                      : emailResendJustSent.shipping
-                        ? "✓ Изпратен"
-                        : "Изпрати повторно"}
-                  </Button>
-                </div>
-              )}
-
-              {/* Delivery confirmation — only once delivered. */}
-              {order.status === "delivered" && (
-                <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Потвърждение за доставка</p>
-                    <p className="text-xs text-muted-foreground">
-                      {order.delivery_email_sent_at
-                        ? `Първо изпратен на ${new Date(order.delivery_email_sent_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`
-                        : "Не е отбелязан като изпратен"}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={emailResendLoading.delivery}
-                    onClick={async () => {
-                      if (!window.confirm("Изпрати потвърждение за доставка отново до клиента?")) return
-                      setEmailResendError("")
-                      setEmailResendLoading((s) => ({ ...s, delivery: true }))
-                      setEmailResendJustSent((s) => ({ ...s, delivery: false }))
-                      try {
-                        await resendDeliveryEmail(id)
-                        setEmailResendJustSent((s) => ({ ...s, delivery: true }))
-                      } catch (err) {
-                        setEmailResendError(err instanceof Error ? err.message : "Грешка при повторно изпращане")
-                      } finally {
-                        setEmailResendLoading((s) => ({ ...s, delivery: false }))
-                      }
-                    }}
-                  >
-                    {emailResendLoading.delivery
-                      ? "Изпращане..."
-                      : emailResendJustSent.delivery
-                        ? "✓ Изпратен"
-                        : "Изпрати повторно"}
-                  </Button>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Email resends are now in the "Още действия" dropdown at the page
+          header (with a separator from the exception flows). The previous
+          always-visible "Имейли" card was confusing — "не е отбелязан като
+          изпратен" read as a problem when in fact the helpers either had no
+          persisted timestamp (shipping) or the timestamp was first-write-wins
+          (so a missing value just meant no successful send had been recorded
+          yet, not that something was broken). Past sends are visible in the
+          History card via `email_resent` audit events and the persisted
+          first-sent timestamps. Sending state lives on the dropdown items;
+          completion / error feedback surfaces as a transient banner near the
+          dropdown. */}
 
       {/* Post-shipment outcome events — moved to dialog. Triggered from "Още
           действия" dropdown for shipped/delivered orders. The dialog body is
