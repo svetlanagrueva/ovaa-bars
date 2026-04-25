@@ -9,7 +9,7 @@ interface ProductsSectionProps {
 
 export function ProductsSection({ products, inventoryMap }: ProductsSectionProps) {
   return (
-    <section className="bg-background pt-8 pb-16 sm:pt-10 sm:pb-20 lg:pt-12 lg:pb-24">
+    <section className="bg-card py-16 sm:py-20 lg:py-24">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <div className="flex items-end justify-between">
           <div>

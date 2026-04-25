@@ -98,7 +98,7 @@ export default async function HomePage() {
 
         {/* Mobile hero — plain text top, image peeking at bottom */}
         <div className="sm:hidden">
-          <div className="bg-background px-6 pb-6 pt-14">
+          <div className="bg-background px-6 pb-8 pt-14">
             <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               {HERO.eyebrow}
             </p>
@@ -146,15 +146,15 @@ export default async function HomePage() {
       <BenefitsStrip />
 
       {/* Why Egg White Section */}
-      <section className="relative overflow-hidden py-16 sm:py-20 lg:py-24">
+      <section className="relative overflow-hidden bg-background py-16 sm:py-20 lg:py-24">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <img
             src="/images/egg-white-texture.png"
             alt=""
             aria-hidden="true"
-            className="absolute left-1/2 top-1/2 h-[140%] w-[140%] max-w-none -translate-x-1/2 -translate-y-1/2 object-cover opacity-[0.8]"
+            className="absolute left-1/2 top-1/2 h-[140%] w-[140%] max-w-none -translate-x-1/2 -translate-y-1/2 object-cover opacity-[0.6]"
           />
-          <div className="absolute inset-0 bg-background/72" />
+          <div className="absolute inset-0 bg-background/80" />
         </div>
 
         <div className="relative mx-auto max-w-7xl px-6 lg:px-8">
@@ -171,7 +171,7 @@ export default async function HomePage() {
             </h2>
 
             <p className="mt-6 max-w-xl text-sm leading-7 text-muted-foreground">
-              Минимална формула, максимална функция. Създаден за модерен начин на
+              Миним��лна формула, максимална функция. Създаден за модерен начин на
               живот с усещане за лекота, чистота и премиум грижа.
             </p>
           </div>
@@ -233,9 +233,9 @@ export default async function HomePage() {
       <UsageMoments />
 
       {/* Flavor Sections */}
-      <div className="bg-background">
+      <div className="bg-background py-16 sm:py-20 lg:py-24">
         {/* WHITE CHOCOLATE & RASPBERRY */}
-        <section className="relative overflow-hidden py-8 sm:py-10 lg:py-12">
+        <section className="relative overflow-hidden">
           <div className="mx-auto max-w-7xl px-6 lg:px-8">
             <div className="flex flex-col gap-6 lg:grid lg:grid-cols-12 lg:items-center lg:gap-10">
               <div className="order-1 lg:col-span-5 lg:row-span-4">
@@ -281,12 +281,12 @@ export default async function HomePage() {
               </div>
 
               <div className="order-3 lg:col-span-7">
-                <div className="relative h-[320px] overflow-hidden rounded-[26px] bg-muted sm:h-[380px] lg:h-[420px]">
+                <div className="group relative h-[320px] overflow-hidden rounded-[26px] bg-muted sm:h-[380px] lg:h-[460px]">
                   <Image
                     src={FLAVORS.white.image}
                     alt={`Egg Origin ${FLAVORS.white.title} ${FLAVORS.white.titleSub}`}
                     fill
-                    className="object-cover"
+                    className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.03]"
                   />
                 </div>
               </div>
@@ -313,12 +313,12 @@ export default async function HomePage() {
           </div>
         </section>
 
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <div className="h-px bg-border/60" />
+        <div className="mx-auto max-w-7xl px-6 py-12 sm:py-16 lg:px-8 lg:py-20">
+          <div className="h-px bg-border/40" />
         </div>
 
         {/* DARK CHOCOLATE */}
-        <section className="relative overflow-hidden py-8 sm:py-10 lg:py-12">
+        <section className="relative overflow-hidden">
           <div className="mx-auto max-w-7xl px-6 lg:px-8">
             <div className="flex flex-col gap-6 lg:grid lg:grid-cols-12 lg:items-center lg:gap-10">
               <div className="order-1 lg:order-2 lg:col-span-4 lg:col-start-9 lg:row-span-4">
@@ -364,12 +364,12 @@ export default async function HomePage() {
               </div>
 
               <div className="order-3 lg:order-1 lg:col-span-7">
-                <div className="relative h-[320px] overflow-hidden rounded-[26px] bg-muted sm:h-[380px] lg:h-[420px]">
+                <div className="group relative h-[320px] overflow-hidden rounded-[26px] bg-muted sm:h-[380px] lg:h-[460px]">
                   <Image
                     src={FLAVORS.dark.image}
                     alt={`Egg Origin ${FLAVORS.dark.title} ${FLAVORS.dark.titleSub}`}
                     fill
-                    className="object-cover"
+                    className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.03]"
                   />
                 </div>
               </div>

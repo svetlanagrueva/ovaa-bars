@@ -13,7 +13,7 @@ const SOCIAL_IMAGES = [
 
 export function SocialProof() {
   return (
-    <section className="bg-muted/20 py-14 sm:py-16 lg:py-20">
+    <section className="bg-card py-16 sm:py-20 lg:py-24">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <div className="grid items-center gap-10 lg:grid-cols-12 lg:gap-10">
           {/* Left */}
@@ -46,12 +46,12 @@ export function SocialProof() {
             {SOCIAL_IMAGES.map((src, i) => (
               <div
                 key={i}
-                className={`aspect-square overflow-hidden rounded-full bg-muted ${i === 3 ? "hidden lg:block" : ""}`}
+                className={`group aspect-square overflow-hidden rounded-[20px] bg-muted ${i === 3 ? "hidden lg:block" : ""}`}
               >
                 <img
                   src={src}
                   alt=""
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                 />
               </div>
             ))}

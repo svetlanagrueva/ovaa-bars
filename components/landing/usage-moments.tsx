@@ -32,7 +32,7 @@ export function UsageMoments() {
   const isInView = useInView(ref, { once: true, margin: "-100px" })
 
   return (
-    <section ref={ref} className="bg-background py-16 sm:py-20 lg:py-24">
+    <section ref={ref} className="bg-card py-16 sm:py-20 lg:py-24">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
@@ -64,12 +64,12 @@ export function UsageMoments() {
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.8, delay: 0.2 + index * 0.15 }}
             >
-              <div className="relative h-[220px] overflow-hidden rounded-[26px] bg-muted">
+              <div className="group relative h-[240px] overflow-hidden rounded-[26px] bg-muted sm:h-[260px]">
                 <Image
                   src={moment.image}
                   alt={moment.title}
                   fill
-                  className="object-cover"
+                  className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                 />
               </div>
 

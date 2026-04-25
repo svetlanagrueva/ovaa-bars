@@ -33,7 +33,7 @@ export function BenefitsStrip() {
   const isInView = useInView(ref, { once: true, margin: "-50px" })
 
   return (
-    <section ref={ref} className="relative overflow-hidden bg-background py-14 md:py-20">
+    <section ref={ref} className="relative overflow-hidden bg-card py-12 sm:py-14 lg:py-16">
       {/* Subtle gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-accent/[0.03] to-transparent" />
 
