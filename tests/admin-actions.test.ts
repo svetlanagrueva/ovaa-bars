@@ -1219,6 +1219,37 @@ describe("admin actions", () => {
         updateOrderContact(validOrderId, { phone: "+359888111222" }),
       ).rejects.toThrow(/потвърдени поръчки.*shipped/)
     })
+
+    it("rejects empty trimmed email", async () => {
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(
+        updateOrderContact(validOrderId, { email: "   " }),
+      ).rejects.toThrow("Имейлът не може да е празен")
+    })
+
+    it("rejects malformed email", async () => {
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await expect(
+        updateOrderContact(validOrderId, { email: "not-an-email" }),
+      ).rejects.toThrow("Невалиден формат на имейл")
+    })
+
+    it("normalizes email to lowercase before update (chk_orders_email_lowercase)", async () => {
+      const updateChain = {
+        eq: vi.fn(() => updateChain),
+        select: vi.fn(() => updateChain),
+        then(resolve: (v: unknown) => void) {
+          resolve({ data: [{ id: validOrderId }], error: null })
+        },
+      }
+      const updateSpy = vi.fn(() => updateChain)
+      mockSupabase.update = updateSpy as any
+
+      const { updateOrderContact } = await import("@/app/actions/admin")
+      await updateOrderContact(validOrderId, { email: "  Foo.BAR@Example.COM  " })
+
+      expect(updateSpy).toHaveBeenCalledWith({ email: "foo.bar@example.com" })
+    })
   })
 
   describe("updateOrderQuantity", () => {

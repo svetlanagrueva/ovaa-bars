@@ -74,6 +74,7 @@ export default function AdminOrderDetailPage({
   const [contactFirstName, setContactFirstName] = useState("")
   const [contactLastName, setContactLastName] = useState("")
   const [contactPhone, setContactPhone] = useState("")
+  const [contactEmail, setContactEmail] = useState("")
   const [contactAddress, setContactAddress] = useState("")
   const [contactPostalCode, setContactPostalCode] = useState("")
   const [contactCity, setContactCity] = useState("")
@@ -468,6 +469,7 @@ export default function AdminOrderDetailPage({
                   setContactFirstName(order.first_name)
                   setContactLastName(order.last_name)
                   setContactPhone(order.phone)
+                  setContactEmail(order.email)
                   setContactAddress(order.address ?? "")
                   setContactPostalCode(order.postal_code ?? "")
                   setContactCity(order.city)
@@ -506,8 +508,19 @@ export default function AdminOrderDetailPage({
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Имейл (не може да се редактира)</label>
-                  <Input value={order.email} disabled className="h-8 bg-muted/50" />
+                  <label className="mb-1 block text-xs text-muted-foreground">Имейл</label>
+                  <Input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    className="h-8"
+                    maxLength={500}
+                  />
+                  {contactEmail.trim().toLowerCase() !== order.email && (
+                    <p className="mt-1 text-[11px] text-amber-700">
+                      Промяната на имейла прекъсва връзката с предишния отписващ адрес. Новият имейл наследява статуса на абонамент за маркетинг от своята основна стойност в email_unsubscribes.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
@@ -547,16 +560,27 @@ export default function AdminOrderDetailPage({
                     onClick={async () => {
                       setContactSaving(true)
                       setContactError("")
+                      // Only send fields the admin actually changed. Pre-filled
+                      // values that match the order's current state pass
+                      // through as undefined and skip server-side validation,
+                      // so legacy data with empty city / etc. doesn't trip a
+                      // non-empty rule on a no-op edit.
+                      const payload: Parameters<typeof updateOrderContact>[1] = {}
+                      if (contactFirstName !== order.first_name) payload.firstName = contactFirstName
+                      if (contactLastName !== order.last_name) payload.lastName = contactLastName
+                      if (contactPhone !== order.phone) payload.phone = contactPhone
+                      if (contactEmail.trim().toLowerCase() !== order.email) payload.email = contactEmail
+                      if (contactAddress !== (order.address ?? "")) payload.address = contactAddress
+                      if (contactPostalCode !== (order.postal_code ?? "")) payload.postalCode = contactPostalCode
+                      if (contactCity !== order.city) payload.city = contactCity
+                      if (contactNotes !== (order.notes ?? "")) payload.notes = contactNotes
+                      if (Object.keys(payload).length === 0) {
+                        setContactError("Няма промени за записване")
+                        setContactSaving(false)
+                        return
+                      }
                       try {
-                        await updateOrderContact(id, {
-                          firstName: contactFirstName,
-                          lastName: contactLastName,
-                          phone: contactPhone,
-                          address: contactAddress,
-                          postalCode: contactPostalCode,
-                          city: contactCity,
-                          notes: contactNotes,
-                        })
+                        await updateOrderContact(id, payload)
                         const refreshed = await getOrder(id)
                         setOrder(refreshed)
                         setContactEditing(false)

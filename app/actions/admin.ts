@@ -1102,6 +1102,7 @@ export async function updateOrderContact(
     firstName?: string
     lastName?: string
     phone?: string
+    email?: string
     address?: string
     postalCode?: string
     city?: string
@@ -1114,10 +1115,12 @@ export async function updateOrderContact(
   if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
 
   // Per-field validation. Only fields that were actually provided are
-  // validated; undefined values pass through untouched. Empty string
-  // collapses to a no-op UPDATE for that field — the trigger's
-  // `is distinct from` check won't fire on ""=="" so the audit stays clean.
+  // validated; undefined values pass through untouched. The client is
+  // expected to send only fields that actually changed (compared to the
+  // current order values), so unchanged-but-already-empty legacy data
+  // doesn't trip a non-empty validation it never validated at intake.
   const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   const updatePayload: Record<string, unknown> = {}
 
   if (data.firstName !== undefined) {
@@ -1137,6 +1140,17 @@ export async function updateOrderContact(
     if (!trimmed) throw new Error("Телефонът не може да е празен")
     if (!PHONE_REGEX.test(trimmed)) throw new Error("Невалиден формат на телефон")
     updatePayload.phone = trimmed
+  }
+  if (data.email !== undefined) {
+    // Lowercase to satisfy chk_orders_email_lowercase. Note: email is the
+    // unsubscribe key — changing it decouples the order from the
+    // email_unsubscribes row that was tied to the old address. Caller
+    // should warn the admin in the UI.
+    const trimmed = data.email.trim().toLowerCase()
+    if (!trimmed) throw new Error("Имейлът не може да е празен")
+    if (!EMAIL_REGEX.test(trimmed)) throw new Error("Невалиден формат на имейл")
+    if (trimmed.length > CONTACT_FIELD_MAX) throw new Error("Имейлът е твърде дълъг")
+    updatePayload.email = trimmed
   }
   if (data.address !== undefined) {
     const trimmed = data.address.trim()
