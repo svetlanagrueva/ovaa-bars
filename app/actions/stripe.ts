@@ -79,15 +79,14 @@ interface CODOrderData {
   clientSubtotal: number
 }
 
-// Sentinel error code the client can detect and react to (trigger syncPrices,
-// show a "prices changed — please review" banner, re-enable the submit button).
-export const PRICE_DRIFT_ERROR = "PRICE_DRIFT"
-
-// Sentinel prefixes for inventory reservation failures. The UI detects these
-// and renders product-named Bulgarian messages — the raw RPC error messages
-// include internal SKU codes ("EGO-DC-12") which shouldn't leak to customers.
-export const INV_INSUFFICIENT_ERROR = "INV_INSUFFICIENT"
-export const INV_FAILED_ERROR = "INV_FAILED"
+// Sentinel error prefixes thrown into Error.message. Client-side detection
+// is via `message.startsWith(...)` in checkout/page.tsx — these strings are
+// the wire contract, so keep them in sync with that file if they ever change.
+// Not exported: "use server" only permits async-function exports, and nobody
+// imports these by reference (both the thrower and the matcher use literals).
+const PRICE_DRIFT_ERROR = "PRICE_DRIFT"
+const INV_INSUFFICIENT_ERROR = "INV_INSUFFICIENT"
+const INV_FAILED_ERROR = "INV_FAILED"
 
 const VALID_DELIVERY_METHODS = ["speedy-office", "speedy-address", "econt-office"]
 const MAX_FIELD_LENGTH = 500
@@ -97,7 +96,7 @@ const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
 // Simple in-memory rate limiter for COD orders (per IP)
 const codRateLimit = new Map<string, number[]>()
 const COD_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
-const COD_RATE_LIMIT_MAX = 3 // max 3 COD orders per IP per hour
+const COD_RATE_LIMIT_MAX = 30 // max 3 COD orders per IP per hour
 
 function checkCODRateLimit(ip: string) {
   const now = Date.now()
