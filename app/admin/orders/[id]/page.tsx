@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 
@@ -75,6 +77,14 @@ export default function AdminOrderDetailPage({
   // Order edit — COD quantity state (per-SKU)
   const [qtyEditing, setQtyEditing] = useState<Record<string, number | null>>({})
   const [qtySaving, setQtySaving] = useState<Record<string, boolean>>({})
+
+  // Exception-flow dialogs. Refund / complaint / outcome are rare actions
+  // (<5% of orders touch any of them), so they live behind the "Още действия"
+  // dropdown rather than the main panel. Same Shopify pattern: keep the
+  // routine flow uncluttered, exception flows one click away.
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false)
+  const [complaintDialogOpen, setComplaintDialogOpen] = useState(false)
+  const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false)
 
   // Email resend state — per-email-type loading flag and a transient
   // "sent just now" marker so the admin gets immediate feedback (the
@@ -237,6 +247,60 @@ export default function AdminOrderDetailPage({
         <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>
           {STATUS_LABELS[order.status] || order.status}
         </Badge>
+        {/* Exception flows: refund / complaint / outcome live behind this
+            dropdown so the main panel stays focused on routine actions
+            (status, settlement, contact edits, invoice). Mirrors Shopify's
+            "More actions" pattern. Items are gated by order state — only
+            show what's actionable on the current order. */}
+        {(() => {
+          const canRefund = !!order.paid_at
+          const canOutcome = order.status === "shipped" || order.status === "delivered"
+          // Hide the dropdown entirely if every option is gated off, so we
+          // don't expose an empty menu.
+          if (!canRefund && !canOutcome) {
+            // Complaint is always available — show a single-item menu, but
+            // collapse it to a plain button to avoid pointless chevron.
+            return (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-8 text-xs"
+                onClick={() => setComplaintDialogOpen(true)}
+              >
+                Регистрирай рекламация
+              </Button>
+            )
+          }
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="ml-auto h-8 text-xs">
+                  Още действия ▾
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {canRefund && (
+                  <DropdownMenuItem onClick={() => setRefundDialogOpen(true)}>
+                    Запиши възстановяване
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => setComplaintDialogOpen(true)}>
+                  Регистрирай рекламация
+                  {complaints.filter((c) => c.status === "open").length > 0 && (
+                    <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                      {complaints.filter((c) => c.status === "open").length}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+                {canOutcome && (
+                  <DropdownMenuItem onClick={() => setOutcomeDialogOpen(true)}>
+                    Следдоставно събитие
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        })()}
       </div>
 
       {/* COD phone confirmation banner. Three states for confirmed COD orders:
@@ -1307,14 +1371,19 @@ export default function AdminOrderDetailPage({
             </div>
           )}
 
-          {/* Two-step refund flow. Step 1 records the refund row; Step 2
-              separately records any physical stock outcome (per-SKU
-              recordStockMovement calls) OR captures a "no stock movement"
-              reason via addAdminNote. Each server action stays
-              single-responsibility; the UI does the coordination.
-              id="refund-card" is the scroll/focus target from the outcome
-              card's guided-flow "next step" callout. */}
-          {(() => {
+          {/* Two-step refund flow lives in a Dialog (triggered from the "Още
+              действия" dropdown in the page header). The form is rare —
+              keeping it always-rendered cluttered the main panel. Same Step 1
+              records the refund row; Step 2 separately records any physical
+              stock outcome (per-SKU recordStockMovement calls) OR captures a
+              "no stock movement" reason via addAdminNote. Each server action
+              stays single-responsibility; the UI does the coordination. */}
+          <Dialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Запиши възстановяване</DialogTitle>
+              </DialogHeader>
+              {(() => {
             const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
             const remainingCents = order.total_amount - alreadyRefunded
             if (!order.paid_at) return null
@@ -1704,10 +1773,19 @@ export default function AdminOrderDetailPage({
               </div>
             )
           })()}
+            </DialogContent>
+          </Dialog>
 
-          {/* Complaints section */}
-          <div className="space-y-3 border-t pt-4 mt-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Рекламации</p>
+          {/* Complaints section — moved to dialog. Triggered from "Още
+              действия" dropdown. Existing complaints and the new-complaint
+              form all live here. */}
+          <Dialog open={complaintDialogOpen} onOpenChange={setComplaintDialogOpen}>
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Рекламации</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Регистрирайте рекламация по ЗЗП Чл. 127. Получавате уникален номер (RCL-YYYY-NNNN) за обратна връзка с клиента.</p>
             {complaints.length > 0 && (
               <div className="space-y-2">
                 {complaints.map((c) => (
@@ -1800,6 +1878,8 @@ export default function AdminOrderDetailPage({
               )}
             </div>
           </div>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
 
@@ -1942,13 +2022,15 @@ export default function AdminOrderDetailPage({
         </Card>
       )}
 
-      {/* Post-shipment outcome events — only for shipped/delivered orders */}
-      {(order.status === "shipped" || order.status === "delivered") && (
-        <Card className="mb-4">
-          <CardHeader>
-            <CardTitle className="text-base">Следдоставни събития</CardTitle>
-          </CardHeader>
-          <CardContent>
+      {/* Post-shipment outcome events — moved to dialog. Triggered from "Още
+          действия" dropdown for shipped/delivered orders. The dialog body is
+          identical to the previous always-visible card. */}
+      <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Следдоставно събитие</DialogTitle>
+          </DialogHeader>
+          <div>
             <p className="mb-3 text-xs text-muted-foreground">
               Докладвайте изключение, без да променяте статуса на поръчката. Статусът остава какъвто е — паричните и физическите потоци се записват отделно (възстановяване, връщане в склада, брак).
             </p>
@@ -2124,23 +2206,18 @@ export default function AdminOrderDetailPage({
                   // was in the middle of a different refund flow somehow.
                   setRefundStep("form")
 
-                  const el = document.getElementById("refund-card")
-                  if (el) {
-                    el.scrollIntoView({ behavior: "smooth", block: "start" })
-                    el.classList.add("ring-2", "ring-accent/60")
-                    setTimeout(() => el.classList.remove("ring-2", "ring-accent/60"), 2000)
-                  }
-                  // Focus the amount input after the scroll settles. The
-                  // type=number input is first in the form order below
-                  // the date picker; focus the number one so the admin can
-                  // immediately tweak or Tab through.
+                  // Hand off from the outcome dialog to the refund dialog.
+                  // Close this one, open that one. Focus the amount input
+                  // after Radix has had a tick to mount the dialog content.
+                  setOutcomeDialogOpen(false)
+                  setRefundDialogOpen(true)
                   setTimeout(() => {
                     const input = document.querySelector<HTMLInputElement>(
                       '#refund-card input[type="number"]',
                     )
                     input?.focus()
                     input?.select()
-                  }, 500)
+                  }, 100)
 
                   setOutcomeSavedType("")
                 }
@@ -2211,9 +2288,9 @@ export default function AdminOrderDetailPage({
                 )
               })()}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Shipment success modal */}
       {shipmentSuccess && (
