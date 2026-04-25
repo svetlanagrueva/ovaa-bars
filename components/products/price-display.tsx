@@ -20,14 +20,14 @@ export function PriceDisplay({
     <div>
       <div className={isLarge ? "flex items-center gap-1" : "flex flex-col"}>
         <span
-          className={`tabular-nums tracking-[0.01em] ${onSale ? "text-accent-price" : "text-foreground"} ${
-            isLarge ? "text-2xl font-medium" : "text-sm font-semibold"
+          className={`tracking-[0.01em] ${onSale ? "text-accent-price" : "text-foreground"} ${
+            isLarge ? "text-2xl font-light" : "text-sm font-medium"
           }`}
         >
           {formatPrice(product.priceInCents * quantity)}
         </span>
         {onSale && (
-          <span className={`font-normal text-foreground/50 ${isLarge ? "text-lg" : "text-xs"}`}>
+          <span className={`text-foreground/60 ${isLarge ? "text-2xl font-light" : "text-xs"}`}>
             <span className="line-through">{formatPrice(product.originalPriceInCents! * quantity)}</span>
           </span>
         )}
