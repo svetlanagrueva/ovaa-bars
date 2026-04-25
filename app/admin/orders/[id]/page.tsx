@@ -68,6 +68,19 @@ export default function AdminOrderDetailPage({
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
   const [codConfirmLoading, setCodConfirmLoading] = useState(false)
+  // Each form / dialog / inline panel that submits OUTSIDE the Действия
+  // card needs its own local error state — actionError renders only inside
+  // Действия, so a thrown server-action error from elsewhere on the page
+  // would silently disappear. Pattern documented in
+  // memory/feedback_form_error_handling.md. New admin forms should follow
+  // the same pattern: local <flow>Error + inline render next to Save.
+  const [codConfirmError, setCodConfirmError] = useState("")
+  const [qtyError, setQtyError] = useState<Record<string, string>>({})
+  const [invoiceError, setInvoiceError] = useState("")
+  const [noteError, setNoteError] = useState("")
+  const [refundError, setRefundError] = useState("")
+  const [complaintError, setComplaintError] = useState("")
+  const [outcomeError, setOutcomeError] = useState("")
 
   // Order edit — contact info state
   const [contactEditing, setContactEditing] = useState(false)
@@ -413,6 +426,9 @@ export default function AdminOrderDetailPage({
           >
             {order.phone}
           </a>
+          {codConfirmError && (
+            <p className="mt-2 text-sm text-red-700">{codConfirmError}</p>
+          )}
           <div className="mt-3">
             <Button
               size="sm"
@@ -420,13 +436,13 @@ export default function AdminOrderDetailPage({
               disabled={codConfirmLoading}
               onClick={async () => {
                 setCodConfirmLoading(true)
-                setActionError("")
+                setCodConfirmError("")
                 try {
                   await markCodConfirmed(id)
                   const updated = await getOrder(id)
                   setOrder(updated)
                 } catch (err) {
-                  setActionError(err instanceof Error ? err.message : "Грешка при потвърждаване")
+                  setCodConfirmError(err instanceof Error ? err.message : "Грешка при потвърждаване")
                 } finally {
                   setCodConfirmLoading(false)
                 }
@@ -648,80 +664,95 @@ export default function AdminOrderDetailPage({
                 return order.items.map((item, i) => {
                   const editing = qtyEditing[item.sku] ?? null
                   const saving = qtySaving[item.sku] ?? false
+                  const lineError = qtyError[item.sku] ?? ""
                   return (
-                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
-                      <div className="min-w-0 flex-1 truncate">
-                        {item.productName}
-                        {!canEditQty || editing === null ? (
-                          <span> x {item.quantity}</span>
-                        ) : null}
-                      </div>
-                      {canEditQty && editing === null && (
-                        <>
-                          <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: item.quantity })}
-                          >
-                            Редактирай
-                          </Button>
-                        </>
-                      )}
-                      {canEditQty && editing !== null && (
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            min="1"
-                            max="100"
-                            step="1"
-                            value={editing}
-                            onChange={(e) => {
-                              const n = parseInt(e.target.value, 10)
-                              setQtyEditing({
-                                ...qtyEditing,
-                                [item.sku]: Number.isInteger(n) && n >= 1 ? n : editing,
-                              })
-                            }}
-                            className="h-7 w-16"
-                            disabled={saving}
-                          />
-                          <Button
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            disabled={saving || editing === item.quantity}
-                            onClick={async () => {
-                              if (editing === null) return
-                              setQtySaving({ ...qtySaving, [item.sku]: true })
-                              setActionError("")
-                              try {
-                                await updateOrderQuantity(id, item.sku, editing)
-                                const refreshed = await getOrder(id)
-                                setOrder(refreshed)
-                                setQtyEditing({ ...qtyEditing, [item.sku]: null })
-                              } catch (err) {
-                                setActionError(err instanceof Error ? err.message : "Грешка при редакция")
-                              } finally {
-                                setQtySaving({ ...qtySaving, [item.sku]: false })
-                              }
-                            }}
-                          >
-                            {saving ? "..." : "Запиши"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            disabled={saving}
-                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: null })}
-                          >
-                            Отказ
-                          </Button>
+                    <div key={i} className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <div className="min-w-0 flex-1 truncate">
+                          {item.productName}
+                          {!canEditQty || editing === null ? (
+                            <span> x {item.quantity}</span>
+                          ) : null}
                         </div>
-                      )}
-                      {!canEditQty && (
-                        <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                        {canEditQty && editing === null && (
+                          <>
+                            <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              onClick={() => {
+                                setQtyEditing({ ...qtyEditing, [item.sku]: item.quantity })
+                                setQtyError({ ...qtyError, [item.sku]: "" })
+                              }}
+                            >
+                              Редактирай
+                            </Button>
+                          </>
+                        )}
+                        {canEditQty && editing !== null && (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              min="1"
+                              max="100"
+                              step="1"
+                              value={editing}
+                              onChange={(e) => {
+                                const n = parseInt(e.target.value, 10)
+                                setQtyEditing({
+                                  ...qtyEditing,
+                                  [item.sku]: Number.isInteger(n) && n >= 1 ? n : editing,
+                                })
+                              }}
+                              className="h-7 w-16"
+                              disabled={saving}
+                            />
+                            <Button
+                              size="sm"
+                              className="h-7 text-[11px]"
+                              disabled={saving || editing === item.quantity}
+                              onClick={async () => {
+                                if (editing === null) return
+                                setQtySaving({ ...qtySaving, [item.sku]: true })
+                                setQtyError({ ...qtyError, [item.sku]: "" })
+                                try {
+                                  await updateOrderQuantity(id, item.sku, editing)
+                                  const refreshed = await getOrder(id)
+                                  setOrder(refreshed)
+                                  setQtyEditing({ ...qtyEditing, [item.sku]: null })
+                                } catch (err) {
+                                  setQtyError({
+                                    ...qtyError,
+                                    [item.sku]: err instanceof Error ? err.message : "Грешка при редакция",
+                                  })
+                                } finally {
+                                  setQtySaving({ ...qtySaving, [item.sku]: false })
+                                }
+                              }}
+                            >
+                              {saving ? "..." : "Запиши"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              disabled={saving}
+                              onClick={() => {
+                                setQtyEditing({ ...qtyEditing, [item.sku]: null })
+                                setQtyError({ ...qtyError, [item.sku]: "" })
+                              }}
+                            >
+                              Отказ
+                            </Button>
+                          </div>
+                        )}
+                        {!canEditQty && (
+                          <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                        )}
+                      </div>
+                      {lineError && (
+                        <p className="text-xs text-red-600">{lineError}</p>
                       )}
                     </div>
                   )
@@ -834,14 +865,14 @@ export default function AdminOrderDetailPage({
                     size="sm"
                     disabled={actionLoading}
                     onClick={async () => {
-                      setActionError("")
+                      setInvoiceError("")
                       setActionLoading(true)
                       try {
                         await markInvoiceSent(id)
                         const updated = await getOrder(id)
                         setOrder(updated)
                       } catch (err) {
-                        setActionError(err instanceof Error ? err.message : "Грешка")
+                        setInvoiceError(err instanceof Error ? err.message : "Грешка")
                       } finally {
                         setActionLoading(false)
                       }
@@ -863,7 +894,7 @@ export default function AdminOrderDetailPage({
                   size="sm"
                   disabled={actionLoading || !manualInvoiceNumber.trim()}
                   onClick={async () => {
-                    setActionError("")
+                    setInvoiceError("")
                     setActionLoading(true)
                     try {
                       await setInvoiceNumber(id, manualInvoiceNumber)
@@ -871,7 +902,7 @@ export default function AdminOrderDetailPage({
                       setOrder(updated)
                       setManualInvoiceNumber("")
                     } catch (err) {
-                      setActionError(err instanceof Error ? err.message : "Грешка при записване на фактура")
+                      setInvoiceError(err instanceof Error ? err.message : "Грешка при записване на фактура")
                     } finally {
                       setActionLoading(false)
                     }
@@ -880,6 +911,9 @@ export default function AdminOrderDetailPage({
                   Запази
                 </Button>
               </div>
+            )}
+            {invoiceError && (
+              <p className="mt-2 text-sm text-red-600">{invoiceError}</p>
             )}
           </CardContent>
         </Card>
@@ -973,6 +1007,89 @@ export default function AdminOrderDetailPage({
         <CardContent>
           <div className="relative space-y-0">
             {(() => {
+              // Map an order_audit_events row to a Bulgarian label + detail
+              // string for the timeline. Domain events that aren't already
+              // captured by column-derived rows (status, paid_at, etc.) live
+              // here. The server filters event_type to TIMELINE_EVENT_TYPES;
+              // any new outcome / audit type added there should also get a
+              // case here so it renders something readable.
+              type AuditEvt = OrderDetail["auditEvents"][number]
+              const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s)
+              const renderAuditEvent = (e: AuditEvt): { label: string; detail?: string } => {
+                const p = e.payload || {}
+                switch (e.event_type) {
+                  case "order_items_changed": {
+                    const productName = (p.product_name as string) || (p.sku as string) || "артикул"
+                    const oldQ = p.old_quantity as number | undefined
+                    const newQ = p.new_quantity as number | undefined
+                    const detail = oldQ != null && newQ != null
+                      ? `${productName}: ${oldQ} → ${newQ}`
+                      : productName
+                    return { label: "Редакция на количество", detail }
+                  }
+                  case "contact_info_changed": {
+                    const fields = Object.keys(p).filter((k) => p[k] && typeof p[k] === "object")
+                    const labels: Record<string, string> = {
+                      first_name: "име",
+                      last_name: "фамилия",
+                      phone: "телефон",
+                      email: "имейл",
+                      address: "адрес",
+                      postal_code: "пощ. код",
+                      city: "град",
+                      notes: "бележки",
+                    }
+                    const list = fields.map((k) => labels[k] ?? k).join(", ")
+                    return { label: "Редакция на данни на клиента", detail: list || undefined }
+                  }
+                  case "email_resent": {
+                    const t = p.email_type as string | undefined
+                    const labels: Record<string, string> = {
+                      order_confirmation: "потвърждение за поръчка",
+                      shipping: "известие за изпращане",
+                      delivery: "потвърждение за доставка",
+                    }
+                    return { label: "Имейл изпратен повторно", detail: t ? labels[t] ?? t : undefined }
+                  }
+                  case "status_force_override": {
+                    const from = p.from as string | undefined
+                    const to = p.to as string | undefined
+                    const reason = p.reason as string | undefined
+                    return {
+                      label: "Принудителна промяна на статус",
+                      detail: [from && to ? `${from} → ${to}` : null, reason ? truncate(reason, 80) : null].filter(Boolean).join(" — ") || undefined,
+                    }
+                  }
+                  case "data_repair": {
+                    return { label: "Корекция на данни", detail: p.reason ? truncate(p.reason as string, 80) : undefined }
+                  }
+                  case "delivery_refused":
+                    return { label: "Отказана доставка", detail: p.note ? truncate(p.note as string, 80) : undefined }
+                  case "package_lost":
+                    return { label: "Изгубена пратка", detail: (p.courier_ref as string) || undefined }
+                  case "returned":
+                    return { label: "Върнат продукт", detail: (p.return_ref as string) || undefined }
+                  case "recalled":
+                    return { label: "Изтеглен продукт", detail: (p.recall_ref as string) || undefined }
+                  case "partial_return":
+                    return { label: "Частично връщане" }
+                  case "refund_annotation_edited":
+                    return { label: "Промяна на бележка по възстановяване" }
+                  case "external_refund":
+                    return { label: "Външно възстановяване" }
+                  case "payment_failed":
+                    return { label: "Неуспешно плащане", detail: (p.reason as string) || undefined }
+                  case "dispute_opened":
+                    return { label: "Отворен спор" }
+                  case "dispute_closed":
+                    return { label: "Приключен спор", detail: (p.status as string) || undefined }
+                  case "dispute_funds_reinstated":
+                    return { label: "Върнати средства от спор" }
+                  default:
+                    return { label: e.event_type }
+                }
+              }
+
               // For orders created before timestamps were added, fall back to created_at
               const confirmedFallback = !order.confirmed_at && order.status !== "pending" ? order.created_at : null
               const events = [
@@ -990,11 +1107,14 @@ export default function AdminOrderDetailPage({
                 })),
                 ...complaints.filter(c => c.reported_at).map(c => ({ label: "Рекламация", date: c.reported_at, detail: `#${c.complaint_ref}` })),
                 { label: "Отказана", date: order.cancelled_at, detail: order.cancellation_reason ? (order.cancellation_reason.length > 80 ? order.cancellation_reason.slice(0, 80) + "…" : order.cancellation_reason) : undefined },
-                ...order.admin_notes.map((note) => ({
-                  label: "Бележка",
-                  date: note.created_at,
-                  detail: note.text.length > 80 ? note.text.slice(0, 80) + "…" : note.text,
-                })),
+                // Domain events from order_audit_events. Admin notes are
+                // intentionally NOT in this array — they live in the
+                // dedicated "Вътрешни бележки" card to avoid duplication
+                // (see admin-panel.md § Order Detail timeline).
+                ...order.auditEvents.map((e) => {
+                  const { label, detail } = renderAuditEvent(e)
+                  return { label, date: e.created_at, detail }
+                }),
               ]
                 .filter((e) => e.date)
                 .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
@@ -1054,13 +1174,14 @@ export default function AdminOrderDetailPage({
               disabled={notesSaving || !newNote.trim()}
               onClick={async () => {
                 setNotesSaving(true)
+                setNoteError("")
                 try {
                   await addAdminNote(id, newNote)
                   const updated = await getOrder(id)
                   setOrder(updated)
                   setNewNote("")
-                } catch {
-                  setActionError("Грешка при добавяне на бележка")
+                } catch (err) {
+                  setNoteError(err instanceof Error ? err.message : "Грешка при добавяне на бележка")
                 } finally {
                   setNotesSaving(false)
                 }
@@ -1069,6 +1190,9 @@ export default function AdminOrderDetailPage({
               {notesSaving ? "..." : "Добави"}
             </Button>
           </div>
+          {noteError && (
+            <p className="mt-2 text-sm text-red-600">{noteError}</p>
+          )}
           {order.admin_notes.length > 0 && (
             <div className="mt-3 space-y-2">
               {[...order.admin_notes].reverse().map((note, i) => (
@@ -1172,70 +1296,120 @@ export default function AdminOrderDetailPage({
                             </button>
                           )}
                         </div>
-                        {!senderEditing ? (
-                          <div className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
-                            <p className="font-medium">{shipmentForm.senderName || "—"}</p>
-                            <p className="text-xs text-muted-foreground">{shipmentForm.senderPhone || "—"}</p>
-                            {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Офис код (Еконт): <span className="font-mono">{shipmentForm.senderOfficeCode}</span>
-                              </p>
-                            ) : (
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {[shipmentForm.senderAddress, shipmentForm.senderCity, shipmentForm.senderPostalCode].filter(Boolean).join(", ") || "—"}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="grid gap-2 sm:grid-cols-2">
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
-                                <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
+                        {(() => {
+                          // Three sender modes, by precedence:
+                          //   1. Econt drop-off office (SELLER_ECONT_OFFICE_CODE set)
+                          //   2. Speedy drop-off office (SELLER_SPEEDY_OFFICE_ID set)
+                          //   3. Address pickup (default — courier comes to seller)
+                          const usesEcontOffice = shipmentDisplay?.courier === "econt" && !!shipmentForm.senderOfficeCode
+                          const usesSpeedyOffice = shipmentDisplay?.courier === "speedy" && !!shipmentForm.senderSpeedyOfficeId
+                          if (!senderEditing) {
+                            return (
+                              <div className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
+                                <p className="font-medium">{shipmentForm.senderName || "—"}</p>
+                                <p className="text-xs text-muted-foreground">{shipmentForm.senderPhone || "—"}</p>
+                                {usesEcontOffice ? (
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Офис: <span className="font-medium text-foreground">{shipmentForm.senderOfficeName || "—"}</span>
+                                    <span className="ml-1 font-mono">({shipmentForm.senderOfficeCode})</span>
+                                  </p>
+                                ) : usesSpeedyOffice ? (
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Офис: <span className="font-medium text-foreground">{shipmentForm.senderSpeedyOfficeName || "—"}</span>
+                                    <span className="ml-1 font-mono">({shipmentForm.senderSpeedyOfficeId})</span>
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {[shipmentForm.senderAddress, shipmentForm.senderCity, shipmentForm.senderPostalCode].filter(Boolean).join(", ") || "—"}
+                                  </p>
+                                )}
                               </div>
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
-                                <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
-                              </div>
-                            </div>
-                            {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
-                              <>
+                            )
+                          }
+                          return (
+                            <>
+                              <div className="grid gap-2 sm:grid-cols-2">
                                 <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
-                                  <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                                  <label className="mb-1 block text-xs text-muted-foreground">Име / Фирма</label>
+                                  <Input value={shipmentForm.senderName} onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })} />
                                 </div>
                                 <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Или избери офис от списъка</label>
+                                  <label className="mb-1 block text-xs text-muted-foreground">Телефон</label>
+                                  <Input value={shipmentForm.senderPhone} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPhone: e.target.value })} />
+                                </div>
+                              </div>
+                              {usesEcontOffice ? (
+                                <div className="space-y-3">
                                   <EcontOfficePicker
                                     selectedOfficeId={null}
                                     onSelect={(office: EcontOfficeOption) => {
-                                      setShipmentForm({ ...shipmentForm, senderOfficeCode: office.code })
+                                      setShipmentForm({ ...shipmentForm, senderOfficeCode: office.code, senderOfficeName: office.name })
                                     }}
                                     onError={setOfficePickerError}
                                   />
+                                  {officePickerError && (
+                                    <p className="text-sm text-red-600">
+                                      Офисите не могат да бъдат заредени. Кодът на офиса остава непроменен.
+                                    </p>
+                                  )}
+                                  <div className="grid gap-2 sm:grid-cols-3">
+                                    <div>
+                                      <label className="mb-1 block text-xs text-muted-foreground">Офис код</label>
+                                      <Input value={shipmentForm.senderOfficeCode} disabled className="bg-secondary" />
+                                    </div>
+                                    <div className="sm:col-span-2">
+                                      <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+                                      <Input value={shipmentForm.senderOfficeName} disabled className="bg-secondary" />
+                                    </div>
+                                  </div>
                                 </div>
-                              </>
-                            ) : (
-                              <div className="grid gap-2 sm:grid-cols-3">
-                                <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Град</label>
-                                  <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                              ) : usesSpeedyOffice ? (
+                                <div className="space-y-3">
+                                  <SpeedyOfficePicker
+                                    selectedOfficeId={Number(shipmentForm.senderSpeedyOfficeId) || null}
+                                    onSelect={(office: SpeedyOfficeOption) => {
+                                      setShipmentForm({ ...shipmentForm, senderSpeedyOfficeId: String(office.id), senderSpeedyOfficeName: office.name })
+                                    }}
+                                    onError={setOfficePickerError}
+                                  />
+                                  {officePickerError && (
+                                    <p className="text-sm text-red-600">
+                                      Офисите не могат да бъдат заредени. ID-то на офиса остава непроменено.
+                                    </p>
+                                  )}
+                                  <div className="grid gap-2 sm:grid-cols-3">
+                                    <div>
+                                      <label className="mb-1 block text-xs text-muted-foreground">Офис ID</label>
+                                      <Input value={shipmentForm.senderSpeedyOfficeId} disabled className="bg-secondary" />
+                                    </div>
+                                    <div className="sm:col-span-2">
+                                      <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+                                      <Input value={shipmentForm.senderSpeedyOfficeName} disabled className="bg-secondary" />
+                                    </div>
+                                  </div>
                                 </div>
-                                <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
-                                  <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                              ) : (
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  <div>
+                                    <label className="mb-1 block text-xs text-muted-foreground">Град</label>
+                                    <Input value={shipmentForm.senderCity} onChange={(e) => setShipmentForm({ ...shipmentForm, senderCity: e.target.value })} />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs text-muted-foreground">Адрес</label>
+                                    <Input value={shipmentForm.senderAddress} onChange={(e) => setShipmentForm({ ...shipmentForm, senderAddress: e.target.value })} />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
+                                    <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
+                                  </div>
                                 </div>
-                                <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Пощ. код</label>
-                                  <Input value={shipmentForm.senderPostalCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderPostalCode: e.target.value })} />
-                                </div>
+                              )}
+                              <div className="pt-1">
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSenderEditing(false)}>Готово</Button>
                               </div>
-                            )}
-                            <div className="pt-1">
-                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSenderEditing(false)}>Готово</Button>
-                            </div>
-                          </>
-                        )}
+                            </>
+                          )
+                        })()}
                       </div>
 
                       {/* Receiver — collapsed summary by default. Customer
@@ -1590,11 +1764,14 @@ export default function AdminOrderDetailPage({
               stock outcome (per-SKU recordStockMovement calls) OR captures a
               "no stock movement" reason via addAdminNote. Each server action
               stays single-responsibility; the UI does the coordination. */}
-          <Dialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
+          <Dialog open={refundDialogOpen} onOpenChange={(open) => { setRefundDialogOpen(open); if (!open) setRefundError("") }}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Запиши възстановяване</DialogTitle>
               </DialogHeader>
+              {refundError && (
+                <p className="text-sm text-red-600">{refundError}</p>
+              )}
               {(() => {
             const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
             const remainingCents = order.total_amount - alreadyRefunded
@@ -1727,7 +1904,7 @@ export default function AdminOrderDetailPage({
                         <div className="flex items-center gap-3">
                           <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
                             setRefundLoading(true)
-                            setActionError("")
+                            setRefundError("")
                             try {
                               const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
                               const amountCents = Math.round(amountFloat * 100)
@@ -1746,7 +1923,7 @@ export default function AdminOrderDetailPage({
                               setSavedRefundAmountCents(amountCents)
                               setRefundStep("stock")
                             } catch (err) {
-                              setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
+                              setRefundError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
                             } finally {
                               setRefundLoading(false)
                             }
@@ -1844,11 +2021,11 @@ export default function AdminOrderDetailPage({
                               })
                               .filter((m): m is NonNullable<typeof m> => m !== null)
                             if (movements.length === 0) {
-                              setActionError('Въведете поне едно количество, или изберете „Няма физическо връщане" по-долу')
+                              setRefundError('Въведете поне едно количество, или изберете „Няма физическо връщане" по-долу')
                               return
                             }
                             setStockLoading(true)
-                            setActionError("")
+                            setRefundError("")
                             // Generate UUIDs per (sku, disposition) if not already
                             // present. Preserved across retries so failures in
                             // the middle of the loop can be safely retried.
@@ -1894,7 +2071,7 @@ export default function AdminOrderDetailPage({
                               setOrder(refreshed)
                               setRefundStep("complete")
                             } else {
-                              setActionError(failed[0].message)
+                              setRefundError(failed[0].message)
                             }
                           }}
                         >
@@ -1941,7 +2118,7 @@ export default function AdminOrderDetailPage({
                           disabled={skipLoading || stockLoading || !skipReason || (skipReason === "other" && !skipOtherNote.trim())}
                           onClick={async () => {
                             setSkipLoading(true)
-                            setActionError("")
+                            setRefundError("")
                             const reasonLabel: Record<Exclude<SkipReason, "">, string> = {
                               no_return: "Goodwill — не се очаква връщане",
                               package_lost: "Изгубена пратка",
@@ -1958,7 +2135,7 @@ export default function AdminOrderDetailPage({
                               setOrder(refreshed)
                               setRefundStep("complete")
                             } catch (err) {
-                              setActionError(err instanceof Error ? err.message : "Грешка при записване")
+                              setRefundError(err instanceof Error ? err.message : "Грешка при записване")
                             } finally {
                               setSkipLoading(false)
                             }
@@ -1991,11 +2168,14 @@ export default function AdminOrderDetailPage({
           {/* Complaints section — moved to dialog. Triggered from "Още
               действия" dropdown. Existing complaints and the new-complaint
               form all live here. */}
-          <Dialog open={complaintDialogOpen} onOpenChange={setComplaintDialogOpen}>
+          <Dialog open={complaintDialogOpen} onOpenChange={(open) => { setComplaintDialogOpen(open); if (!open) setComplaintError("") }}>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Рекламации</DialogTitle>
               </DialogHeader>
+              {complaintError && (
+                <p className="text-sm text-red-600">{complaintError}</p>
+              )}
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">Регистрирайте рекламация по ЗЗП Чл. 127. Получавате уникален номер (RCL-YYYY-NNNN) за обратна връзка с клиента.</p>
             {complaints.length > 0 && (
@@ -2025,6 +2205,7 @@ export default function AdminOrderDetailPage({
                             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setResolveId(null)}>Отказ</Button>
                             <Button size="sm" className="h-7 text-xs" disabled={resolveLoading || !resolveResolution.trim()} onClick={async () => {
                               setResolveLoading(true)
+                              setComplaintError("")
                               try {
                                 await resolveComplaint(c.id, { status: resolveStatus, resolution: resolveResolution.trim() })
                                 const updated = await getOrderComplaints(id)
@@ -2032,7 +2213,7 @@ export default function AdminOrderDetailPage({
                                 setResolveId(null)
                                 setResolveResolution("")
                               } catch (err) {
-                                setActionError(err instanceof Error ? err.message : "Грешка")
+                                setComplaintError(err instanceof Error ? err.message : "Грешка")
                               } finally {
                                 setResolveLoading(false)
                               }
@@ -2062,7 +2243,7 @@ export default function AdminOrderDetailPage({
                 <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
                   setComplaintLoading(true)
                   setComplaintResult("")
-                  setActionError("")
+                  setComplaintError("")
                   try {
                     const result = await recordComplaint(id, {
                       defectDescription: complaintDefect.trim(),
@@ -2074,7 +2255,7 @@ export default function AdminOrderDetailPage({
                     const updated = await getOrderComplaints(id)
                     setComplaints(updated)
                   } catch (err) {
-                    setActionError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
+                    setComplaintError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
                   } finally {
                     setComplaintLoading(false)
                   }
@@ -2110,11 +2291,14 @@ export default function AdminOrderDetailPage({
       {/* Post-shipment outcome events — moved to dialog. Triggered from "Още
           действия" dropdown for shipped/delivered orders. The dialog body is
           identical to the previous always-visible card. */}
-      <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
+      <Dialog open={outcomeDialogOpen} onOpenChange={(open) => { setOutcomeDialogOpen(open); if (!open) setOutcomeError("") }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Следдоставно събитие</DialogTitle>
           </DialogHeader>
+          {outcomeError && (
+            <p className="text-sm text-red-600">{outcomeError}</p>
+          )}
           <div>
             <p className="mb-3 text-xs text-muted-foreground">
               Докладвайте изключение, без да променяте статуса на поръчката. Статусът остава какъвто е — паричните и физическите потоци се записват отделно (възстановяване, връщане в склада, брак).
@@ -2209,7 +2393,7 @@ export default function AdminOrderDetailPage({
                   if (!outcomeType) return
                   setOutcomeLoading(true)
                   setOutcomeSaved(false)
-                  setActionError("")
+                  setOutcomeError("")
                   const submittedType = outcomeType
                   try {
                     await recordOrderOutcome(id, {
@@ -2243,7 +2427,7 @@ export default function AdminOrderDetailPage({
                     const refreshed = await getOrder(id)
                     setOrder(refreshed)
                   } catch (err) {
-                    setActionError(err instanceof Error ? err.message : "Грешка при записване на събитие")
+                    setOutcomeError(err instanceof Error ? err.message : "Грешка при записване на събитие")
                   } finally {
                     setOutcomeLoading(false)
                   }

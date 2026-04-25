@@ -23,4 +23,8 @@
 - `NEXT_PUBLIC_META_PIXEL_ID` — Meta (Facebook) Pixel ID, numeric string. Gated on marketing cookie consent; component validates format and renders nothing on mismatch
 - `SPEEDY_USERNAME`, `SPEEDY_PASSWORD`, `SPEEDY_API_URL` — Speedy courier API
 - `ECONT_USERNAME`, `ECONT_PASSWORD`, `ECONT_API_URL` — Econt courier API
+- `SELLER_ECONT_OFFICE_CODE` — default Econt drop-off office code; pre-fills the sender field in the admin shipment form (per-shipment override available). When set, Econt routes the shipment through that office instead of dispatching a courier to the sender address.
+- `SELLER_ECONT_OFFICE_NAME` — display-only label for the same office; shown alongside the code in the shipment form so admin can verify the right office at a glance. Not sent to the courier API.
+- `SELLER_SPEEDY_OFFICE_ID` — default Speedy drop-off office ID (numeric, as a string). When set, the shipment form pre-fills the sender as drop-off-at-office; sent to Speedy as `sender.dropoffOfficeId`. Mutually exclusive with the default address-pickup behavior — the Speedy account must be configured for drop-off mode for this to be accepted.
+- `SELLER_SPEEDY_OFFICE_NAME` — display-only label for the same office. Not sent to Speedy.
 

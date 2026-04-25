@@ -101,7 +101,7 @@ Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`,
 - `chk_invoice_needs_fields` — `needs_invoice=true` requires `invoice_type`, non-empty `invoice_mol`, non-empty `invoice_address`.
 - `chk_invoice_company_fields` — `invoice_type='company'` requires non-empty `invoice_company_name` and `invoice_eik`.
 - `chk_invoice_individual_fields` — `invoice_type='individual'` forbids company-only identifiers (`invoice_eik`, `invoice_vat_number`, `invoice_company_name` all null). Individual invoices carry only name (`invoice_mol`) and address.
-- `chk_invoice_fields_cleared` — `needs_invoice=false` requires ALL invoice_* fields to be null. Prevents stale identifier data when a customer toggles the invoice checkbox off after typing.
+- `chk_invoice_fields_cleared` — `needs_invoice=false` requires the **profile** fields (`invoice_type`, `invoice_company_name`, `invoice_eik`, `invoice_vat_number`, `invoice_mol`, `invoice_address`) to be null. Prevents stale identifier data when a customer toggles the invoice checkbox off after typing. **`invoice_number`, `invoice_date`, and `invoice_sent_at` are NOT covered by this CHECK** — those are admin-controlled (issued in Microinvest, recorded against the order) and orthogonal to checkout consent. Migration `20260425091004` relaxed the original constraint to support the "customer changed mind on phone-confirm call" workflow without forcing admin to re-collect profile data the customer doesn't need to give.
 
 **EGN is never collected.** Bulgarian tax law (ЗДДС) does not require EGN on individual retail invoices; the `invoice_egn` column was dropped in migration `20260420161754_invoice_mode_drop_egn.sql`. No national ID number touches the DB.
 

@@ -215,6 +215,23 @@ export interface OrderDetail extends OrderSummary {
   // exists in the DB (reference_id is polymorphic text), so we fetch
   // separately and match client-side.
   inventoryReturns: OrderInventoryReturn[]
+  // Domain events from order_audit_events that aren't already represented
+  // by column-derived rows in the timeline (status changes, paid_at,
+  // shipped_at, etc. are already captured via their respective columns —
+  // surfacing both would double-count). The fetch in getOrder filters to
+  // an allowlist of event_types: order_items_changed, contact_info_changed,
+  // email_resent, status_force_override, data_repair, the post-shipment
+  // outcomes, refund_annotation_edited, payment_failed, dispute_*,
+  // external_refund.
+  auditEvents: OrderAuditEvent[]
+}
+
+export interface OrderAuditEvent {
+  id: number
+  event_type: string
+  actor: string
+  payload: Record<string, unknown>
+  created_at: string
 }
 
 export interface OrderInventoryReturn {
@@ -478,7 +495,30 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
 
   const supabase = await createClient()
 
-  const [orderResult, returnsResult] = await Promise.all([
+  // Allowlist of audit event types to surface in the timeline. Events
+  // already covered by column-derived rows in the UI (status_changed,
+  // paid_at_recorded, shipped_at_recorded, etc.) are intentionally
+  // excluded to avoid double-counting in the timeline.
+  const TIMELINE_EVENT_TYPES = [
+    "order_items_changed",
+    "contact_info_changed",
+    "email_resent",
+    "status_force_override",
+    "data_repair",
+    "delivery_refused",
+    "package_lost",
+    "returned",
+    "recalled",
+    "partial_return",
+    "refund_annotation_edited",
+    "external_refund",
+    "payment_failed",
+    "dispute_opened",
+    "dispute_closed",
+    "dispute_funds_reinstated",
+  ]
+
+  const [orderResult, returnsResult, auditResult] = await Promise.all([
     supabase
       .from("orders")
       .select(`
@@ -519,6 +559,12 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       .eq("order_id", orderId)
       .eq("reference_type", "return")
       .order("created_at", { ascending: true }),
+    supabase
+      .from("order_audit_events")
+      .select("id, event_type, actor, payload, created_at")
+      .eq("order_id", orderId)
+      .in("event_type", TIMELINE_EVENT_TYPES)
+      .order("created_at", { ascending: true }),
   ])
 
   if (orderResult.error || !orderResult.data) {
@@ -533,7 +579,15 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     console.error(`Failed to fetch inventory returns for order ${orderId}:`, returnsResult.error)
   }
 
-  return { ...orderResult.data, inventoryReturns: returns }
+  const auditEvents = (auditResult.data ?? []) as OrderAuditEvent[]
+  if (auditResult.error) {
+    // Same fail-open: render the order without audit events rather than
+    // blocking the page. The column-derived timeline events are still
+    // visible.
+    console.error(`Failed to fetch audit events for order ${orderId}:`, auditResult.error)
+  }
+
+  return { ...orderResult.data, inventoryReturns: returns, auditEvents }
 }
 
 // Valid status transitions
@@ -665,6 +719,19 @@ export interface ShipmentFormData {
   senderCity: string
   senderPostalCode: string
   senderOfficeCode: string
+  // Display-only — surfaced in the admin shipment form alongside the code so
+  // admin sees a human-readable confirmation. Not sent to the courier API
+  // (only the code is). Populated from SELLER_ECONT_OFFICE_NAME env var as
+  // a default; replaced by EcontOfficePicker selection in edit mode.
+  senderOfficeName: string
+  // Speedy sender drop-off office. When set, Speedy doesn't dispatch a
+  // courier to the seller address — admin drops off at this office. Sent
+  // as `sender.dropoffOfficeId` to Speedy's API. Both fields are populated
+  // from SELLER_SPEEDY_OFFICE_ID / _NAME env vars or the SpeedyOfficePicker
+  // in edit mode. Stored as strings to mirror the recipient fields and
+  // keep the form shape uniform; coerced to number on dispatch.
+  senderSpeedyOfficeId: string
+  senderSpeedyOfficeName: string
   recipientName: string
   recipientPhone: string
   recipientCity: string
@@ -719,6 +786,9 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
       senderCity: process.env.SELLER_CITY || "",
       senderPostalCode: process.env.SELLER_POSTAL_CODE || "",
       senderOfficeCode: process.env.SELLER_ECONT_OFFICE_CODE || "",
+      senderOfficeName: process.env.SELLER_ECONT_OFFICE_NAME || "",
+      senderSpeedyOfficeId: process.env.SELLER_SPEEDY_OFFICE_ID || "",
+      senderSpeedyOfficeName: process.env.SELLER_SPEEDY_OFFICE_NAME || "",
       recipientName: `${order.first_name} ${order.last_name}`,
       recipientPhone: order.phone,
       recipientCity: order.city,
@@ -800,6 +870,11 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
         weight: form.weight,
         contents: form.contents,
         codAmount,
+        // Optional sender drop-off-at-office. When unset, Speedy follows
+        // the default courier-pickup-from-registered-address flow.
+        senderOfficeId: form.senderSpeedyOfficeId
+          ? Number(form.senderSpeedyOfficeId) || undefined
+          : undefined,
       })
       trackingNumber = result.trackingNumber
     } else {
@@ -878,6 +953,12 @@ export async function addAdminNote(orderId: string, note: string) {
   return { success: true }
 }
 
+// Note: invoice_number / invoice_date are deliberately allowed on orders
+// where needs_invoice=false. Profile fields (type/mol/address/company_name/
+// eik/vat) stay tied to needs_invoice — those represent what the customer
+// agreed to share at checkout. The number is admin-controlled (issued in
+// Microinvest, pasted here) and orthogonal to checkout consent. See
+// migration 20260425_relax_invoice_fields_cleared.sql.
 export async function setInvoiceNumber(orderId: string, invoiceNumber: string): Promise<{ success: true }> {
   await requireAdmin()
 
