@@ -61,3 +61,14 @@ While pre-launch:
 - Migrations can be squashed (collapse many small ones into one `initial_schema.sql`) if the list gets unwieldy.
 - The DB can be dropped and re-applied from scratch.
 - Once the first real customer order lands, the rules above apply strictly — no more squashing, no more editing applied migrations.
+
+## Squash history
+
+The 26-file migration series from the `db-modifications` branch was
+consolidated into the single `20260420120000_initial_schema.sql` on
+2026-04-25, before launch. The pre-squash version of each migration
+remains accessible via the merge commit on the squash PR (and any
+branch that still holds the original step-by-step files) for forensic
+look-back if needed. From this point forward the rules above apply —
+new schema changes go in their own dated file, never edit
+`initial_schema.sql` post-launch.
