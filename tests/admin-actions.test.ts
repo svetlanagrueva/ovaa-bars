@@ -2052,6 +2052,7 @@ describe("admin actions", () => {
       senderCity: "Sofia",
       senderPostalCode: "1000",
       senderOfficeCode: "1056",
+      senderOfficeName: "Sofia Center 1",
       recipientName: "Ivan Petrov",
       recipientPhone: "+359888123456",
       recipientCity: "Sofia",

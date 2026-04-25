@@ -665,6 +665,11 @@ export interface ShipmentFormData {
   senderCity: string
   senderPostalCode: string
   senderOfficeCode: string
+  // Display-only — surfaced in the admin shipment form alongside the code so
+  // admin sees a human-readable confirmation. Not sent to the courier API
+  // (only the code is). Populated from SELLER_ECONT_OFFICE_NAME env var as
+  // a default; replaced by EcontOfficePicker selection in edit mode.
+  senderOfficeName: string
   recipientName: string
   recipientPhone: string
   recipientCity: string
@@ -719,6 +724,7 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
       senderCity: process.env.SELLER_CITY || "",
       senderPostalCode: process.env.SELLER_POSTAL_CODE || "",
       senderOfficeCode: process.env.SELLER_ECONT_OFFICE_CODE || "",
+      senderOfficeName: process.env.SELLER_ECONT_OFFICE_NAME || "",
       recipientName: `${order.first_name} ${order.last_name}`,
       recipientPhone: order.phone,
       recipientCity: order.city,

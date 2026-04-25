@@ -23,4 +23,6 @@
 - `NEXT_PUBLIC_META_PIXEL_ID` — Meta (Facebook) Pixel ID, numeric string. Gated on marketing cookie consent; component validates format and renders nothing on mismatch
 - `SPEEDY_USERNAME`, `SPEEDY_PASSWORD`, `SPEEDY_API_URL` — Speedy courier API
 - `ECONT_USERNAME`, `ECONT_PASSWORD`, `ECONT_API_URL` — Econt courier API
+- `SELLER_ECONT_OFFICE_CODE` — default Econt drop-off office code; pre-fills the sender field in the admin shipment form (per-shipment override available)
+- `SELLER_ECONT_OFFICE_NAME` — display-only label for the same office; shown alongside the code in the shipment form so admin can verify the right office at a glance. Not sent to the courier API.
 

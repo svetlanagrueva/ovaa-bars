@@ -1216,7 +1216,8 @@ export default function AdminOrderDetailPage({
                             <p className="text-xs text-muted-foreground">{shipmentForm.senderPhone || "—"}</p>
                             {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Офис код (Еконт): <span className="font-mono">{shipmentForm.senderOfficeCode}</span>
+                                Офис: <span className="font-medium text-foreground">{shipmentForm.senderOfficeName || "—"}</span>
+                                <span className="ml-1 font-mono">({shipmentForm.senderOfficeCode})</span>
                               </p>
                             ) : (
                               <p className="mt-1 text-xs text-muted-foreground">
@@ -1237,22 +1238,30 @@ export default function AdminOrderDetailPage({
                               </div>
                             </div>
                             {shipmentDisplay?.courier === "econt" && shipmentForm.senderOfficeCode ? (
-                              <>
-                                <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Офис код (Еконт)</label>
-                                  <Input value={shipmentForm.senderOfficeCode} onChange={(e) => setShipmentForm({ ...shipmentForm, senderOfficeCode: e.target.value })} />
+                              <div className="space-y-3">
+                                <EcontOfficePicker
+                                  selectedOfficeId={null}
+                                  onSelect={(office: EcontOfficeOption) => {
+                                    setShipmentForm({ ...shipmentForm, senderOfficeCode: office.code, senderOfficeName: office.name })
+                                  }}
+                                  onError={setOfficePickerError}
+                                />
+                                {officePickerError && (
+                                  <p className="text-sm text-red-600">
+                                    Офисите не могат да бъдат заредени. Кодът на офиса остава непроменен.
+                                  </p>
+                                )}
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  <div>
+                                    <label className="mb-1 block text-xs text-muted-foreground">Офис код</label>
+                                    <Input value={shipmentForm.senderOfficeCode} disabled className="bg-secondary" />
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <label className="mb-1 block text-xs text-muted-foreground">Име на офис</label>
+                                    <Input value={shipmentForm.senderOfficeName} disabled className="bg-secondary" />
+                                  </div>
                                 </div>
-                                <div>
-                                  <label className="mb-1 block text-xs text-muted-foreground">Или избери офис от списъка</label>
-                                  <EcontOfficePicker
-                                    selectedOfficeId={null}
-                                    onSelect={(office: EcontOfficeOption) => {
-                                      setShipmentForm({ ...shipmentForm, senderOfficeCode: office.code })
-                                    }}
-                                    onError={setOfficePickerError}
-                                  />
-                                </div>
-                              </>
+                              </div>
                             ) : (
                               <div className="grid gap-2 sm:grid-cols-3">
                                 <div>
