@@ -68,6 +68,19 @@ export default function AdminOrderDetailPage({
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementSaved, setSettlementSaved] = useState(false)
   const [codConfirmLoading, setCodConfirmLoading] = useState(false)
+  // Each form / dialog / inline panel that submits OUTSIDE the Действия
+  // card needs its own local error state — actionError renders only inside
+  // Действия, so a thrown server-action error from elsewhere on the page
+  // would silently disappear. Pattern documented in
+  // memory/feedback_form_error_handling.md. New admin forms should follow
+  // the same pattern: local <flow>Error + inline render next to Save.
+  const [codConfirmError, setCodConfirmError] = useState("")
+  const [qtyError, setQtyError] = useState<Record<string, string>>({})
+  const [invoiceError, setInvoiceError] = useState("")
+  const [noteError, setNoteError] = useState("")
+  const [refundError, setRefundError] = useState("")
+  const [complaintError, setComplaintError] = useState("")
+  const [outcomeError, setOutcomeError] = useState("")
 
   // Order edit — contact info state
   const [contactEditing, setContactEditing] = useState(false)
@@ -413,6 +426,9 @@ export default function AdminOrderDetailPage({
           >
             {order.phone}
           </a>
+          {codConfirmError && (
+            <p className="mt-2 text-sm text-red-700">{codConfirmError}</p>
+          )}
           <div className="mt-3">
             <Button
               size="sm"
@@ -420,13 +436,13 @@ export default function AdminOrderDetailPage({
               disabled={codConfirmLoading}
               onClick={async () => {
                 setCodConfirmLoading(true)
-                setActionError("")
+                setCodConfirmError("")
                 try {
                   await markCodConfirmed(id)
                   const updated = await getOrder(id)
                   setOrder(updated)
                 } catch (err) {
-                  setActionError(err instanceof Error ? err.message : "Грешка при потвърждаване")
+                  setCodConfirmError(err instanceof Error ? err.message : "Грешка при потвърждаване")
                 } finally {
                   setCodConfirmLoading(false)
                 }
@@ -648,80 +664,95 @@ export default function AdminOrderDetailPage({
                 return order.items.map((item, i) => {
                   const editing = qtyEditing[item.sku] ?? null
                   const saving = qtySaving[item.sku] ?? false
+                  const lineError = qtyError[item.sku] ?? ""
                   return (
-                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
-                      <div className="min-w-0 flex-1 truncate">
-                        {item.productName}
-                        {!canEditQty || editing === null ? (
-                          <span> x {item.quantity}</span>
-                        ) : null}
-                      </div>
-                      {canEditQty && editing === null && (
-                        <>
-                          <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: item.quantity })}
-                          >
-                            Редактирай
-                          </Button>
-                        </>
-                      )}
-                      {canEditQty && editing !== null && (
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            min="1"
-                            max="100"
-                            step="1"
-                            value={editing}
-                            onChange={(e) => {
-                              const n = parseInt(e.target.value, 10)
-                              setQtyEditing({
-                                ...qtyEditing,
-                                [item.sku]: Number.isInteger(n) && n >= 1 ? n : editing,
-                              })
-                            }}
-                            className="h-7 w-16"
-                            disabled={saving}
-                          />
-                          <Button
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            disabled={saving || editing === item.quantity}
-                            onClick={async () => {
-                              if (editing === null) return
-                              setQtySaving({ ...qtySaving, [item.sku]: true })
-                              setActionError("")
-                              try {
-                                await updateOrderQuantity(id, item.sku, editing)
-                                const refreshed = await getOrder(id)
-                                setOrder(refreshed)
-                                setQtyEditing({ ...qtyEditing, [item.sku]: null })
-                              } catch (err) {
-                                setActionError(err instanceof Error ? err.message : "Грешка при редакция")
-                              } finally {
-                                setQtySaving({ ...qtySaving, [item.sku]: false })
-                              }
-                            }}
-                          >
-                            {saving ? "..." : "Запиши"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            disabled={saving}
-                            onClick={() => setQtyEditing({ ...qtyEditing, [item.sku]: null })}
-                          >
-                            Отказ
-                          </Button>
+                    <div key={i} className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <div className="min-w-0 flex-1 truncate">
+                          {item.productName}
+                          {!canEditQty || editing === null ? (
+                            <span> x {item.quantity}</span>
+                          ) : null}
                         </div>
-                      )}
-                      {!canEditQty && (
-                        <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                        {canEditQty && editing === null && (
+                          <>
+                            <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              onClick={() => {
+                                setQtyEditing({ ...qtyEditing, [item.sku]: item.quantity })
+                                setQtyError({ ...qtyError, [item.sku]: "" })
+                              }}
+                            >
+                              Редактирай
+                            </Button>
+                          </>
+                        )}
+                        {canEditQty && editing !== null && (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              min="1"
+                              max="100"
+                              step="1"
+                              value={editing}
+                              onChange={(e) => {
+                                const n = parseInt(e.target.value, 10)
+                                setQtyEditing({
+                                  ...qtyEditing,
+                                  [item.sku]: Number.isInteger(n) && n >= 1 ? n : editing,
+                                })
+                              }}
+                              className="h-7 w-16"
+                              disabled={saving}
+                            />
+                            <Button
+                              size="sm"
+                              className="h-7 text-[11px]"
+                              disabled={saving || editing === item.quantity}
+                              onClick={async () => {
+                                if (editing === null) return
+                                setQtySaving({ ...qtySaving, [item.sku]: true })
+                                setQtyError({ ...qtyError, [item.sku]: "" })
+                                try {
+                                  await updateOrderQuantity(id, item.sku, editing)
+                                  const refreshed = await getOrder(id)
+                                  setOrder(refreshed)
+                                  setQtyEditing({ ...qtyEditing, [item.sku]: null })
+                                } catch (err) {
+                                  setQtyError({
+                                    ...qtyError,
+                                    [item.sku]: err instanceof Error ? err.message : "Грешка при редакция",
+                                  })
+                                } finally {
+                                  setQtySaving({ ...qtySaving, [item.sku]: false })
+                                }
+                              }}
+                            >
+                              {saving ? "..." : "Запиши"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              disabled={saving}
+                              onClick={() => {
+                                setQtyEditing({ ...qtyEditing, [item.sku]: null })
+                                setQtyError({ ...qtyError, [item.sku]: "" })
+                              }}
+                            >
+                              Отказ
+                            </Button>
+                          </div>
+                        )}
+                        {!canEditQty && (
+                          <span className="font-medium">{formatPrice(item.priceInCents * item.quantity)}</span>
+                        )}
+                      </div>
+                      {lineError && (
+                        <p className="text-xs text-red-600">{lineError}</p>
                       )}
                     </div>
                   )
@@ -834,14 +865,14 @@ export default function AdminOrderDetailPage({
                     size="sm"
                     disabled={actionLoading}
                     onClick={async () => {
-                      setActionError("")
+                      setInvoiceError("")
                       setActionLoading(true)
                       try {
                         await markInvoiceSent(id)
                         const updated = await getOrder(id)
                         setOrder(updated)
                       } catch (err) {
-                        setActionError(err instanceof Error ? err.message : "Грешка")
+                        setInvoiceError(err instanceof Error ? err.message : "Грешка")
                       } finally {
                         setActionLoading(false)
                       }
@@ -863,7 +894,7 @@ export default function AdminOrderDetailPage({
                   size="sm"
                   disabled={actionLoading || !manualInvoiceNumber.trim()}
                   onClick={async () => {
-                    setActionError("")
+                    setInvoiceError("")
                     setActionLoading(true)
                     try {
                       await setInvoiceNumber(id, manualInvoiceNumber)
@@ -871,7 +902,7 @@ export default function AdminOrderDetailPage({
                       setOrder(updated)
                       setManualInvoiceNumber("")
                     } catch (err) {
-                      setActionError(err instanceof Error ? err.message : "Грешка при записване на фактура")
+                      setInvoiceError(err instanceof Error ? err.message : "Грешка при записване на фактура")
                     } finally {
                       setActionLoading(false)
                     }
@@ -880,6 +911,9 @@ export default function AdminOrderDetailPage({
                   Запази
                 </Button>
               </div>
+            )}
+            {invoiceError && (
+              <p className="mt-2 text-sm text-red-600">{invoiceError}</p>
             )}
           </CardContent>
         </Card>
@@ -1054,13 +1088,14 @@ export default function AdminOrderDetailPage({
               disabled={notesSaving || !newNote.trim()}
               onClick={async () => {
                 setNotesSaving(true)
+                setNoteError("")
                 try {
                   await addAdminNote(id, newNote)
                   const updated = await getOrder(id)
                   setOrder(updated)
                   setNewNote("")
-                } catch {
-                  setActionError("Грешка при добавяне на бележка")
+                } catch (err) {
+                  setNoteError(err instanceof Error ? err.message : "Грешка при добавяне на бележка")
                 } finally {
                   setNotesSaving(false)
                 }
@@ -1069,6 +1104,9 @@ export default function AdminOrderDetailPage({
               {notesSaving ? "..." : "Добави"}
             </Button>
           </div>
+          {noteError && (
+            <p className="mt-2 text-sm text-red-600">{noteError}</p>
+          )}
           {order.admin_notes.length > 0 && (
             <div className="mt-3 space-y-2">
               {[...order.admin_notes].reverse().map((note, i) => (
@@ -1590,11 +1628,14 @@ export default function AdminOrderDetailPage({
               stock outcome (per-SKU recordStockMovement calls) OR captures a
               "no stock movement" reason via addAdminNote. Each server action
               stays single-responsibility; the UI does the coordination. */}
-          <Dialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
+          <Dialog open={refundDialogOpen} onOpenChange={(open) => { setRefundDialogOpen(open); if (!open) setRefundError("") }}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Запиши възстановяване</DialogTitle>
               </DialogHeader>
+              {refundError && (
+                <p className="text-sm text-red-600">{refundError}</p>
+              )}
               {(() => {
             const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
             const remainingCents = order.total_amount - alreadyRefunded
@@ -1727,7 +1768,7 @@ export default function AdminOrderDetailPage({
                         <div className="flex items-center gap-3">
                           <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
                             setRefundLoading(true)
-                            setActionError("")
+                            setRefundError("")
                             try {
                               const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
                               const amountCents = Math.round(amountFloat * 100)
@@ -1746,7 +1787,7 @@ export default function AdminOrderDetailPage({
                               setSavedRefundAmountCents(amountCents)
                               setRefundStep("stock")
                             } catch (err) {
-                              setActionError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
+                              setRefundError(err instanceof Error ? err.message : "Грешка при записване на възстановяване")
                             } finally {
                               setRefundLoading(false)
                             }
@@ -1844,11 +1885,11 @@ export default function AdminOrderDetailPage({
                               })
                               .filter((m): m is NonNullable<typeof m> => m !== null)
                             if (movements.length === 0) {
-                              setActionError('Въведете поне едно количество, или изберете „Няма физическо връщане" по-долу')
+                              setRefundError('Въведете поне едно количество, или изберете „Няма физическо връщане" по-долу')
                               return
                             }
                             setStockLoading(true)
-                            setActionError("")
+                            setRefundError("")
                             // Generate UUIDs per (sku, disposition) if not already
                             // present. Preserved across retries so failures in
                             // the middle of the loop can be safely retried.
@@ -1894,7 +1935,7 @@ export default function AdminOrderDetailPage({
                               setOrder(refreshed)
                               setRefundStep("complete")
                             } else {
-                              setActionError(failed[0].message)
+                              setRefundError(failed[0].message)
                             }
                           }}
                         >
@@ -1941,7 +1982,7 @@ export default function AdminOrderDetailPage({
                           disabled={skipLoading || stockLoading || !skipReason || (skipReason === "other" && !skipOtherNote.trim())}
                           onClick={async () => {
                             setSkipLoading(true)
-                            setActionError("")
+                            setRefundError("")
                             const reasonLabel: Record<Exclude<SkipReason, "">, string> = {
                               no_return: "Goodwill — не се очаква връщане",
                               package_lost: "Изгубена пратка",
@@ -1958,7 +1999,7 @@ export default function AdminOrderDetailPage({
                               setOrder(refreshed)
                               setRefundStep("complete")
                             } catch (err) {
-                              setActionError(err instanceof Error ? err.message : "Грешка при записване")
+                              setRefundError(err instanceof Error ? err.message : "Грешка при записване")
                             } finally {
                               setSkipLoading(false)
                             }
@@ -1991,11 +2032,14 @@ export default function AdminOrderDetailPage({
           {/* Complaints section — moved to dialog. Triggered from "Още
               действия" dropdown. Existing complaints and the new-complaint
               form all live here. */}
-          <Dialog open={complaintDialogOpen} onOpenChange={setComplaintDialogOpen}>
+          <Dialog open={complaintDialogOpen} onOpenChange={(open) => { setComplaintDialogOpen(open); if (!open) setComplaintError("") }}>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Рекламации</DialogTitle>
               </DialogHeader>
+              {complaintError && (
+                <p className="text-sm text-red-600">{complaintError}</p>
+              )}
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">Регистрирайте рекламация по ЗЗП Чл. 127. Получавате уникален номер (RCL-YYYY-NNNN) за обратна връзка с клиента.</p>
             {complaints.length > 0 && (
@@ -2025,6 +2069,7 @@ export default function AdminOrderDetailPage({
                             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setResolveId(null)}>Отказ</Button>
                             <Button size="sm" className="h-7 text-xs" disabled={resolveLoading || !resolveResolution.trim()} onClick={async () => {
                               setResolveLoading(true)
+                              setComplaintError("")
                               try {
                                 await resolveComplaint(c.id, { status: resolveStatus, resolution: resolveResolution.trim() })
                                 const updated = await getOrderComplaints(id)
@@ -2032,7 +2077,7 @@ export default function AdminOrderDetailPage({
                                 setResolveId(null)
                                 setResolveResolution("")
                               } catch (err) {
-                                setActionError(err instanceof Error ? err.message : "Грешка")
+                                setComplaintError(err instanceof Error ? err.message : "Грешка")
                               } finally {
                                 setResolveLoading(false)
                               }
@@ -2062,7 +2107,7 @@ export default function AdminOrderDetailPage({
                 <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
                   setComplaintLoading(true)
                   setComplaintResult("")
-                  setActionError("")
+                  setComplaintError("")
                   try {
                     const result = await recordComplaint(id, {
                       defectDescription: complaintDefect.trim(),
@@ -2074,7 +2119,7 @@ export default function AdminOrderDetailPage({
                     const updated = await getOrderComplaints(id)
                     setComplaints(updated)
                   } catch (err) {
-                    setActionError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
+                    setComplaintError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
                   } finally {
                     setComplaintLoading(false)
                   }
@@ -2110,11 +2155,14 @@ export default function AdminOrderDetailPage({
       {/* Post-shipment outcome events — moved to dialog. Triggered from "Още
           действия" dropdown for shipped/delivered orders. The dialog body is
           identical to the previous always-visible card. */}
-      <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
+      <Dialog open={outcomeDialogOpen} onOpenChange={(open) => { setOutcomeDialogOpen(open); if (!open) setOutcomeError("") }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Следдоставно събитие</DialogTitle>
           </DialogHeader>
+          {outcomeError && (
+            <p className="text-sm text-red-600">{outcomeError}</p>
+          )}
           <div>
             <p className="mb-3 text-xs text-muted-foreground">
               Докладвайте изключение, без да променяте статуса на поръчката. Статусът остава какъвто е — паричните и физическите потоци се записват отделно (възстановяване, връщане в склада, брак).
@@ -2209,7 +2257,7 @@ export default function AdminOrderDetailPage({
                   if (!outcomeType) return
                   setOutcomeLoading(true)
                   setOutcomeSaved(false)
-                  setActionError("")
+                  setOutcomeError("")
                   const submittedType = outcomeType
                   try {
                     await recordOrderOutcome(id, {
@@ -2243,7 +2291,7 @@ export default function AdminOrderDetailPage({
                     const refreshed = await getOrder(id)
                     setOrder(refreshed)
                   } catch (err) {
-                    setActionError(err instanceof Error ? err.message : "Грешка при записване на събитие")
+                    setOutcomeError(err instanceof Error ? err.message : "Грешка при записване на събитие")
                   } finally {
                     setOutcomeLoading(false)
                   }
