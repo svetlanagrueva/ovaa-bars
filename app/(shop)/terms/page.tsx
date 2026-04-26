@@ -7,15 +7,15 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <div className="bg-background py-16 sm:py-20 lg:py-24">
-      <div className="mx-auto max-w-3xl px-6 lg:px-8">
-        <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+    <div className="bg-background py-12 sm:py-16 lg:py-24">
+      <div className="mx-auto max-w-3xl px-5 sm:px-6 lg:px-8">
+        <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
           Правна информация
         </p>
-        <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">Общи условия</h1>
-        <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Януари 2026</p>
+        <h1 className="mt-4 text-[28px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-6 sm:text-3xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-4xl">Общи условия</h1>
+        <p className="mt-4 text-[13px] leading-[1.7] text-muted-foreground sm:mt-6 sm:text-sm sm:leading-7">Последна актуализация: Януари 2026</p>
 
-        <div className="mt-8 space-y-8 text-muted-foreground">
+        <div className="mt-6 space-y-6 text-[13px] leading-[1.7] text-muted-foreground sm:mt-8 sm:space-y-8 sm:text-sm sm:leading-7">
           <section>
             <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">1. Общи положения</h2>
             <p className="mt-4">

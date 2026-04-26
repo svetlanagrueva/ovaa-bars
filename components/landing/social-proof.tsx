@@ -13,7 +13,7 @@ const SOCIAL_IMAGES = [
 
 export function SocialProof() {
   return (
-    <section className="bg-card py-12 sm:py-16 lg:py-24">
+    <section className="bg-background py-12 sm:py-16 lg:py-24">
       <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
         {/* Mobile: stacked layout */}
         <div className="lg:hidden">

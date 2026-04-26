@@ -40,10 +40,10 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
   return (
     <div className="bg-background">
       {/* Breadcrumb */}
-      <div className="mx-auto max-w-7xl px-6 py-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-5 py-5 sm:px-6 sm:py-6 lg:px-8">
         <Link
           href="/products"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-accent transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] text-muted-foreground hover:text-accent transition-colors sm:text-sm"
         >
           <ArrowRight className="h-3.5 w-3.5 rotate-180" />
           Обратно към продуктите
@@ -51,11 +51,11 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
       </div>
 
       {/* Product Section */}
-      <section className="mx-auto max-w-7xl px-6 pb-16 sm:pb-20 lg:px-8 lg:pb-24">
-        <div className="grid gap-12 lg:grid-cols-2">
+      <section className="mx-auto max-w-7xl px-5 pb-12 sm:px-6 sm:pb-16 lg:px-8 lg:pb-24">
+        <div className="grid gap-8 sm:gap-12 lg:grid-cols-2">
           {/* Product Images */}
-          <div className="space-y-4">
-            <div className="relative aspect-[3/4] overflow-hidden bg-secondary">
+          <div className="space-y-3 sm:space-y-4">
+            <div className="relative aspect-[3/4] overflow-hidden rounded-[20px] bg-secondary sm:rounded-none">
               <Image
                 src={product.images[selectedImage] || "/placeholder.svg"}
                 alt={product.name}
@@ -74,12 +74,12 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
               )}
             </div>
             {product.images.length > 1 && (
-              <div className="flex gap-4">
+              <div className="flex gap-3 sm:gap-4">
                 {product.images.map((image, index) => (
                   <button
                     key={index}
                     onClick={() => setSelectedImage(index)}
-                    className={`relative aspect-square w-20 overflow-hidden bg-secondary transition-all ${
+                    className={`relative aspect-square w-16 overflow-hidden rounded-[12px] bg-secondary transition-all sm:w-20 sm:rounded-none ${
                       selectedImage === index ? "ring-2 ring-primary" : "opacity-60 hover:opacity-100"
                     }`}
                   >
@@ -97,15 +97,15 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
 
           {/* Product Info */}
           <div className="flex flex-col">
-            <h1 className="text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+            <h1 className="text-[32px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:text-4xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-5xl">
               {product.name}
             </h1>
 
-            <p className="mt-2 text-sm tracking-wide text-muted-foreground">
+            <p className="mt-2 text-[13px] tracking-wide text-muted-foreground sm:text-sm">
               {product.boxContents}
             </p>
 
-            <div className="mt-6 flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap gap-2 sm:mt-6">
               {product.nutritionHighlights.map((highlight) => (
                 <Badge key={highlight} variant="secondary" className="text-[10px] font-normal tracking-wide">
                   {highlight}
@@ -113,13 +113,13 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
               ))}
             </div>
 
-            <div className="mt-8 border-t border-border pt-8">
+            <div className="mt-6 border-t border-border pt-6 sm:mt-8 sm:pt-8">
               <PriceDisplay product={product} size="lg" showPerBar />
             </div>
 
             {/* Quantity Selector */}
-            <div className="mt-8 flex items-center gap-4">
-              <span className="text-sm font-medium text-foreground">Количество:</span>
+            <div className="mt-6 flex items-center gap-4 sm:mt-8">
+              <span className="text-[13px] font-medium text-foreground sm:text-sm">Количество:</span>
               <div className="flex items-center border border-border">
                 <button
                   onClick={() => setQuantity(Math.max(1, quantity - 1))}
@@ -144,7 +144,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
               <Button
                 size="lg"
                 disabled
-                className="mt-8 w-full gap-2 py-6 text-base"
+                className="mt-6 h-12 w-full gap-2 rounded-full text-[10px] uppercase tracking-[0.16em] sm:mt-8 sm:h-auto sm:rounded-md sm:py-6 sm:text-base sm:tracking-normal sm:normal-case"
               >
                 Изчерпан
               </Button>
@@ -152,7 +152,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
               <Button
                 onClick={handleAddToCart}
                 size="lg"
-                className="mt-8 w-full gap-2 py-6 text-base"
+                className="mt-6 h-12 w-full gap-2 rounded-full text-[10px] uppercase tracking-[0.16em] sm:mt-8 sm:h-auto sm:rounded-md sm:py-6 sm:text-base sm:tracking-normal sm:normal-case"
               >
                 <ShoppingBag className="h-5 w-5" />
                 Добави в количката - {formatPrice(product.priceInCents * quantity)}
@@ -160,10 +160,10 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
             )}
 
               {/* Description */}
-            <div className="mt-12 space-y-6">
+            <div className="mt-10 space-y-6 sm:mt-12">
               <div>
                 <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Описание</h2>
-                <div className="mt-3 space-y-4 text-muted-foreground">
+                <div className="mt-3 space-y-3 text-[13px] leading-[1.7] text-muted-foreground sm:space-y-4 sm:text-sm sm:leading-7">
                   {product.fullDescription.split('\n\n').map((paragraph, index) => (
                     <p key={index}>{paragraph}</p>
                   ))}
@@ -175,7 +175,7 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
                 <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Предимства</h2>
                 <ul className="mt-3 space-y-2">
                   {product.benefits.map((benefit) => (
-                    <li key={benefit} className="flex items-start gap-3 text-muted-foreground">
+                    <li key={benefit} className="flex items-start gap-3 text-[13px] text-muted-foreground sm:text-sm">
                       <Check className="mt-0.5 h-5 w-5 flex-shrink-0 text-primary" />
                       {benefit}
                     </li>
@@ -187,12 +187,12 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
         </div>
 
         {/* Nutrition & Ingredients */}
-        <div className="mt-20 grid gap-8 md:grid-cols-2">
-          <div className="bg-secondary p-8">
+        <div className="mt-14 grid gap-3 sm:mt-20 sm:gap-8 md:grid-cols-2">
+          <div className="rounded-[18px] bg-secondary p-6 sm:rounded-none sm:p-8">
             <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Хранителна информация</h2>
             <div className="mt-2 h-px w-12 bg-accent/50" />
-            <p className="mt-3 text-sm text-muted-foreground">На бар</p>
-            <div className="mt-6 space-y-4">
+            <p className="mt-3 text-[13px] text-muted-foreground sm:text-sm">На бар</p>
+            <div className="mt-5 space-y-3 text-[13px] sm:mt-6 sm:space-y-4 sm:text-sm">
               <div className="flex justify-between border-b border-border pb-2">
                 <span className="text-muted-foreground">Калории</span>
                 <span className="font-medium text-foreground">{product.nutritionFacts.calories} kcal</span>
@@ -220,11 +220,11 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
             </div>
           </div>
 
-          <div className="bg-secondary p-8">
+          <div className="rounded-[18px] bg-secondary p-6 sm:rounded-none sm:p-8">
             <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">Съставки</h2>
             <div className="mt-2 h-px w-12 bg-accent/50" />
-            <p className="mt-3 text-sm text-muted-foreground">Формула с натурални съставки</p>
-            <ul className="mt-6 space-y-3">
+            <p className="mt-3 text-[13px] text-muted-foreground sm:text-sm">Формула с натурални съставки</p>
+            <ul className="mt-5 space-y-2.5 text-[13px] sm:mt-6 sm:space-y-3 sm:text-sm">
               {product.ingredients.map((ingredient) => (
                 <li key={ingredient} className="flex items-center gap-3 text-muted-foreground">
                   <span className="h-1.5 w-1.5 rounded-full bg-primary" />
@@ -237,9 +237,9 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
 
         {/* Other Products */}
         {otherProducts.length > 0 && (
-          <div className="mt-20">
-            <h2 className="text-2xl font-light tracking-[-0.02em] text-foreground">Може да ви хареса още</h2>
-            <div className="mt-8 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-14 sm:mt-20">
+            <h2 className="text-[22px] font-light tracking-[-0.02em] text-foreground sm:text-2xl">Може да ви хареса още</h2>
+            <div className="mt-6 grid grid-cols-2 gap-3 sm:mt-8 sm:gap-5 lg:grid-cols-3 lg:gap-8">
               {otherProducts.map((p) => (
                 <ProductCard key={p.id} product={p} soldOut={otherProductsSoldOut[p.id]} />
               ))}

@@ -39,17 +39,17 @@ export default function CartPage() {
 
   if (!mounted) {
     return (
-      <div className="bg-background py-16 sm:py-20 lg:py-24">
-        <div className="mx-auto max-w-3xl px-6 lg:px-8">
-          <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+      <div className="bg-background py-12 sm:py-16 lg:py-24">
+        <div className="mx-auto max-w-3xl px-5 sm:px-6 lg:px-8">
+          <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
             Количка
           </p>
-          <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+          <h1 className="mt-4 text-[32px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-6 sm:text-4xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-5xl">
             Вашата
             <span className="block text-muted-foreground">количка</span>
           </h1>
-          <div className="mt-12 animate-pulse">
-            <div className="h-32 rounded-[26px] bg-secondary" />
+          <div className="mt-8 animate-pulse sm:mt-12">
+            <div className="h-32 rounded-[18px] bg-secondary sm:rounded-[26px]" />
           </div>
         </div>
       </div>
@@ -58,28 +58,28 @@ export default function CartPage() {
 
   if (items.length === 0) {
     return (
-      <div className="bg-background py-16 sm:py-20 lg:py-24">
-        <div className="mx-auto max-w-3xl px-6 text-center lg:px-8">
+      <div className="bg-background py-12 sm:py-16 lg:py-24">
+        <div className="mx-auto max-w-3xl px-5 text-center sm:px-6 lg:px-8">
           <div className="flex justify-center">
             <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary">
               <ShoppingBag className="h-10 w-10 text-muted-foreground" />
             </div>
           </div>
-          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+          <p className="mt-6 text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:mt-8 sm:text-[11px] sm:tracking-[0.3em]">
             Количка
           </p>
-          <h1 className="mt-4 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+          <h1 className="mt-3 text-[32px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-4 sm:text-4xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-5xl">
             Количката
             <span className="block text-muted-foreground">е празна</span>
           </h1>
-          <p className="mx-auto mt-6 max-w-md text-sm leading-7 text-muted-foreground">
+          <p className="mx-auto mt-4 max-w-md text-[13px] leading-[1.7] text-muted-foreground sm:mt-6 sm:text-sm sm:leading-7">
             Добавете продукти, за да продължите с поръчката
           </p>
-          <div className="mt-10">
+          <div className="mt-6 sm:mt-10">
             <Button
               asChild
               size="lg"
-              className="h-11 gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
+              className="h-12 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:h-11 sm:w-auto sm:px-6"
             >
               <Link href="/products">
                 Разгледай продуктите
@@ -93,22 +93,22 @@ export default function CartPage() {
   }
 
   return (
-    <div className="bg-background py-16 sm:py-20 lg:py-24">
-      <div className="mx-auto max-w-3xl px-6 lg:px-8">
-        <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+    <div className="bg-background py-12 sm:py-16 lg:py-24">
+      <div className="mx-auto max-w-3xl px-5 sm:px-6 lg:px-8">
+        <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
           Количка
         </p>
-        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">
+        <h1 className="mt-4 text-[32px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-6 sm:text-4xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-5xl">
           Вашата
           <span className="block text-muted-foreground">количка</span>
         </h1>
 
         {/* Custom card pattern from design-system.md instead of <Card> for richer hover/transition effects */}
-        <div className="mt-12 space-y-4">
+        <div className="mt-8 space-y-3 sm:mt-12 sm:space-y-4">
           {items.map((item) => (
             <div
               key={item.product.id}
-              className="group relative overflow-hidden rounded-[26px] border border-border/40 bg-card/80 p-6 transition-all duration-500 hover:border-accent/30"
+              className="group relative overflow-hidden rounded-[18px] border border-border/40 bg-card/80 p-4 transition-all duration-500 hover:border-accent/30 sm:rounded-[26px] sm:p-6"
             >
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
               <div className="flex gap-4 sm:gap-6">
@@ -176,11 +176,11 @@ export default function CartPage() {
         </div>
 
         {/* Summary */}
-        <div className="mt-8 rounded-[26px] border border-border/40 bg-card/80 p-8">
-          <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+        <div className="mt-6 rounded-[18px] border border-border/40 bg-card/80 p-6 sm:mt-8 sm:rounded-[26px] sm:p-8">
+          <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
             Обобщение
           </p>
-          <div className="mt-6 space-y-4">
+          <div className="mt-5 space-y-4 sm:mt-6">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Междинна сума</span>
               <span className="text-foreground">{formatPrice(totalPrice)}</span>
@@ -221,12 +221,12 @@ export default function CartPage() {
               ))}
             </div>
           )}
-          <div className="mt-8">
+          <div className="mt-6 sm:mt-8">
             {stockWarnings.length === 0 ? (
               <Button
                 asChild
                 size="lg"
-                className="h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90"
+                className="h-12 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:h-11"
               >
                 <Link href="/checkout">
                   Към плащане
@@ -237,7 +237,7 @@ export default function CartPage() {
               <Button
                 disabled
                 size="lg"
-                className="h-11 w-full gap-2 rounded-full text-[10px] uppercase tracking-[0.16em]"
+                className="h-12 w-full gap-2 rounded-full text-[10px] uppercase tracking-[0.16em] sm:h-11"
               >
                 Към плащане
                 <ArrowRight className="h-4 w-4" />
