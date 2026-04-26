@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { Plus, Minus, Check, ShoppingBag, ShoppingCart, ArrowRight } from "lucide-react"
+import { Plus, Minus, Check, ShoppingBag, ShoppingCart, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -24,6 +24,38 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
   const [quantity, setQuantity] = useState(1)
   const [selectedImage, setSelectedImage] = useState(0)
   const addItemWithQuantity = useCartStore((state) => state.addItemWithQuantity)
+  const imageCount = product.images.length
+  const carouselRef = useRef<HTMLDivElement>(null)
+
+  const goToImage = (i: number) => {
+    setSelectedImage(i)
+    const node = carouselRef.current
+    if (node) {
+      node.scrollTo({ left: i * node.clientWidth, behavior: "smooth" })
+    }
+  }
+
+  const prevImage = () => setSelectedImage((s) => (s === 0 ? imageCount - 1 : s - 1))
+  const nextImage = () => setSelectedImage((s) => (s === imageCount - 1 ? 0 : s + 1))
+
+  // Keep selectedImage synced with the mobile carousel scroll position
+  useEffect(() => {
+    const node = carouselRef.current
+    if (!node) return
+    let frame = 0
+    const onScroll = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const index = Math.round(node.scrollLeft / node.clientWidth)
+        setSelectedImage((prev) => (prev === index ? prev : index))
+      })
+    }
+    node.addEventListener("scroll", onScroll, { passive: true })
+    return () => {
+      node.removeEventListener("scroll", onScroll)
+      cancelAnimationFrame(frame)
+    }
+  }, [])
 
   const handleAddToCart = () => {
     addItemWithQuantity(product, quantity)
@@ -54,45 +86,98 @@ export function ProductDetail({ product, otherProducts, soldOut = false, otherPr
       <section className="mx-auto max-w-7xl px-5 pb-12 sm:px-6 sm:pb-16 lg:px-8 lg:pb-24">
         <div className="grid gap-8 sm:gap-12 lg:grid-cols-2">
           {/* Product Images */}
-          <div className="space-y-3 sm:space-y-4">
-            <div className="relative aspect-[3/4] overflow-hidden rounded-[20px] bg-secondary sm:rounded-none">
-              <Image
-                src={product.images[selectedImage] || "/placeholder.svg"}
-                alt={product.name}
-                fill
-                className="object-contain"
-                priority
-              />
-              {soldOut ? (
-                <Badge className="absolute left-4 top-4 bg-muted text-muted-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
-                  Изчерпан
-                </Badge>
-              ) : product.badge && (
-                <Badge className="absolute left-4 top-4 bg-primary text-primary-foreground text-[9px] font-medium uppercase tracking-[0.2em]">
-                  {product.badge}
-                </Badge>
+          <div>
+            {/* Mobile: swipeable carousel with dot indicators */}
+            <div className="sm:hidden">
+              <div className="relative overflow-hidden rounded-[20px] bg-secondary">
+                <div
+                  ref={carouselRef}
+                  className="scrollbar-hide flex snap-x snap-mandatory overflow-x-auto"
+                >
+                  {product.images.map((image, index) => (
+                    <div
+                      key={index}
+                      className="relative aspect-[3/4] w-full flex-shrink-0 snap-center"
+                    >
+                      <Image
+                        src={image || "/placeholder.svg"}
+                        alt={`${product.name} - Снимка ${index + 1}`}
+                        fill
+                        className="object-contain"
+                        priority={index === 0}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {imageCount > 1 && (
+                <div className="mt-4 flex justify-center gap-2">
+                  {product.images.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => goToImage(i)}
+                      aria-label={`Покажи снимка ${i + 1}`}
+                      className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                        i === selectedImage ? "bg-foreground" : "bg-foreground/25"
+                      }`}
+                    />
+                  ))}
+                </div>
               )}
             </div>
-            {product.images.length > 1 && (
-              <div className="flex gap-3 sm:gap-4">
-                {product.images.map((image, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setSelectedImage(index)}
-                    className={`relative aspect-square w-16 overflow-hidden rounded-[12px] bg-secondary transition-all sm:w-20 sm:rounded-none ${
-                      selectedImage === index ? "ring-2 ring-primary" : "opacity-60 hover:opacity-100"
-                    }`}
-                  >
-                    <Image
-                      src={image || "/placeholder.svg"}
-                      alt={`${product.name} - Снимка ${index + 1}`}
-                      fill
-                      className="object-cover"
-                    />
-                  </button>
-                ))}
+
+            {/* Desktop: single image with prev/next arrows + thumbnails */}
+            <div className="hidden space-y-4 sm:block">
+              <div className="group relative aspect-[3/4] overflow-hidden rounded-[20px] bg-secondary">
+                <Image
+                  src={product.images[selectedImage] || "/placeholder.svg"}
+                  alt={product.name}
+                  fill
+                  className="object-contain"
+                  priority
+                />
+                {imageCount > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={prevImage}
+                      aria-label="Предишна снимка"
+                      className="absolute left-4 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 text-foreground opacity-0 backdrop-blur-sm transition-opacity duration-200 hover:bg-background group-hover:opacity-100 focus-visible:opacity-100"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={nextImage}
+                      aria-label="Следваща снимка"
+                      className="absolute right-4 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 text-foreground opacity-0 backdrop-blur-sm transition-opacity duration-200 hover:bg-background group-hover:opacity-100 focus-visible:opacity-100"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </>
+                )}
               </div>
-            )}
+              {imageCount > 1 && (
+                <div className="flex gap-3 sm:gap-4">
+                  {product.images.map((image, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setSelectedImage(index)}
+                      className={`relative aspect-square w-20 overflow-hidden rounded-[12px] bg-secondary transition-all ${
+                        selectedImage === index ? "ring-2 ring-primary" : "opacity-60 hover:opacity-100"
+                      }`}
+                    >
+                      <Image
+                        src={image || "/placeholder.svg"}
+                        alt={`${product.name} - Снимка ${index + 1}`}
+                        fill
+                        className="object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Product Info */}
