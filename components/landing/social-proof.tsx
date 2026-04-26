@@ -18,7 +18,7 @@ export function SocialProof() {
         {/* Mobile: stacked layout */}
         <div className="lg:hidden">
           <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
-            Общност
+            Последвай ни
           </p>
 
           <h3 className="mt-3 text-[22px] font-light tracking-[-0.02em] text-foreground sm:mt-4 sm:text-2xl">
@@ -30,37 +30,32 @@ export function SocialProof() {
             движение и баланс.
           </p>
 
-          {/* Mobile: 2x2 grid */}
-          <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
+          {/* Mobile: 3 clickable images linking to Instagram */}
+          <div className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
             {SOCIAL_IMAGES.slice(0, 4).map((src, i) => (
-              <div
+              <Link
                 key={i}
-                className={`aspect-square overflow-hidden rounded-[16px] bg-muted sm:rounded-[20px] ${i === 3 ? "hidden sm:block" : ""}`}
+                href="https://instagram.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Instagram"
+                className={`group aspect-square overflow-hidden rounded-full bg-muted sm:rounded-[20px] ${i === 3 ? "hidden sm:block" : ""}`}
               >
                 <img
                   src={src}
                   alt=""
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
                 />
-              </div>
+              </Link>
             ))}
           </div>
-
-          <Link
-            href="https://instagram.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-6 inline-flex w-full items-center justify-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent sm:w-auto"
-          >
-            Instagram →
-          </Link>
         </div>
 
         {/* Desktop: side-by-side layout */}
         <div className="hidden items-center gap-10 lg:grid lg:grid-cols-12">
           <div className="lg:col-span-4">
             <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
-              Общност
+              Последвай ни
             </p>
 
             <h3 className="mt-4 text-2xl font-light tracking-[-0.02em] text-foreground">
@@ -84,16 +79,20 @@ export function SocialProof() {
 
           <div className="grid grid-cols-4 gap-3 lg:col-span-8">
             {SOCIAL_IMAGES.map((src, i) => (
-              <div
+              <Link
                 key={i}
-                className="group aspect-square overflow-hidden rounded-[20px] bg-muted"
+                href="https://instagram.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Instagram"
+                className="group aspect-square overflow-hidden rounded-full bg-muted"
               >
                 <img
                   src={src}
                   alt=""
                   className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                 />
-              </div>
+              </Link>
             ))}
           </div>
         </div>
