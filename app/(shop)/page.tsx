@@ -121,7 +121,7 @@ export default async function HomePage() {
               alt="Egg Origin протеинови барове"
               fill
               priority
-              className="origin-bottom scale-120 object-cover object-[60%_90%]"
+              className="origin-bottom scale-110 object-cover object-[75%_100%]"
             />
 
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-48 bg-gradient-to-t from-background/85 via-background/40 to-transparent" />
@@ -141,7 +141,7 @@ export default async function HomePage() {
                 asChild
                 variant="outline"
                 size="lg"
-                className="h-12 w-full gap-2 rounded-full border-foreground/30 bg-background/50 text-[10px] uppercase tracking-[0.16em] text-foreground backdrop-blur-md hover:bg-background/70"
+                className="h-12 w-full gap-2 rounded-full border-foreground/30 bg-[#dcdcdc]/50 text-[10px] uppercase tracking-[0.16em] text-foreground backdrop-blur-md hover:bg-[#dcdcdc]/70"
               >
                 <Link href="/about">
                   Научи повече
