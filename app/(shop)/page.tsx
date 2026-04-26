@@ -96,20 +96,9 @@ export default async function HomePage() {
           </div>
         </div>
 
-        {/* Mobile hero — clean stacked layout like ohgood.bg */}
+        {/* Mobile hero — text first, image below with buttons overlaid */}
         <div className="sm:hidden">
-          <div className="relative h-[55vh] min-h-[380px] w-full overflow-hidden">
-            <Image
-              src="/images/egg-origin-hero.png"
-              alt="Egg Origin протеинови барове"
-              fill
-              priority
-              className="object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
-          </div>
-
-          <div className="relative -mt-24 z-10 bg-gradient-to-t from-background via-background to-transparent px-5 pb-10 pt-8">
+          <div className="px-5 pb-8 pt-12">
             <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground">
               {HERO.eyebrow}
             </p>
@@ -124,8 +113,20 @@ export default async function HomePage() {
             <p className="mt-5 text-[13px] leading-[1.7] text-muted-foreground">
               {HERO.body}
             </p>
+          </div>
 
-            <div className="mt-8 flex flex-col gap-3">
+          <div className="relative h-[460px] w-full overflow-hidden">
+            <Image
+              src="/images/egg-origin-hero.png"
+              alt="Egg Origin протеинови барове"
+              fill
+              priority
+              className="origin-bottom scale-120 object-cover object-[60%_90%]"
+            />
+
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-48 bg-gradient-to-t from-background/85 via-background/40 to-transparent" />
+
+            <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col gap-3 px-5 pb-6">
               <Button
                 asChild
                 size="lg"
@@ -140,7 +141,7 @@ export default async function HomePage() {
                 asChild
                 variant="outline"
                 size="lg"
-                className="h-12 w-full gap-2 rounded-full border-border/60 text-[10px] uppercase tracking-[0.16em] text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                className="h-12 w-full gap-2 rounded-full border-foreground/30 bg-background/50 text-[10px] uppercase tracking-[0.16em] text-foreground backdrop-blur-md hover:bg-background/70"
               >
                 <Link href="/about">
                   Научи повече
