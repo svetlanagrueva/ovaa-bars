@@ -2238,16 +2238,6 @@ async function getLowestPrice30Days(productId: string): Promise<number> {
   const supabase = await createClient()
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-  // Check price history
-  const { data: history } = await supabase
-    .from("product_price_history")
-    .select("price_in_cents")
-    .eq("product_id", productId)
-    .gte("recorded_at", thirtyDaysAgo)
-    .order("price_in_cents", { ascending: true })
-    .limit(1)
-
-  // Check past sale prices
   const { data: pastSales } = await supabase
     .from("product_sales")
     .select("sale_price_in_cents")
@@ -2257,10 +2247,9 @@ async function getLowestPrice30Days(productId: string): Promise<number> {
     .limit(1)
 
   const basePrice = baseProduct.priceInCents
-  const historyMin = history?.[0]?.price_in_cents ?? Infinity
   const saleMin = pastSales?.[0]?.sale_price_in_cents ?? Infinity
 
-  return Math.min(basePrice, historyMin, saleMin)
+  return Math.min(basePrice, saleMin)
 }
 
 export async function createSale(data: {
@@ -2310,12 +2299,6 @@ export async function createSale(data: {
     console.error("Failed to deactivate existing sale:", deactivateError)
     throw new Error("Грешка при деактивиране на текущата промоция")
   }
-
-  // Record current base price in history for future Omnibus calculations
-  await supabase.from("product_price_history").insert({
-    product_id: data.productId,
-    price_in_cents: product.priceInCents,
-  })
 
   const { error } = await supabase.from("product_sales").insert({
     product_id: data.productId,

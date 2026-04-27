@@ -797,13 +797,8 @@ describe("admin actions", () => {
     })
 
     it("creates sale successfully", async () => {
-      // Mock getLowestPrice30Days chain (history + pastSales)
-      mockSupabase.limit = vi.fn()
-        .mockReturnValueOnce(mockThenableResult([]))  // price history
-        .mockReturnValueOnce(mockThenableResult([]))  // past sales
-      // Mock deactivate existing sale
+      mockSupabase.limit = vi.fn(() => mockThenableResult([]))
       mockSupabase.update = vi.fn(() => mockThenableResult(null))
-      // Mock insert price history + insert sale
       mockSupabase.insert = vi.fn(() => mockThenableResult(null))
 
       const { createSale } = await import("@/app/actions/admin")
