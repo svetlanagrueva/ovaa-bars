@@ -510,13 +510,41 @@ function validateInvoiceInfo(needsInvoice: boolean | undefined, invoiceInfo: Inv
     if (invoiceInfo.companyName.length > MAX_FIELD_LENGTH) {
       throw new Error("Името на фирмата е твърде дълго")
     }
+    // МОЛ (representing person) is required only for companies — individual
+    // invoices use the order's first_name + last_name as the legal name.
+    if (!invoiceInfo.mol?.trim()) {
+      throw new Error("МОЛ е задължително за фактура на фирма")
+    }
   }
 
-  if (!invoiceInfo.mol?.trim()) {
-    throw new Error("МОЛ / Име е задължително за фактура")
-  }
   if (!invoiceInfo.invoiceAddress?.trim()) {
     throw new Error("Адресът е задължителен за фактура")
+  }
+}
+
+// Inserts the type='invoice' row for an order that requested invoicing.
+// Caller is responsible for rolling back the orders row on failure.
+async function insertInvoiceForOrder(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+  invoiceInfo: InvoiceInfo,
+): Promise<void> {
+  const isCompany = invoiceInfo.type === "company"
+  const { error } = await supabase.from("invoices").insert({
+    order_id: orderId,
+    type: "invoice",
+    invoice_type: invoiceInfo.type,
+    company_name: isCompany ? invoiceInfo.companyName.trim() : null,
+    eik: isCompany ? invoiceInfo.eik.trim() : null,
+    vat_number: isCompany && invoiceInfo.vatNumber?.trim()
+      ? invoiceInfo.vatNumber.trim()
+      : null,
+    mol: isCompany ? invoiceInfo.mol.trim() : null,
+    address: invoiceInfo.invoiceAddress.trim(),
+  })
+  if (error) {
+    console.error("Failed to insert invoices row:", sanitizeError(error))
+    throw new Error("Failed to create invoice record")
   }
 }
 
@@ -597,13 +625,6 @@ export async function createCheckoutSession(data: CheckoutData) {
       cod_fee: 0,
       status: "pending",
       payment_method: "card",
-      needs_invoice: needsInvoice || false,
-      invoice_type: needsInvoice ? (invoiceInfo?.type ?? null) : null,
-      invoice_company_name: needsInvoice ? (invoiceInfo?.companyName?.trim() || null) : null,
-      invoice_eik: needsInvoice ? (invoiceInfo?.eik?.trim() || null) : null,
-      invoice_vat_number: needsInvoice ? (invoiceInfo?.vatNumber?.trim() || null) : null,
-      invoice_mol: needsInvoice ? (invoiceInfo?.mol?.trim() || null) : null,
-      invoice_address: needsInvoice ? (invoiceInfo?.invoiceAddress?.trim() || null) : null,
       econt_office_id: econtOffice?.id ?? null,
       econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
@@ -629,6 +650,18 @@ export async function createCheckoutSession(data: CheckoutData) {
   } catch (itemsErr) {
     await supabase.from("orders").delete().eq("id", order.id)
     throw itemsErr
+  }
+
+  // Persist invoices row when customer requested an invoice. Rollback the
+  // order on failure — DB has on-delete-restrict from invoices to orders, but
+  // since the invoice insert failed there's no row blocking the delete.
+  if (needsInvoice && invoiceInfo) {
+    try {
+      await insertInvoiceForOrder(supabase, order.id, invoiceInfo)
+    } catch (invoiceErr) {
+      await supabase.from("orders").delete().eq("id", order.id)
+      throw invoiceErr
+    }
   }
 
   // Reserve inventory — if insufficient stock, clean up the order and surface the error
@@ -896,13 +929,6 @@ export async function createCODOrder(data: CODOrderData) {
       status: "confirmed",
       confirmed_at: new Date().toISOString(),
       payment_method: "cod",
-      needs_invoice: needsInvoice || false,
-      invoice_type: needsInvoice ? (invoiceInfo?.type ?? null) : null,
-      invoice_company_name: needsInvoice ? (invoiceInfo?.companyName?.trim() || null) : null,
-      invoice_eik: needsInvoice ? (invoiceInfo?.eik?.trim() || null) : null,
-      invoice_vat_number: needsInvoice ? (invoiceInfo?.vatNumber?.trim() || null) : null,
-      invoice_mol: needsInvoice ? (invoiceInfo?.mol?.trim() || null) : null,
-      invoice_address: needsInvoice ? (invoiceInfo?.invoiceAddress?.trim() || null) : null,
       econt_office_id: econtOffice?.id ?? null,
       econt_office_code: econtOffice?.code ?? null,
       econt_office_name: econtOffice?.name ?? null,
@@ -928,6 +954,16 @@ export async function createCODOrder(data: CODOrderData) {
   } catch (itemsErr) {
     await supabase.from("orders").delete().eq("id", order.id)
     throw itemsErr
+  }
+
+  // Persist invoices row when customer requested an invoice.
+  if (needsInvoice && invoiceInfo) {
+    try {
+      await insertInvoiceForOrder(supabase, order.id, invoiceInfo)
+    } catch (invoiceErr) {
+      await supabase.from("orders").delete().eq("id", order.id)
+      throw invoiceErr
+    }
   }
 
   // Reserve inventory — if insufficient stock, clean up the order and surface the error

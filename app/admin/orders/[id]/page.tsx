@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
@@ -45,7 +45,6 @@ export default function AdminOrderDetailPage({
   const [cancellationReason, setCancellationReason] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
-  const [manualInvoiceNumber, setManualInvoiceNumber] = useState("")
   const [shipmentForm, setShipmentForm] = useState<ShipmentFormData | null>(null)
   const [shipmentDisplay, setShipmentDisplay] = useState<ShipmentDisplayInfo | null>(null)
   const [shipmentOpen, setShipmentOpen] = useState(false)
@@ -131,8 +130,10 @@ export default function AdminOrderDetailPage({
   const [refundReason, setRefundReason] = useState("")
   const [refundMethod, setRefundMethod] = useState<"stripe" | "bank_transfer">("stripe")
   const [refundDate, setRefundDate] = useState("")
-  const [refundCreditNote, setRefundCreditNote] = useState("")
   const [refundStripeId, setRefundStripeId] = useState("")
+  const [refundBankTransferRef, setRefundBankTransferRef] = useState("")
+  const [refundAffectsInvoicedSupply, setRefundAffectsInvoicedSupply] = useState(true)
+  const [refundSkipReason, setRefundSkipReason] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
   // client_idempotency_key for the refund insert. Regenerated after the
   // whole "refund → stock outcome" flow completes (not just after the refund
@@ -793,124 +794,29 @@ export default function AdminOrderDetailPage({
           </CardContent>
         </Card>
 
-        {/* Invoice */}
+        {/* Документи (фактури + кредитни известия) */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Фактура</CardTitle>
+            <CardTitle className="text-base">Документи</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {order.invoice_number ? (
-              <div><span className="text-muted-foreground">Номер:</span> <span className="font-mono">{order.invoice_number}</span></div>
-            ) : order.needs_invoice ? (
-              (() => {
-                // Tax event: card = payment at checkout (created_at), COD = delivery
-                const taxEventDate = order.payment_method === "cod"
-                  ? (order.delivered_at ? new Date(order.delivered_at) : null)
-                  : new Date(order.created_at)
-                const deadline = taxEventDate ? new Date(taxEventDate.getTime() + 5 * 24 * 60 * 60 * 1000) : null
-                const now = new Date()
-                const daysLeft = deadline ? Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null
-
-                return (
-                  <div className="space-y-2">
-                    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
-                      Клиентът е поискал фактура
-                    </div>
-                    {daysLeft !== null && (
-                      <div className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        daysLeft <= 0
-                          ? "border border-red-300 bg-red-50 text-red-900"
-                          : daysLeft <= 2
-                            ? "border border-amber-300 bg-amber-50 text-amber-900"
-                            : "border border-border bg-secondary text-foreground"
-                      }`}>
-                        {daysLeft <= 0
-                          ? `Срокът за издаване е изтекъл! (${deadline!.toLocaleDateString("bg-BG")})`
-                          : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} за издаване (до ${deadline!.toLocaleDateString("bg-BG")})`
-                        }
-                      </div>
-                    )}
-                    {order.payment_method === "cod" && order.status !== "delivered" && (
-                      <div className="text-xs text-muted-foreground">
-                        Срокът започва след доставка (наложен платеж)
-                      </div>
-                    )}
-                  </div>
-                )
-              })()
-            ) : (
-              <div className="text-muted-foreground">Фактура не е поискана</div>
-            )}
-            {order.invoice_date && (
-              <div><span className="text-muted-foreground">Дата:</span> {new Date(order.invoice_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
-            )}
-            {order.invoice_type && (
-              <div><span className="text-muted-foreground">Тип:</span> {order.invoice_type === "company" ? "Юридическо лице" : "Физическо лице"}</div>
-            )}
-            {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
-            {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
-            {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
-            {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
-            {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
-            {order.invoice_number ? (
-              <div className="space-y-2 pt-2">
-                <div><span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span></div>
-                {order.invoice_sent_at ? (
-                  <div className="text-xs text-muted-foreground">
-                    Изпратена на клиента на {new Date(order.invoice_sent_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={actionLoading}
-                    onClick={async () => {
-                      setInvoiceError("")
-                      setActionLoading(true)
-                      try {
-                        await markInvoiceSent(id)
-                        const updated = await getOrder(id)
-                        setOrder(updated)
-                      } catch (err) {
-                        setInvoiceError(err instanceof Error ? err.message : "Грешка")
-                      } finally {
-                        setActionLoading(false)
-                      }
-                    }}
-                  >
-                    Отбележи като изпратена на клиента
-                  </Button>
-                )}
+          <CardContent className="space-y-3 text-sm">
+            {order.invoices.length === 0 ? (
+              <div className="text-muted-foreground">
+                Клиентът не е поискал фактура за тази поръчка, така че не се
+                изисква и кредитно известие при възстановяване.
               </div>
             ) : (
-              <div className="flex gap-2 pt-2">
-                <Input
-                  placeholder="Номер на фактура"
-                  value={manualInvoiceNumber}
-                  onChange={(e) => setManualInvoiceNumber(e.target.value)}
-                  className="h-8 w-48"
-                />
-                <Button
-                  size="sm"
-                  disabled={actionLoading || !manualInvoiceNumber.trim()}
-                  onClick={async () => {
-                    setInvoiceError("")
-                    setActionLoading(true)
-                    try {
-                      await setInvoiceNumber(id, manualInvoiceNumber)
-                      const updated = await getOrder(id)
-                      setOrder(updated)
-                      setManualInvoiceNumber("")
-                    } catch (err) {
-                      setInvoiceError(err instanceof Error ? err.message : "Грешка при записване на фактура")
-                    } finally {
-                      setActionLoading(false)
-                    }
+              order.invoices.map((inv) => (
+                <InvoiceRow
+                  key={inv.id}
+                  invoice={inv}
+                  order={order}
+                  onChanged={async () => {
+                    const updated = await getOrder(id)
+                    setOrder(updated)
                   }}
-                >
-                  Запази
-                </Button>
-              </div>
+                />
+              ))
             )}
             {invoiceError && (
               <p className="mt-2 text-sm text-red-600">{invoiceError}</p>
@@ -986,6 +892,7 @@ export default function AdminOrderDetailPage({
               <RefundRow
                 key={r.id}
                 refund={r}
+                creditNoteInvoice={order.invoices.find((inv) => inv.type === "credit_note" && inv.refund_id === r.id)}
                 orderId={order.id}
                 orderItems={order.items}
                 inventoryReturns={order.inventoryReturns.filter(ret => ret.reference_id === r.id)}
@@ -1095,8 +1002,18 @@ export default function AdminOrderDetailPage({
               const events = [
                 { label: "Поръчка създадена", date: order.created_at },
                 { label: "Потвърдена", date: order.confirmed_at || confirmedFallback },
-                { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
-                { label: "Фактура изпратена", date: order.invoice_sent_at },
+                ...order.invoices
+                  .filter((inv) => inv.type === "invoice" && inv.invoice_number && inv.invoice_date)
+                  .map((inv) => ({ label: "Фактура издадена", date: inv.invoice_date, detail: `#${inv.invoice_number}` })),
+                ...order.invoices
+                  .filter((inv) => inv.type === "invoice" && inv.sent_at)
+                  .map((inv) => ({ label: "Фактура изпратена", date: inv.sent_at })),
+                ...order.invoices
+                  .filter((inv) => inv.type === "credit_note" && inv.invoice_number && inv.invoice_date)
+                  .map((inv) => ({ label: "Кредитно известие издадено", date: inv.invoice_date, detail: `#${inv.invoice_number}` })),
+                ...order.invoices
+                  .filter((inv) => inv.type === "credit_note" && inv.sent_at)
+                  .map((inv) => ({ label: "Кредитно известие изпратено", date: inv.sent_at })),
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
@@ -1780,8 +1697,10 @@ export default function AdminOrderDetailPage({
             const resetFlow = () => {
               setRefundAmount("")
               setRefundReason("")
-              setRefundCreditNote("")
               setRefundStripeId("")
+              setRefundBankTransferRef("")
+              setRefundAffectsInvoicedSupply(true)
+              setRefundSkipReason("")
               setStockQty({})
               setStockDisposition({})
               setStockKeys({})
@@ -1883,17 +1802,51 @@ export default function AdminOrderDetailPage({
                               <option value="bank_transfer">Банков превод</option>
                             </select>
                           </div>
-                          {order.needs_invoice && order.invoice_number && (
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-                              <Input value={refundCreditNote} onChange={(e) => setRefundCreditNote(e.target.value)} placeholder="Задължително" className="h-8" maxLength={100} />
-                            </div>
-                          )}
+                          {(() => {
+                            const initialInvoice = order.invoices.find((i) => i.type === "invoice")
+                            const invoiceIssued = !!initialInvoice?.invoice_number
+                            const willCreateCreditNote = invoiceIssued && refundAffectsInvoicedSupply
+                            return (
+                              <div>
+                                {invoiceIssued && (
+                                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <input
+                                      type="checkbox"
+                                      checked={refundAffectsInvoicedSupply}
+                                      onChange={(e) => setRefundAffectsInvoicedSupply(e.target.checked)}
+                                      className="rounded border-border"
+                                    />
+                                    <span>Това възстановяване намалява фактурираната сума (ще се създаде кредитно известие)</span>
+                                  </label>
+                                )}
+                                {invoiceIssued && !refundAffectsInvoicedSupply && (
+                                  <Input
+                                    value={refundSkipReason}
+                                    onChange={(e) => setRefundSkipReason(e.target.value)}
+                                    placeholder="Причина за пропуск на КИ (задължително)"
+                                    className="mt-2 h-8"
+                                    maxLength={500}
+                                  />
+                                )}
+                                {invoiceIssued && willCreateCreditNote && (
+                                  <p className="mt-1 text-[11px] text-muted-foreground">
+                                    Системата ще създаде кредитно известие в Документи; въведете номера от Microinvest след това.
+                                  </p>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </div>
                         {refundMethod === "stripe" && (
                           <div>
                             <label className="mb-1 block text-xs text-muted-foreground">Stripe refund ID (от Stripe Dashboard)</label>
                             <Input value={refundStripeId} onChange={(e) => setRefundStripeId(e.target.value)} placeholder="re_..." className="h-8 font-mono" maxLength={100} />
+                          </div>
+                        )}
+                        {refundMethod === "bank_transfer" && (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Референция на банков превод</label>
+                            <Input value={refundBankTransferRef} onChange={(e) => setRefundBankTransferRef(e.target.value)} placeholder="Номер на превод от банковата ви извадка" className="h-8 font-mono" maxLength={200} />
                           </div>
                         )}
                         <div>
@@ -1902,7 +1855,13 @@ export default function AdminOrderDetailPage({
                         </div>
 
                         <div className="flex items-center gap-3">
-                          <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
+                          <Button size="sm" disabled={
+                            refundLoading
+                            || !refundReason.trim()
+                            || (refundMethod === "stripe" && !refundStripeId.trim())
+                            || (refundMethod === "bank_transfer" && !refundBankTransferRef.trim())
+                            || (!refundAffectsInvoicedSupply && !refundSkipReason.trim())
+                          } onClick={async () => {
                             setRefundLoading(true)
                             setRefundError("")
                             try {
@@ -1913,8 +1872,10 @@ export default function AdminOrderDetailPage({
                                 refundReason: refundReason.trim(),
                                 refundMethod,
                                 refundedAt: refundDate || undefined,
-                                creditNoteRef: refundCreditNote.trim() || undefined,
                                 stripeRefundId: refundMethod === "stripe" ? refundStripeId.trim() : undefined,
+                                bankTransferRef: refundMethod === "bank_transfer" ? refundBankTransferRef.trim() : undefined,
+                                affectsInvoicedSupply: refundAffectsInvoicedSupply,
+                                creditNoteSkipReason: !refundAffectsInvoicedSupply ? refundSkipReason.trim() : undefined,
                                 clientIdempotencyKey: refundClientKey,
                               })
                               const updated = await getOrder(id)
@@ -2591,17 +2552,21 @@ export default function AdminOrderDetailPage({
 
 // One row in the refunds list. Shows the refund details, a computed
 // breakdown for кредитно известие (VAT 20% inclusive; copy-pasteable for
-// Microinvest), and an inline annotation edit for reason + credit_note_ref.
-// The breakdown is built from linked inventory_log rows
-// (inventory_log.reference_id = refund.id, reference_type = 'return').
+// Microinvest), and an inline annotation edit for reason +
+// bank_transfer_ref + credit_note_skip_reason. The actual credit-note
+// document number lives on the linked invoices row of type='credit_note'
+// (auto-created on refund when conditions hold) — admin edits it from the
+// Документи section.
 function RefundRow({
   refund,
+  creditNoteInvoice,
   orderId,
   orderItems,
   inventoryReturns,
   onSaved,
 }: {
   refund: OrderRefund
+  creditNoteInvoice: Invoice | undefined
   orderId: string
   orderItems: OrderDetail["items"]
   inventoryReturns: OrderInventoryReturn[]
@@ -2609,7 +2574,8 @@ function RefundRow({
 }) {
   const [editing, setEditing] = useState(false)
   const [reason, setReason] = useState(refund.reason ?? "")
-  const [creditNote, setCreditNote] = useState(refund.credit_note_ref ?? "")
+  const [bankTransferRef, setBankTransferRef] = useState(refund.bank_transfer_ref ?? "")
+  const [skipReason, setSkipReason] = useState(refund.credit_note_skip_reason ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle")
@@ -2673,6 +2639,9 @@ function RefundRow({
             {refund.stripe_refund_id && (
               <span className="ml-2 font-mono">{refund.stripe_refund_id}</span>
             )}
+            {refund.bank_transfer_ref && (
+              <span className="ml-2 font-mono">{refund.bank_transfer_ref}</span>
+            )}
           </div>
         </div>
         {!editing && (
@@ -2686,10 +2655,24 @@ function RefundRow({
           {refund.reason && (
             <div><span className="text-muted-foreground">Причина:</span> {refund.reason}</div>
           )}
-          {refund.credit_note_ref && (
-            <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{refund.credit_note_ref}</span></div>
-          )}
-          {!refund.reason && !refund.credit_note_ref && (
+          {creditNoteInvoice ? (
+            <div>
+              <span className="text-muted-foreground">Кредитно известие:</span>{" "}
+              {creditNoteInvoice.invoice_number ? (
+                <span className="font-mono">#{creditNoteInvoice.invoice_number}</span>
+              ) : (
+                <span className="text-amber-700">чака номер ↗ (виж Документи)</span>
+              )}
+            </div>
+          ) : refund.affects_invoiced_supply === false ? (
+            <div className="text-muted-foreground">
+              Не изисква кредитно известие
+              {refund.credit_note_skip_reason && (
+                <> — <span>{refund.credit_note_skip_reason}</span></>
+              )}
+            </div>
+          ) : null}
+          {!refund.reason && !creditNoteInvoice && !refund.credit_note_skip_reason && (
             <div className="text-muted-foreground italic">Няма анотации — редактирайте, за да добавите.</div>
           )}
         </div>
@@ -2775,10 +2758,18 @@ function RefundRow({
             <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-            <Input value={creditNote} onChange={(e) => setCreditNote(e.target.value)} placeholder="Незадължително" className="h-8" maxLength={100} />
-          </div>
+          {refund.method === "bank_transfer" && (
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Референция на банков превод</label>
+              <Input value={bankTransferRef} onChange={(e) => setBankTransferRef(e.target.value)} placeholder="Номер на превод" className="h-8 font-mono" maxLength={200} />
+            </div>
+          )}
+          {refund.affects_invoiced_supply === false && (
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Причина за пропуск на кредитно известие</label>
+              <Input value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="Защо не се създава КИ" className="h-8" maxLength={500} />
+            </div>
+          )}
           {error && <p className="text-xs text-red-700">{error}</p>}
           <div className="flex items-center gap-2">
             <Button size="sm" disabled={saving} onClick={async () => {
@@ -2787,7 +2778,8 @@ function RefundRow({
               try {
                 await updateRefundAnnotation(refund.id, {
                   reason,
-                  creditNoteRef: creditNote,
+                  bankTransferRef: refund.method === "bank_transfer" ? bankTransferRef : undefined,
+                  creditNoteSkipReason: refund.affects_invoiced_supply === false ? skipReason : undefined,
                 })
                 setEditing(false)
                 await onSaved()
@@ -2801,7 +2793,8 @@ function RefundRow({
             </Button>
             <Button size="sm" variant="outline" disabled={saving} onClick={() => {
               setReason(refund.reason ?? "")
-              setCreditNote(refund.credit_note_ref ?? "")
+              setBankTransferRef(refund.bank_transfer_ref ?? "")
+              setSkipReason(refund.credit_note_skip_reason ?? "")
               setEditing(false)
               setError("")
             }}>
@@ -2810,6 +2803,200 @@ function RefundRow({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// One row in the Документи section. Renders a type='invoice' or
+// type='credit_note' row with status badges, the Microinvest number input
+// (if pending), and the "mark as sent" toggle. For credit notes, also shows
+// the linked refund summary, the original фактура it references, and a
+// due-date alert (5 days from refund per ЗДДС Чл. 113 ал. 4).
+function InvoiceRow({
+  invoice,
+  order,
+  onChanged,
+}: {
+  invoice: Invoice
+  order: OrderDetail
+  onChanged: () => Promise<void> | void
+}) {
+  const [number, setNumber] = useState("")
+  const [date, setDate] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  const isInvoice = invoice.type === "invoice"
+  const linkedRefund = isInvoice
+    ? null
+    : order.refunds.find((r) => r.id === invoice.refund_id)
+  const referencedInvoice = isInvoice
+    ? null
+    : order.invoices.find((i) => i.id === invoice.references_invoice_id)
+
+  const dueAlert = (() => {
+    if (invoice.invoice_number) return null
+    if (!invoice.due_at) return null
+    const due = new Date(invoice.due_at)
+    const now = new Date()
+    const daysLeft = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    const dueLabel = due.toLocaleDateString("bg-BG")
+    if (daysLeft <= 0) {
+      return { tone: "error" as const, text: `Срокът за издаване е изтекъл (${dueLabel})` }
+    }
+    if (daysLeft <= 2) {
+      return { tone: "warn" as const, text: `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} (до ${dueLabel})` }
+    }
+    return { tone: "info" as const, text: `Срок: до ${dueLabel} (${daysLeft} дни)` }
+  })()
+
+  const statusBadge = invoice.invoice_number
+    ? invoice.sent_at
+      ? { label: "изпратен", className: "bg-green-100 text-green-800" }
+      : { label: "издаден", className: "bg-blue-100 text-blue-800" }
+    : { label: "чака номер", className: "bg-amber-100 text-amber-800" }
+
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="font-medium">
+              {isInvoice ? "Фактура" : "Кредитно известие"}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusBadge.className}`}>
+              {statusBadge.label}
+            </span>
+          </div>
+          {!isInvoice && linkedRefund && (
+            <div className="text-xs text-muted-foreground">
+              ↳ за възстановяване от{" "}
+              {new Date(linkedRefund.refunded_at).toLocaleDateString("bg-BG")}{" "}
+              ({formatPrice(linkedRefund.amount_cents)})
+            </div>
+          )}
+          {!isInvoice && referencedInvoice?.invoice_number && (
+            <div className="text-xs text-muted-foreground">
+              ↳ към Фактура #{referencedInvoice.invoice_number}
+            </div>
+          )}
+          {isInvoice && (
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              {invoice.invoice_type && (
+                <div>
+                  <span>Тип:</span>{" "}
+                  {invoice.invoice_type === "company" ? "Юридическо лице" : "Физическо лице"}
+                </div>
+              )}
+              {invoice.company_name && <div>Фирма: {invoice.company_name}</div>}
+              {invoice.eik && <div>ЕИК: {invoice.eik}</div>}
+              {invoice.vat_number && <div>ДДС номер: {invoice.vat_number}</div>}
+              {invoice.mol && <div>МОЛ: {invoice.mol}</div>}
+              {invoice.address && <div>Адрес: {invoice.address}</div>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {dueAlert && (
+        <div className={`mt-2 rounded-md px-3 py-2 text-xs font-medium ${
+          dueAlert.tone === "error" ? "border border-red-300 bg-red-50 text-red-900"
+          : dueAlert.tone === "warn" ? "border border-amber-300 bg-amber-50 text-amber-900"
+          : "border border-border bg-secondary text-foreground"
+        }`}>
+          {dueAlert.text}
+        </div>
+      )}
+
+      {invoice.invoice_number ? (
+        <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+          <div>
+            <span>Номер:</span>{" "}
+            <span className="font-mono text-foreground">#{invoice.invoice_number}</span>
+          </div>
+          {invoice.invoice_date && (
+            <div>
+              <span>Дата:</span>{" "}
+              {new Date(invoice.invoice_date).toLocaleDateString("bg-BG")}
+            </div>
+          )}
+          {invoice.sent_at ? (
+            <div>
+              <span>Изпратен на клиента на:</span>{" "}
+              {new Date(invoice.sent_at).toLocaleDateString("bg-BG", {
+                day: "2-digit", month: "2-digit", year: "numeric",
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-1"
+              disabled={saving}
+              onClick={async () => {
+                setError("")
+                setSaving(true)
+                try {
+                  await markInvoiceSent(invoice.id)
+                  await onChanged()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Грешка")
+                } finally {
+                  setSaving(false)
+                }
+              }}
+            >
+              Маркирай като изпратен на клиента
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2 text-xs">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex-1 min-w-[160px]">
+              <label className="mb-1 block text-muted-foreground">Номер от Microinvest</label>
+              <Input
+                value={number}
+                onChange={(e) => setNumber(e.target.value)}
+                placeholder={isInvoice ? "напр. F-2026-0042" : "напр. KI-2026-0007"}
+                className="h-8 font-mono"
+                maxLength={50}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-muted-foreground">Дата</label>
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="h-8 w-40"
+              />
+            </div>
+            <Button
+              size="sm"
+              disabled={saving || !number.trim()}
+              onClick={async () => {
+                setError("")
+                setSaving(true)
+                try {
+                  await setInvoiceNumber(invoice.id, number.trim(), date || undefined)
+                  setNumber("")
+                  setDate("")
+                  await onChanged()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Грешка")
+                } finally {
+                  setSaving(false)
+                }
+              }}
+            >
+              {saving ? "Записване..." : "Запиши"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
     </div>
   )
 }

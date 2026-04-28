@@ -135,8 +135,8 @@ function AdminOrdersPage() {
           o.payment_method === "card" ? "Карта" : "Наложен платеж",
           o.logistics_partner || "",
           STATUS_BADGE_LABELS[o.status] || o.status,
-          o.invoice_number || "",
-          o.invoice_date ? new Date(o.invoice_date).toLocaleDateString("bg-BG") : "",
+          o.invoice?.invoice_number || "",
+          o.invoice?.invoice_date ? new Date(o.invoice.invoice_date).toLocaleDateString("bg-BG") : "",
         ]
       })
 
@@ -295,9 +295,9 @@ function AdminOrdersPage() {
                   <TableCell className="text-sm">{PAYMENT_LABELS[order.payment_method] || order.payment_method}</TableCell>
                   <TableCell className="text-sm">{order.logistics_partner?.replace("-", " ") || "—"}</TableCell>
                   <TableCell className="text-sm">
-                    {order.invoice_number ? (
-                      <span className="font-mono text-xs">#{order.invoice_number}</span>
-                    ) : order.needs_invoice ? (
+                    {order.invoice?.invoice_number ? (
+                      <span className="font-mono text-xs">#{order.invoice.invoice_number}</span>
+                    ) : order.invoice ? (
                       (() => {
                         const isPaid = order.payment_method === "card" || order.status === "delivered"
                         if (!isPaid) return <Badge variant="outline" className="text-xs">Поискана</Badge>

@@ -24,6 +24,7 @@ export function createSupabaseMock() {
     gte: vi.fn(() => mock),
     lte: vi.fn(() => mock),
     single: vi.fn(),
+    maybeSingle: vi.fn(),
     rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
   }
   return mock
@@ -96,5 +97,6 @@ export function resetSupabaseMock(mock: Record<string, ReturnType<typeof vi.fn>>
   mock.gte = vi.fn(() => mock)
   mock.lte = vi.fn(() => mock)
   mock.single = vi.fn()
+  mock.maybeSingle = vi.fn()
   mock.rpc = vi.fn(() => Promise.resolve({ data: null, error: null }))
 }

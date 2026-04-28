@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
 import { sanitizeError } from "@/lib/logger"
 import { requireEnv } from "@/lib/env"
+import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 import type Stripe from "stripe"
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -116,7 +117,8 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
     .maybeSingle()
   if (existing) return
 
-  const { error: insertError } = await supabase
+  const refundedAtIso = new Date(refund.created * 1000).toISOString()
+  const { data: inserted, error: insertError } = await supabase
     .from("order_refunds")
     .insert({
       order_id: order.id,
@@ -125,9 +127,14 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
       method: "stripe",
       source: "stripe_webhook",
       reason: refund.reason ?? "Stripe webhook: refund recorded from gateway event",
+      // affects_invoiced_supply defaults to true at the DB layer — the
+      // conservative default; admin can record a corrective annotation if
+      // they decide later that this refund is goodwill / non-supply-reducing.
       recorded_by: "stripe-webhook",
-      refunded_at: new Date(refund.created * 1000).toISOString(),
+      refunded_at: refundedAtIso,
     })
+    .select("id")
+    .maybeSingle()
 
   if (insertError) {
     // 23505 on stripe_refund_id means a concurrent upsert beat us. That's
@@ -138,12 +145,24 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
     return
   }
 
+  // Auto-create credit_note row when the order has an issued invoice. Webhook
+  // path mirrors the admin recordRefund logic — affects_invoiced_supply is
+  // assumed true (the default) for webhook-originated refunds.
+  if (inserted?.id) {
+    await autoCreateCreditNoteRow(supabase, {
+      orderId: order.id,
+      refundId: inserted.id,
+      refundedAt: refundedAtIso,
+    })
+  }
+
   alertAdmin(
     `Stripe refund recorded — order ${String(order.id).slice(0, 8)}`,
     `A refund of ${(refund.amount / 100).toFixed(2)} EUR was recorded for order ${order.id}.\n` +
       `Stripe refund: ${refund.id}\n` +
       `Reason (gateway): ${refund.reason ?? "n/a"}\n\n` +
-      `Open the order in the admin panel to add the internal reason and credit-note reference.`,
+      `Open the order in the admin panel to add the internal reason. If a кредитно ` +
+      `известие row was auto-created, paste its Microinvest number from the Документи section.`,
   )
 }
 

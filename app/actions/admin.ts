@@ -16,6 +16,7 @@ import { requireEnv } from "@/lib/env"
 import { stripe } from "@/lib/stripe"
 import { sanitizeError } from "@/lib/logger"
 import { sendOrderConfirmationEmail, sendDeliveryEmail } from "@/lib/email-sender"
+import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -151,10 +152,16 @@ export interface OrderSummary {
   shipping_fee: number
   cod_fee: number
   discount_amount: number
-  needs_invoice: boolean
+  delivered_at: string | null
+  // Surfaced from joined invoices row of type='invoice' (one per order at most).
+  // Kept on the summary row for quick filtering / list display; the full
+  // OrderDetail.invoices array carries credit_note rows too.
+  invoice: OrderInvoiceSummary | null
+}
+
+export interface OrderInvoiceSummary {
   invoice_number: string | null
   invoice_date: string | null
-  delivered_at: string | null
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -170,13 +177,6 @@ export interface OrderDetail extends OrderSummary {
     cancelledQuantity: number
     lineNo: number
   }>
-  needs_invoice: boolean
-  invoice_type: "individual" | "company" | null
-  invoice_company_name: string | null
-  invoice_eik: string | null
-  invoice_vat_number: string | null
-  invoice_mol: string | null
-  invoice_address: string | null
   econt_office_id: number | null
   econt_office_code: string | null
   econt_office_name: string | null
@@ -189,8 +189,6 @@ export interface OrderDetail extends OrderSummary {
   stripe_receipt_url: string | null
   order_confirmation_sent_at: string | null
   delivery_email_sent_at: string | null
-  invoice_number: string | null
-  invoice_date: string | null
   promo_code: string | null
   discount_amount: number
   shipping_fee: number
@@ -201,7 +199,6 @@ export interface OrderDetail extends OrderSummary {
   cancelled_at: string | null
   admin_notes: Array<{ text: string; created_at: string; author?: string }>
   cancellation_reason: string | null
-  invoice_sent_at: string | null
   paid_at: string | null
   courier_ppp_ref: string | null
   settlement_ref: string | null
@@ -209,6 +206,9 @@ export interface OrderDetail extends OrderSummary {
   cod_confirmed_at: string | null
   cod_confirmed_by: string | null
   refunds: OrderRefund[]
+  // All invoice rows for this order — type='invoice' (at most one) plus any
+  // type='credit_note' rows auto-created on refunds.
+  invoices: Invoice[]
   // Inventory movements of type return_in / damaged for this order, used by
   // the admin UI to show the kредитно-известие breakdown per refund (linked
   // via inventory_log.reference_id = order_refunds.id). No FK relationship
@@ -247,13 +247,35 @@ export interface OrderRefund {
   id: string
   order_id: string
   stripe_refund_id: string | null
+  bank_transfer_ref: string | null
   amount_cents: number
   method: "stripe" | "bank_transfer"
   source: "admin_ui" | "stripe_webhook"
   reason: string | null
-  credit_note_ref: string | null
+  affects_invoiced_supply: boolean
+  credit_note_skip_reason: string | null
   recorded_by: string
   refunded_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Invoice {
+  id: string
+  order_id: string
+  type: "invoice" | "credit_note"
+  refund_id: string | null
+  references_invoice_id: string | null
+  invoice_type: "individual" | "company" | null
+  company_name: string | null
+  eik: string | null
+  vat_number: string | null
+  mol: string | null
+  address: string | null
+  invoice_number: string | null
+  invoice_date: string | null
+  sent_at: string | null
+  due_at: string | null
   created_at: string
   updated_at: string
 }
@@ -306,15 +328,6 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
     }
   }
 
-  const invoiceFilter = params?.invoiceFilter
-  if (invoiceFilter === "requested") {
-    query = query.eq("needs_invoice", true)
-  } else if (invoiceFilter === "issued") {
-    query = query.not("invoice_number", "is", null)
-  } else if (invoiceFilter === "pending") {
-    query = query.eq("needs_invoice", true).is("invoice_number", null)
-  }
-
   const paymentFilter = params?.paymentFilter
   if (paymentFilter === "awaiting-settlement") {
     query = query.eq("payment_method", "cod").eq("status", "delivered").is("paid_at", null)
@@ -325,6 +338,50 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   return query
 }
 
+// Resolve an invoice filter (`requested` | `issued` | `pending`) to the set of
+// order_ids whose type='invoice' row matches. Returned to the caller so it
+// can attach `.in("id", ...)` to the orders query (PostgREST can't filter a
+// parent table by an embedded resource's column directly without changing
+// join semantics, so we resolve the id list in a separate query).
+//
+// Returns null when no filter is applied (caller should skip the .in()).
+async function resolveInvoiceFilterOrderIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  invoiceFilter: string | undefined,
+): Promise<string[] | null> {
+  if (!invoiceFilter || invoiceFilter === "all") return null
+
+  let invQuery: any = supabase.from("invoices").select("order_id").eq("type", "invoice")
+  if (invoiceFilter === "issued") {
+    invQuery = invQuery.not("invoice_number", "is", null)
+  } else if (invoiceFilter === "pending") {
+    invQuery = invQuery.is("invoice_number", null)
+  }
+  // "requested" → just type='invoice', no further filter
+
+  const { data, error } = await invQuery
+  if (error) {
+    console.error("Failed to resolve invoice filter:", error)
+    return []
+  }
+  return (data ?? []).map((r: { order_id: string }) => r.order_id)
+}
+
+// Map the joined invoices array on an order summary row to the {invoice_number,
+// invoice_date} shape expected on OrderSummary.invoice. The DB invariant is
+// 0..1 invoices row of type='invoice' per order.
+function pickInitialInvoice(
+  invoices: Array<{ type: string; invoice_number: string | null; invoice_date: string | null }> | null | undefined,
+): OrderInvoiceSummary | null {
+  if (!invoices || invoices.length === 0) return null
+  const initial = invoices.find((i) => i.type === "invoice")
+  if (!initial) return null
+  return {
+    invoice_number: initial.invoice_number,
+    invoice_date: initial.invoice_date,
+  }
+}
+
 export async function getOrders(params?: OrderQueryParams & { page?: number }): Promise<{ orders: OrderSummary[]; total: number }> {
   await requireAdmin()
   const supabase = await createClient()
@@ -333,13 +390,24 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   const from = page * ORDERS_PAGE_SIZE
   const to = from + ORDERS_PAGE_SIZE - 1
 
+  const invoiceOrderIds = await resolveInvoiceFilterOrderIds(supabase, params?.invoiceFilter)
+  if (invoiceOrderIds !== null && invoiceOrderIds.length === 0) {
+    return { orders: [], total: 0 }
+  }
+
   let query = supabase
     .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
+    .select(
+      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+      { count: "exact" },
+    )
     .order("created_at", { ascending: false })
     .range(from, to)
 
   query = applyOrderFilters(query, params)
+  if (invoiceOrderIds !== null) {
+    query = query.in("id", invoiceOrderIds)
+  }
 
   const { data, error, count } = await query
 
@@ -348,12 +416,22 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
     throw new Error("Failed to fetch orders")
   }
 
-  return { orders: data || [], total: count ?? 0 }
+  const orders: OrderSummary[] = (data ?? []).map((row: any) => {
+    const { invoices, ...rest } = row
+    return { ...rest, invoice: pickInitialInvoice(invoices) }
+  })
+
+  return { orders, total: count ?? 0 }
 }
 
 export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSummary[]> {
   await requireAdmin()
   const supabase = await createClient()
+
+  const invoiceOrderIds = await resolveInvoiceFilterOrderIds(supabase, params?.invoiceFilter)
+  if (invoiceOrderIds !== null && invoiceOrderIds.length === 0) {
+    return []
+  }
 
   const results: OrderSummary[] = []
   let from = 0
@@ -362,11 +440,16 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
   while (true) {
     let query = supabase
       .from("orders")
-      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
+      .select(
+        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+      )
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
 
     query = applyOrderFilters(query, params)
+    if (invoiceOrderIds !== null) {
+      query = query.in("id", invoiceOrderIds)
+    }
 
     const { data, error } = await query
     if (error) {
@@ -374,7 +457,11 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
       throw new Error("Failed to fetch orders")
     }
 
-    results.push(...(data || []))
+    const mapped: OrderSummary[] = (data ?? []).map((row: any) => {
+      const { invoices, ...rest } = row
+      return { ...rest, invoice: pickInitialInvoice(invoices) }
+    })
+    results.push(...mapped)
     if (!data || data.length < batchSize) break
     from += batchSize
   }
@@ -383,23 +470,28 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
 }
 
 export interface InvoiceSummary {
-  id: string
-  created_at: string
-  first_name: string
-  last_name: string
-  email: string
-  total_amount: number
-  invoice_number: string
+  id: string                   // invoices.id (NOT orders.id)
+  order_id: string
+  type: "invoice" | "credit_note"
+  invoice_number: string       // not null since list filters on issued
   invoice_date: string
-  invoice_company_name: string | null
-  invoice_eik: string | null
-  needs_invoice: boolean
+  due_at: string | null
+  // Joined customer info from orders
+  customer_first_name: string
+  customer_last_name: string
+  customer_email: string
+  order_total_amount: number
+  // Invoice profile (null for credit_note)
+  invoice_type: "individual" | "company" | null
+  company_name: string | null
+  eik: string | null
 }
 
 interface InvoiceQueryParams {
   search?: string
   dateFrom?: string
   dateTo?: string
+  type?: "invoice" | "credit_note" | "all"
 }
 
 function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
@@ -413,17 +505,46 @@ function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
     query = query.lte("invoice_date", `${dateTo}T23:59:59`)
   }
 
+  const type = params?.type
+  if (type === "invoice" || type === "credit_note") {
+    query = query.eq("type", type)
+  }
+
   const search = params?.search?.trim().toLowerCase()
   if (search) {
     const escaped = escapeIlike(search)
-    if (/^\d+$/.test(search)) {
+    // Invoice-number search; customer-name/email/company-name search needs a
+    // joined-orders ilike which PostgREST doesn't expose easily, so fall back
+    // to invoice_number search only when input is digits, and to company_name
+    // (on invoices itself) otherwise. For richer search the admin UI can add
+    // a separate filter, or we can switch to a Postgres full-text view.
+    if (/^[a-zA-Z0-9-]+$/.test(search)) {
       query = query.ilike("invoice_number", `%${escaped}%`)
     } else {
-      query = query.or(`first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%,invoice_company_name.ilike.%${escaped}%`)
+      query = query.ilike("company_name", `%${escaped}%`)
     }
   }
 
   return query
+}
+
+function mapInvoiceRowToSummary(row: any): InvoiceSummary {
+  const order = row.orders ?? row.order ?? {}
+  return {
+    id: row.id,
+    order_id: row.order_id,
+    type: row.type,
+    invoice_number: row.invoice_number,
+    invoice_date: row.invoice_date,
+    due_at: row.due_at,
+    customer_first_name: order.first_name ?? "",
+    customer_last_name: order.last_name ?? "",
+    customer_email: order.email ?? "",
+    order_total_amount: order.total_amount ?? 0,
+    invoice_type: row.invoice_type,
+    company_name: row.company_name,
+    eik: row.eik,
+  }
 }
 
 export async function getInvoices(params?: InvoiceQueryParams & { page?: number }): Promise<{ invoices: InvoiceSummary[]; total: number }> {
@@ -435,8 +556,11 @@ export async function getInvoices(params?: InvoiceQueryParams & { page?: number 
   const to = from + ORDERS_PAGE_SIZE - 1
 
   let query = supabase
-    .from("orders")
-    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice", { count: "exact" })
+    .from("invoices")
+    .select(
+      "id, order_id, type, invoice_number, invoice_date, due_at, invoice_type, company_name, eik, orders!inner(first_name, last_name, email, total_amount)",
+      { count: "exact" },
+    )
     .not("invoice_number", "is", null)
     .order("invoice_date", { ascending: false })
     .range(from, to)
@@ -450,7 +574,10 @@ export async function getInvoices(params?: InvoiceQueryParams & { page?: number 
     throw new Error("Failed to fetch invoices")
   }
 
-  return { invoices: (data || []) as InvoiceSummary[], total: count ?? 0 }
+  return {
+    invoices: (data ?? []).map(mapInvoiceRowToSummary),
+    total: count ?? 0,
+  }
 }
 
 export async function getAllInvoices(params?: InvoiceQueryParams): Promise<InvoiceSummary[]> {
@@ -463,8 +590,10 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
 
   while (true) {
     let query = supabase
-      .from("orders")
-      .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice")
+      .from("invoices")
+      .select(
+        "id, order_id, type, invoice_number, invoice_date, due_at, invoice_type, company_name, eik, orders!inner(first_name, last_name, email, total_amount)",
+      )
       .not("invoice_number", "is", null)
       .order("invoice_date", { ascending: false })
       .range(from, from + batchSize - 1)
@@ -477,7 +606,7 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
       throw new Error("Failed to fetch invoices")
     }
 
-    results.push(...((data || []) as InvoiceSummary[]))
+    results.push(...((data ?? []).map(mapInvoiceRowToSummary)))
     if (!data || data.length < batchSize) break
     from += batchSize
   }
@@ -518,7 +647,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     "dispute_funds_reinstated",
   ]
 
-  const [orderResult, returnsResult, auditResult] = await Promise.all([
+  const [orderResult, returnsResult, auditResult, invoicesResult] = await Promise.all([
     supabase
       .from("orders")
       .select(`
@@ -536,11 +665,13 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
           id,
           order_id,
           stripe_refund_id,
+          bank_transfer_ref,
           amount_cents,
           method,
           source,
           reason,
-          credit_note_ref,
+          affects_invoiced_supply,
+          credit_note_skip_reason,
           recorded_by,
           refunded_at,
           created_at,
@@ -565,6 +696,12 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       .eq("order_id", orderId)
       .in("event_type", TIMELINE_EVENT_TYPES)
       .order("created_at", { ascending: true }),
+    // All invoice rows for this order (initial фактура + any кредитни известия).
+    supabase
+      .from("invoices")
+      .select("id, order_id, type, refund_id, references_invoice_id, invoice_type, company_name, eik, vat_number, mol, address, invoice_number, invoice_date, sent_at, due_at, created_at, updated_at")
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true }),
   ])
 
   if (orderResult.error || !orderResult.data) {
@@ -587,7 +724,28 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     console.error(`Failed to fetch audit events for order ${orderId}:`, auditResult.error)
   }
 
-  return { ...orderResult.data, inventoryReturns: returns, auditEvents }
+  const invoices = (invoicesResult.data ?? []) as Invoice[]
+  if (invoicesResult.error) {
+    console.error(`Failed to fetch invoices for order ${orderId}:`, invoicesResult.error)
+  }
+
+  // Surface the (at most one) initial invoice as the OrderSummary.invoice
+  // shape so list-style consumers see it identically to the orders-list path.
+  const initialInvoice = invoices.find((inv) => inv.type === "invoice") ?? null
+  const invoiceSummary: OrderInvoiceSummary | null = initialInvoice
+    ? {
+        invoice_number: initialInvoice.invoice_number,
+        invoice_date: initialInvoice.invoice_date,
+      }
+    : null
+
+  return {
+    ...orderResult.data,
+    invoice: invoiceSummary,
+    invoices,
+    inventoryReturns: returns,
+    auditEvents,
+  }
 }
 
 // Valid status transitions
@@ -953,26 +1111,40 @@ export async function addAdminNote(orderId: string, note: string) {
   return { success: true }
 }
 
-// Note: invoice_number / invoice_date are deliberately allowed on orders
-// where needs_invoice=false. Profile fields (type/mol/address/company_name/
-// eik/vat) stay tied to needs_invoice — those represent what the customer
-// agreed to share at checkout. The number is admin-controlled (issued in
-// Microinvest, pasted here) and orthogonal to checkout consent. See
-// migration 20260425_relax_invoice_fields_cleared.sql.
-export async function setInvoiceNumber(orderId: string, invoiceNumber: string): Promise<{ success: true }> {
+// Sets the Microinvest-assigned number on an invoices row (either type='invoice'
+// or type='credit_note'). Idempotency guard via .is("invoice_number", null).
+// Optional invoice_date — defaults to now (admin pasted same-day issuance);
+// caller can pass an explicit date for retroactive entries.
+export async function setInvoiceNumber(
+  invoiceId: string,
+  invoiceNumber: string,
+  invoiceDate?: string,
+): Promise<{ success: true }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const trimmed = invoiceNumber.trim()
   if (!trimmed || trimmed.length > 50) throw new Error("Невалиден номер на фактура")
 
+  let dateIso: string
+  if (invoiceDate) {
+    const parsed = new Date(invoiceDate)
+    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на фактура")
+    if (parsed > new Date()) throw new Error("Датата на фактура не може да бъде в бъдещето")
+    dateIso = /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)
+      ? new Date(invoiceDate + "T23:59:59.000Z").toISOString()
+      : parsed.toISOString()
+  } else {
+    dateIso = new Date().toISOString()
+  }
+
   const supabase = await createClient()
   const { data, error } = await supabase
-    .from("orders")
-    .update({ invoice_number: trimmed, invoice_date: new Date().toISOString() })
-    .eq("id", orderId)
+    .from("invoices")
+    .update({ invoice_number: trimmed, invoice_date: dateIso })
+    .eq("id", invoiceId)
     .is("invoice_number", null)
     .select("id")
 
@@ -982,25 +1154,27 @@ export async function setInvoiceNumber(orderId: string, invoiceNumber: string): 
   }
 
   if (!data || data.length === 0) {
-    throw new Error("Поръчката не е намерена или вече има фактура")
+    throw new Error("Документът не е намерен или вече има номер")
   }
 
   return { success: true }
 }
 
-export async function markInvoiceSent(orderId: string): Promise<{ success: true }> {
+// Marks an invoices row as sent to the customer. Works for both type='invoice'
+// and type='credit_note'. Requires invoice_number to be set first.
+export async function markInvoiceSent(invoiceId: string): Promise<{ success: true }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const supabase = await createClient()
   const { data, error } = await supabase
-    .from("orders")
-    .update({ invoice_sent_at: new Date().toISOString() })
-    .eq("id", orderId)
+    .from("invoices")
+    .update({ sent_at: new Date().toISOString() })
+    .eq("id", invoiceId)
     .not("invoice_number", "is", null)
-    .is("invoice_sent_at", null)
+    .is("sent_at", null)
     .select("id")
 
   if (error) {
@@ -1009,7 +1183,7 @@ export async function markInvoiceSent(orderId: string): Promise<{ success: true 
   }
 
   if (!data || data.length === 0) {
-    throw new Error("Поръчката няма фактура или вече е отбелязана като изпратена")
+    throw new Error("Документът няма номер или вече е отбелязан като изпратен")
   }
 
   return { success: true }
@@ -1552,12 +1726,23 @@ export async function resendDeliveryEmail(
 //
 // Phase 1 (current): admin issues Stripe refunds in the Stripe dashboard,
 // then records them here with the Stripe refund ID. COD refunds are
-// bank-transfer only, no gateway ID. The webhook creates rows the admin
-// hasn't recorded yet and admin can annotate afterward (reason,
-// credit_note_ref) via updateRefundAnnotation.
+// bank-transfer only — admin pastes the bank's transfer reference. The
+// webhook creates rows the admin hasn't recorded yet, and admin can annotate
+// afterward (reason, bank_transfer_ref, credit_note_skip_reason) via
+// updateRefundAnnotation.
 //
 // Phase 2: the admin UI will call stripe.refunds.create() directly and
 // insert the row synchronously — same table, same shape, no schema change.
+//
+// Credit note auto-creation rule (ЗДДС Чл. 115):
+//   A type='credit_note' row in invoices is auto-inserted when ALL three:
+//     1. an invoices row of type='invoice' exists for the order
+//     2. that invoice has invoice_number set (фактура actually issued)
+//     3. data.affectsInvoicedSupply is true (default; admin can opt out
+//        for goodwill / non-supply-reducing refunds)
+//   When all three true but #2 is false (invoice exists without number),
+//   we BLOCK the refund with a guidance message — admin must complete the
+//   invoice first.
 
 export async function recordRefund(
   orderId: string,
@@ -1566,11 +1751,13 @@ export async function recordRefund(
     refundReason: string
     refundMethod: "stripe" | "bank_transfer"
     refundedAt?: string
-    creditNoteRef?: string
     stripeRefundId?: string
+    bankTransferRef?: string
+    affectsInvoicedSupply?: boolean
+    creditNoteSkipReason?: string
     clientIdempotencyKey: string
   },
-): Promise<{ success: true; refundId: string }> {
+): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1594,10 +1781,21 @@ export async function recordRefund(
     throw new Error("Невалиден метод на възстановяване")
   }
 
-  // Validate creditNoteRef
-  const trimmedCreditNote = data.creditNoteRef?.trim() || null
-  if (trimmedCreditNote && trimmedCreditNote.length > 100) {
-    throw new Error("Референцията на кредитното известие е твърде дълга")
+  // Affects-invoiced-supply flag (default true). Drives credit-note auto-creation
+  // and is structured (NOT encoded in reason).
+  const affectsInvoicedSupply = data.affectsInvoicedSupply ?? true
+
+  // Skip reason required when admin opts out of credit note
+  const trimmedSkipReason = data.creditNoteSkipReason?.trim() || null
+  if (!affectsInvoicedSupply) {
+    if (!trimmedSkipReason) {
+      throw new Error("Когато не се изисква кредитно известие, посочете причина")
+    }
+    if (trimmedSkipReason.length > 500) {
+      throw new Error("Причината за пропуск на кредитно известие е твърде дълга")
+    }
+  } else if (trimmedSkipReason) {
+    throw new Error("Причина за пропуск може да се посочи само когато не се създава кредитно известие")
   }
 
   // Validate Stripe refund ID (required for method=stripe)
@@ -1612,6 +1810,20 @@ export async function recordRefund(
   }
   if (data.refundMethod === "bank_transfer" && trimmedStripeRefundId) {
     throw new Error("Банковите преводи нямат Stripe refund ID")
+  }
+
+  // Validate bank_transfer_ref (required for method=bank_transfer)
+  const trimmedBankTransferRef = data.bankTransferRef?.trim() || null
+  if (data.refundMethod === "bank_transfer") {
+    if (!trimmedBankTransferRef) {
+      throw new Error("Референцията на банков превод е задължителна за банково възстановяване")
+    }
+    if (trimmedBankTransferRef.length > 200) {
+      throw new Error("Референцията на банков превод е твърде дълга")
+    }
+  }
+  if (data.refundMethod === "stripe" && trimmedBankTransferRef) {
+    throw new Error("Stripe възстановяванията нямат референция на банков превод")
   }
 
   // Validate refundedAt
@@ -1648,13 +1860,20 @@ export async function recordRefund(
     if (existing.order_id !== orderId) {
       throw new Error("Idempotency key принадлежи на друга поръчка")
     }
-    return { success: true, refundId: existing.id }
+    // Lookup any credit_note that may already be tied to this refund
+    const { data: existingCN } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("refund_id", existing.id)
+      .eq("type", "credit_note")
+      .maybeSingle()
+    return { success: true, refundId: existing.id, creditNoteId: existingCN?.id ?? null }
   }
 
   // No existing row — run full validation + insert.
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, stripe_payment_intent_id")
+    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id")
     .eq("id", orderId)
     .single()
 
@@ -1662,6 +1881,30 @@ export async function recordRefund(
   if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
   if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
     throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
+  }
+
+  // Look up the order's initial invoice (if any) — drives the credit-note guard
+  // and auto-creation. The DB invariant guarantees 0..1 type='invoice' row.
+  const { data: invoiceRow, error: invoiceError } = await supabase
+    .from("invoices")
+    .select("id, invoice_number")
+    .eq("order_id", orderId)
+    .eq("type", "invoice")
+    .maybeSingle()
+  if (invoiceError) {
+    console.error("Failed to look up invoice for refund:", invoiceError)
+    throw new Error("Грешка при проверка на фактурата на поръчката")
+  }
+
+  // Guard (ЗДДС Чл. 115): if the customer requested an invoice but admin
+  // hasn't issued the фактура in Microinvest yet, block refunds that would
+  // require a кредитно известие. Admin must complete the invoice first.
+  const hasInvoiceRow = !!invoiceRow
+  const invoiceNumberSet = !!invoiceRow?.invoice_number
+  if (affectsInvoicedSupply && hasInvoiceRow && !invoiceNumberSet) {
+    throw new Error(
+      "Първо въведете номер и дата на фактурата преди да запишете възстановяване, което я намалява.",
+    )
   }
 
   // For Stripe refunds, verify the pasted refund ID against Stripe before
@@ -1748,24 +1991,18 @@ export async function recordRefund(
     }
   }
 
-  // Conditional credit_note_ref validation: invoice issued → credit note required
-  if (order.needs_invoice && order.invoice_number && !trimmedCreditNote) {
-    throw new Error("За поръчка с издадена фактура е необходима референция на кредитно известие")
-  }
-  // If no invoice was issued, silently drop credit_note_ref (not an error).
-  const creditNoteRefForInsert =
-    order.needs_invoice && order.invoice_number ? trimmedCreditNote : null
-
   const { data: inserted, error: insertError } = await supabase
     .from("order_refunds")
     .insert({
       order_id: orderId,
       stripe_refund_id: trimmedStripeRefundId,
+      bank_transfer_ref: trimmedBankTransferRef,
       amount_cents: data.refundAmount,
       method: data.refundMethod,
       source: "admin_ui",
       reason: trimmedReason,
-      credit_note_ref: creditNoteRefForInsert,
+      affects_invoiced_supply: affectsInvoicedSupply,
+      credit_note_skip_reason: trimmedSkipReason,
       recorded_by: "admin",
       refunded_at: refundedAtValue,
       client_idempotency_key: data.clientIdempotencyKey,
@@ -1783,7 +2020,7 @@ export async function recordRefund(
         .select("id, order_id")
         .eq("client_idempotency_key", data.clientIdempotencyKey)
       if (recovered && recovered.length > 0 && recovered[0].order_id === orderId) {
-        return { success: true, refundId: recovered[0].id }
+        return { success: true, refundId: recovered[0].id, creditNoteId: null }
       }
       // Must have been the stripe_refund_id unique — same Stripe refund
       // already in the table (webhook beat us, or dupe paste).
@@ -1793,18 +2030,35 @@ export async function recordRefund(
     throw new Error("Грешка при записване на възстановяване")
   }
 
-  return { success: true, refundId: inserted!.id }
+  const refundId = inserted!.id
+
+  // Auto-create credit_note row if all three conditions hold (#1 and #2 are
+  // checked inside autoCreateCreditNoteRow; #3 is the affects flag).
+  let creditNoteId: string | null = null
+  if (affectsInvoicedSupply) {
+    creditNoteId = await autoCreateCreditNoteRow(supabase, {
+      orderId,
+      refundId,
+      refundedAt: refundedAtValue,
+    })
+  }
+
+  return { success: true, refundId, creditNoteId }
 }
 
-// Admin-annotation edits on existing refund rows (reason, credit_note_ref).
-// Typically used to annotate webhook-originated refunds that arrived before
-// the admin had a chance to record intent. Does NOT emit an audit event —
-// annotations are not money movements.
+// Admin-annotation edits on existing refund rows.
+// Mutable fields on order_refunds: reason, bank_transfer_ref,
+// credit_note_skip_reason. Audit event emitted automatically by the
+// emit_order_refund_annotation_audit trigger.
+//
+// To edit the credit-note number, use setInvoiceNumber(invoiceId, ...) on
+// the linked credit_note row in invoices instead.
 export async function updateRefundAnnotation(
   refundId: string,
   data: {
     reason?: string
-    creditNoteRef?: string
+    bankTransferRef?: string
+    creditNoteSkipReason?: string
   },
 ): Promise<{ success: true }> {
   await requireAdmin()
@@ -1821,12 +2075,20 @@ export async function updateRefundAnnotation(
     updatePayload.reason = trimmed
   }
 
-  if (data.creditNoteRef !== undefined) {
-    const trimmed = data.creditNoteRef.trim()
-    if (trimmed.length > 100) {
-      throw new Error("Референцията на кредитното известие е твърде дълга")
+  if (data.bankTransferRef !== undefined) {
+    const trimmed = data.bankTransferRef.trim()
+    if (trimmed.length > 200) {
+      throw new Error("Референцията на банков превод е твърде дълга")
     }
-    updatePayload.credit_note_ref = trimmed || null
+    updatePayload.bank_transfer_ref = trimmed || null
+  }
+
+  if (data.creditNoteSkipReason !== undefined) {
+    const trimmed = data.creditNoteSkipReason.trim()
+    if (trimmed.length > 500) {
+      throw new Error("Причината за пропуск на кредитно известие е твърде дълга")
+    }
+    updatePayload.credit_note_skip_reason = trimmed || null
   }
 
   if (Object.keys(updatePayload).length === 0) {
