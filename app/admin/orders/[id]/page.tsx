@@ -934,59 +934,139 @@ export default function AdminOrderDetailPage({
           stay in their dedicated dialog (above) since they're already part of
           the existing flow. Each withdrawal links to /admin/returns/[id]
           where the full state machine + actions live. */}
-      {order.withdrawals.length > 0 && (
+      {(order.withdrawals.length > 0 || complaints.length > 0) && (
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle className="text-base">Заявки за връщане</CardTitle>
+            <CardTitle className="text-base">Свързани заявки</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            {order.withdrawals.map((w) => {
-              const statusLabel: Record<Withdrawal["status"], string> = {
+            {(() => {
+              const wdStatusLabel: Record<Withdrawal["status"], string> = {
                 requested: "Подадена",
                 approved: "Одобрена",
                 goods_received: "Получени стоки",
                 rejected: "Отказана",
                 completed: "Завършена",
               }
-              const statusColor: Record<Withdrawal["status"], string> = {
+              const wdStatusColor: Record<Withdrawal["status"], string> = {
                 requested: "bg-amber-100 text-amber-800",
                 approved: "bg-blue-100 text-blue-800",
                 goods_received: "bg-violet-100 text-violet-800",
                 rejected: "bg-red-100 text-red-800",
                 completed: "bg-green-100 text-green-800",
               }
-              return (
-                <div key={w.id} className="rounded-md border border-border p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-medium">{w.withdrawal_ref}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusColor[w.status]}`}>
-                          {statusLabel[w.status]}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Канал: {w.requested_via} · Имейл: {w.customer_email}
-                      </div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        Подадена на {new Date(w.created_at).toLocaleDateString("bg-BG", {
-                          day: "2-digit", month: "2-digit", year: "numeric",
-                        })}
-                        {w.refund_id && (
-                          <> · Свързана с възстановяване <span className="font-mono">{w.refund_id.slice(0, 8)}</span></>
-                        )}
+              const cmpStatusLabel: Record<string, string> = {
+                open: "Отворена",
+                resolved: "Приключена",
+                rejected: "Отхвърлена",
+              }
+              const cmpStatusColor: Record<string, string> = {
+                open: "bg-amber-100 text-amber-800",
+                resolved: "bg-green-100 text-green-800",
+                rejected: "bg-red-100 text-red-800",
+              }
+              const cmpDemandLabel: Record<string, string> = {
+                refund: "Възстановяване",
+                replacement: "Замяна",
+                repair: "Ремонт",
+                discount: "Отстъпка",
+              }
+
+              // Unify into a single list sorted by created_at desc so the
+              // most recent activity surfaces first regardless of type.
+              type Row =
+                | { type: "withdrawal"; created_at: string; data: Withdrawal }
+                | { type: "complaint"; created_at: string; data: Complaint }
+              const rows: Row[] = [
+                ...order.withdrawals.map((w) => ({ type: "withdrawal" as const, created_at: w.created_at, data: w })),
+                ...complaints.map((c) => ({ type: "complaint" as const, created_at: c.reported_at, data: c })),
+              ].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+
+              return rows.map((row) => {
+                if (row.type === "withdrawal") {
+                  const w = row.data
+                  return (
+                    <div key={`w-${w.id}`} className="rounded-md border border-border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-blue-800">
+                              Право на отказ
+                            </span>
+                            <span className="font-mono text-sm font-medium">{w.withdrawal_ref}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${wdStatusColor[w.status]}`}>
+                              {wdStatusLabel[w.status]}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Канал: {w.requested_via} · Имейл: {w.customer_email}
+                          </div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            Подадена на {new Date(w.created_at).toLocaleDateString("bg-BG", {
+                              day: "2-digit", month: "2-digit", year: "numeric",
+                            })}
+                            {w.refund_id && (
+                              <> · Свързана с възстановяване <span className="font-mono">{w.refund_id.slice(0, 8)}</span></>
+                            )}
+                          </div>
+                        </div>
+                        <Link
+                          href={`/admin/returns/${w.id}`}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          Отвори ↗
+                        </Link>
                       </div>
                     </div>
-                    <Link
-                      href={`/admin/returns/${w.id}`}
-                      className="text-xs text-blue-600 hover:underline"
-                    >
-                      Отвори ↗
-                    </Link>
+                  )
+                }
+                const c = row.data
+                return (
+                  <div key={`c-${c.id}`} className="rounded-md border border-border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-purple-800">
+                            Рекламация
+                          </span>
+                          <span className="font-mono text-sm font-medium">{c.complaint_ref}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${cmpStatusColor[c.status] ?? "bg-muted"}`}>
+                            {cmpStatusLabel[c.status] ?? c.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {c.defect_description.length > 100 ? c.defect_description.slice(0, 100) + "…" : c.defect_description}
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          Претенция: {cmpDemandLabel[c.customer_demand] ?? c.customer_demand}
+                          {" · "}
+                          Подадена на {new Date(c.reported_at).toLocaleDateString("bg-BG", {
+                            day: "2-digit", month: "2-digit", year: "numeric",
+                          })}
+                          {c.resolved_at && (
+                            <> · Приключена на {new Date(c.resolved_at).toLocaleDateString("bg-BG", {
+                              day: "2-digit", month: "2-digit", year: "numeric",
+                            })}</>
+                          )}
+                        </div>
+                        {c.resolution && (
+                          <div className="mt-1 text-xs">
+                            <span className="text-muted-foreground">Решение:</span> {c.resolution}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setComplaintDialogOpen(true)}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        Отвори ↗
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })
+            })()}
           </CardContent>
         </Card>
       )}

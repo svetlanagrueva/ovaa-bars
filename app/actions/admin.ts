@@ -2500,6 +2500,40 @@ export async function resolveComplaint(
 
 // ─── Complaint queries ───────────────────────────────────────────────────────
 
+interface ComplaintQueryParams {
+  status?: string
+  page?: number
+}
+
+export async function getComplaints(
+  params?: ComplaintQueryParams,
+): Promise<{ complaints: Complaint[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("complaints")
+    .select("*", { count: "exact" })
+    .order("reported_at", { ascending: false })
+    .range(from, to)
+
+  if (params?.status && params.status !== "all") {
+    query = query.eq("status", params.status)
+  }
+
+  const { data, error, count } = await query
+  if (error) {
+    console.error("Failed to fetch complaints:", error)
+    throw new Error("Грешка при зареждане на рекламациите")
+  }
+
+  return { complaints: (data ?? []) as Complaint[], total: count ?? 0 }
+}
+
 export async function getOrderComplaints(orderId: string): Promise<Complaint[]> {
   await requireAdmin()
 
