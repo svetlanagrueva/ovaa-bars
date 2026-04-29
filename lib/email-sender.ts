@@ -1,6 +1,12 @@
 import { Resend } from "resend"
 import { formatPrice } from "@/lib/products"
-import { buildOrderConfirmationEmail, buildDeliveryEmail } from "@/lib/email-template"
+import {
+  buildOrderConfirmationEmail,
+  buildDeliveryEmail,
+  buildWithdrawalReceivedEmail,
+  buildWithdrawalApprovedEmail,
+  buildWithdrawalRejectedEmail,
+} from "@/lib/email-template"
 import { createClient } from "@/lib/supabase/server"
 import { requireEnv } from "@/lib/env"
 
@@ -207,4 +213,84 @@ ${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${ord
   }).catch((err) => {
     console.error(`Failed to send admin notification for order ${order.id}:`, err)
   })
+}
+
+
+// ── Withdrawals (право на отказ) — admin-driven transactional emails ─────────
+// All three are fire-and-forget; failures are logged but don't break the
+// admin action that triggered them.
+
+export async function sendWithdrawalReceivedEmail(
+  order: Record<string, unknown>,
+  data: { withdrawalRef: string; customerEmail: string },
+): Promise<void> {
+  if (!process.env.RESEND_API_KEY) return
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const { html, text } = buildWithdrawalReceivedEmail({
+      orderId: order.id as string,
+      withdrawalRef: data.withdrawalRef,
+    })
+    await resend.emails.send({
+      from: requireEnv("EMAIL_FROM"),
+      to: data.customerEmail,
+      subject: `Получихме заявката Ви за връщане ${data.withdrawalRef}`,
+      html,
+      text,
+    })
+  } catch (err) {
+    console.error(`Failed to send withdrawal-received email for ${data.withdrawalRef}:`, err)
+  }
+}
+
+export async function sendWithdrawalApprovedEmail(data: {
+  orderId: string
+  customerEmail: string
+  withdrawalRef: string
+  returnRequired: boolean
+}): Promise<void> {
+  if (!process.env.RESEND_API_KEY) return
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const { html, text } = buildWithdrawalApprovedEmail({
+      orderId: data.orderId,
+      withdrawalRef: data.withdrawalRef,
+      returnRequired: data.returnRequired,
+    })
+    await resend.emails.send({
+      from: requireEnv("EMAIL_FROM"),
+      to: data.customerEmail,
+      subject: `Заявката Ви ${data.withdrawalRef} е одобрена`,
+      html,
+      text,
+    })
+  } catch (err) {
+    console.error(`Failed to send withdrawal-approved email for ${data.withdrawalRef}:`, err)
+  }
+}
+
+export async function sendWithdrawalRejectedEmail(data: {
+  orderId: string
+  customerEmail: string
+  withdrawalRef: string
+  rejectionReason: string
+}): Promise<void> {
+  if (!process.env.RESEND_API_KEY) return
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const { html, text } = buildWithdrawalRejectedEmail({
+      orderId: data.orderId,
+      withdrawalRef: data.withdrawalRef,
+      rejectionReason: data.rejectionReason,
+    })
+    await resend.emails.send({
+      from: requireEnv("EMAIL_FROM"),
+      to: data.customerEmail,
+      subject: `Заявката Ви ${data.withdrawalRef} не е одобрена`,
+      html,
+      text,
+    })
+  } catch (err) {
+    console.error(`Failed to send withdrawal-rejected email for ${data.withdrawalRef}:`, err)
+  }
 }

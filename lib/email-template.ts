@@ -678,3 +678,191 @@ ${itemsPlainText(data.items)}
 
   return { html, text }
 }
+
+// ── 7. Withdrawals (право на отказ; ЗЗП Чл. 50) ──────────────────────────
+// Three transactional emails fired by admin actions on the withdrawal lifecycle.
+
+export interface WithdrawalEmailDataReceived {
+  orderId: string
+  withdrawalRef: string
+}
+
+export interface WithdrawalEmailDataApproved {
+  orderId: string
+  withdrawalRef: string
+  returnRequired: boolean
+}
+
+export interface WithdrawalEmailDataRejected {
+  orderId: string
+  withdrawalRef: string
+  rejectionReason: string
+}
+
+export function buildWithdrawalReceivedEmail(data: WithdrawalEmailDataReceived): { html: string; text: string } {
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const ref = escapeHtml(data.withdrawalRef)
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Получихме Вашата заявка за връщане</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        Здравейте, благодарим Ви за обратната връзка. Регистрирахме Вашата заявка
+        за упражняване на правото на отказ по чл. 50 ЗЗП.
+      </p>
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse; margin: 24px 0 0;">
+        <tr>
+          <td style="font-family: ${FONT_STACK}; color: #999; font-size: 14px; padding: 6px 0;">Референция на заявката:</td>
+          <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;" align="right"><strong>${ref}</strong></td>
+        </tr>
+        <tr>
+          <td style="font-family: ${FONT_STACK}; color: #999; font-size: 14px; padding: 6px 0;">Поръчка:</td>
+          <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;" align="right"><strong>#${shortId}</strong></td>
+        </tr>
+      </table>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 24px 0 0;">
+        Ще прегледаме заявката и ще Ви информираме за следващите стъпки в най-кратък
+        срок (обикновено в рамките на 1–2 работни дни).
+      </p>
+    `)}`
+
+  const html = emailShell({
+    content,
+    orderLabel: `Заявка ${data.withdrawalRef}`,
+    preheaderText: `Получихме заявката Ви за връщане ${data.withdrawalRef}.`,
+  })
+
+  const text = `
+Получихме Вашата заявка за връщане
+
+Здравейте, благодарим Ви за обратната връзка. Регистрирахме Вашата заявка за упражняване на правото на отказ по чл. 50 ЗЗП.
+
+Референция на заявката: ${data.withdrawalRef}
+Поръчка: #${data.orderId.slice(0, 8)}
+
+Ще прегледаме заявката и ще Ви информираме за следващите стъпки в най-кратък срок (обикновено в рамките на 1–2 работни дни).
+
+Поздрави,
+Екипът на Egg Origin
+  `.trim()
+
+  return { html, text }
+}
+
+export function buildWithdrawalApprovedEmail(data: WithdrawalEmailDataApproved): { html: string; text: string } {
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const ref = escapeHtml(data.withdrawalRef)
+
+  const instructions = data.returnRequired
+    ? `
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0 0 16px;">
+        Моля върнете стоката на адреса по-долу в рамките на 14 дни. Запазете товарителницата
+        като доказателство за изпращане. След получаване и преглед ще извършим възстановяването.
+      </p>
+      <p style="color: #555; line-height: 150%; font-size: 14px; margin: 0; padding: 16px; background: #faf6ee; border-radius: 6px;">
+        <strong>Адрес за връщане:</strong><br />
+        ${escapeHtml(getSellerAddress())}
+      </p>
+      <p style="color: #999; font-size: 13px; margin: 16px 0 0;">
+        Разходите за връщане са за Ваша сметка съгласно условията при покупка.
+      </p>`
+    : `
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        В този случай не е необходимо да връщате продукта. Ще извършим възстановяването
+        в рамките на 14 дни по същия начин на плащане.
+      </p>`
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Заявката Ви е одобрена</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        Здравейте, заявката Ви за връщане <strong>${ref}</strong> по поръчка <strong>#${shortId}</strong>
+        е одобрена.
+      </p>
+    `)}
+    ${section(instructions)}
+  `
+
+  const html = emailShell({
+    content,
+    orderLabel: `Заявка ${data.withdrawalRef}`,
+    preheaderText: data.returnRequired
+      ? `Заявка ${data.withdrawalRef} одобрена — моля върнете стоката`
+      : `Заявка ${data.withdrawalRef} одобрена — възстановяване без връщане`,
+  })
+
+  const text = data.returnRequired
+    ? `
+Заявката Ви е одобрена
+
+Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)} е одобрена.
+
+Моля върнете стоката на адреса по-долу в рамките на 14 дни. Запазете товарителницата като доказателство за изпращане. След получаване и преглед ще извършим възстановяването.
+
+Адрес за връщане:
+${getSellerAddress()}
+
+Разходите за връщане са за Ваша сметка съгласно условията при покупка.
+
+Поздрави,
+Екипът на Egg Origin
+      `.trim()
+    : `
+Заявката Ви е одобрена
+
+Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)} е одобрена.
+
+В този случай не е необходимо да връщате продукта. Ще извършим възстановяването в рамките на 14 дни по същия начин на плащане.
+
+Поздрави,
+Екипът на Egg Origin
+      `.trim()
+
+  return { html, text }
+}
+
+export function buildWithdrawalRejectedEmail(data: WithdrawalEmailDataRejected): { html: string; text: string } {
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const ref = escapeHtml(data.withdrawalRef)
+  const reason = escapeHtml(data.rejectionReason)
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Заявката Ви не може да бъде одобрена</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0 0 16px;">
+        Здравейте, разгледахме заявката Ви за връщане <strong>${ref}</strong> по поръчка
+        <strong>#${shortId}</strong>, но за съжаление не можем да я одобрим.
+      </p>
+      <p style="color: #555; line-height: 150%; font-size: 14px; margin: 0; padding: 16px; background: #fdf3f3; border-radius: 6px;">
+        <strong>Причина:</strong><br />
+        ${reason}
+      </p>
+      <p style="color: #999; font-size: 14px; margin: 16px 0 0;">
+        Ако смятате, че решението е грешно, моля свържете се с нас на
+        <a href="mailto:info@eggorigin.com" style="color: ${BRAND_COLOR};">info@eggorigin.com</a>.
+        Запазваме всички Ваши права съгласно българското и европейското законодателство.
+      </p>
+    `)}`
+
+  const html = emailShell({
+    content,
+    orderLabel: `Заявка ${data.withdrawalRef}`,
+    preheaderText: `Заявка ${data.withdrawalRef} не е одобрена`,
+  })
+
+  const text = `
+Заявката Ви не може да бъде одобрена
+
+Здравейте, разгледахме заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)}, но за съжаление не можем да я одобрим.
+
+Причина:
+${data.rejectionReason}
+
+Ако смятате, че решението е грешно, моля свържете се с нас на info@eggorigin.com. Запазваме всички Ваши права съгласно българското и европейското законодателство.
+
+Поздрави,
+Екипът на Egg Origin
+  `.trim()
+
+  return { html, text }
+}

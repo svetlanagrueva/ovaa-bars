@@ -15,7 +15,13 @@ import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
 import { requireEnv } from "@/lib/env"
 import { stripe } from "@/lib/stripe"
 import { sanitizeError } from "@/lib/logger"
-import { sendOrderConfirmationEmail, sendDeliveryEmail } from "@/lib/email-sender"
+import {
+  sendOrderConfirmationEmail,
+  sendDeliveryEmail,
+  sendWithdrawalReceivedEmail,
+  sendWithdrawalApprovedEmail,
+  sendWithdrawalRejectedEmail,
+} from "@/lib/email-sender"
 import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 
 // Rate limiting (in-memory, best-effort in serverless)
@@ -78,8 +84,10 @@ export interface DashboardStats {
   month: { orders: number; revenue: number }
   pendingOrders: number
   invoicesAwaiting: number
+  creditNotesAwaiting: number
   awaitingSettlement: number
   inventoryDebtSkus: number
+  withdrawalsPending: number
   recentOrders: Array<{
     id: string
     created_at: string
@@ -130,8 +138,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
+    creditNotesAwaiting: s.credit_notes_awaiting ?? 0,
     awaitingSettlement: s.awaiting_settlement ?? 0,
     inventoryDebtSkus: s.inventory_debt_skus ?? 0,
+    withdrawalsPending: s.withdrawals_pending ?? 0,
     recentOrders: recentOrders || [],
   }
 }
@@ -209,6 +219,10 @@ export interface OrderDetail extends OrderSummary {
   // All invoice rows for this order — type='invoice' (at most one) plus any
   // type='credit_note' rows auto-created on refunds.
   invoices: Invoice[]
+  // All withdrawal rows for this order. At most one is open at a time
+  // (uq_open_withdrawal_per_order). Closed (completed/rejected) ones remain
+  // for audit history.
+  withdrawals: Withdrawal[]
   // Inventory movements of type return_in / damaged for this order, used by
   // the admin UI to show the kредитно-известие breakdown per refund (linked
   // via inventory_log.reference_id = order_refunds.id). No FK relationship
@@ -647,7 +661,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     "dispute_funds_reinstated",
   ]
 
-  const [orderResult, returnsResult, auditResult, invoicesResult] = await Promise.all([
+  const [orderResult, returnsResult, auditResult, invoicesResult, withdrawalsResult] = await Promise.all([
     supabase
       .from("orders")
       .select(`
@@ -702,6 +716,12 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       .select("id, order_id, type, refund_id, references_invoice_id, invoice_type, company_name, eik, vat_number, mol, address, invoice_number, invoice_date, sent_at, due_at, created_at, updated_at")
       .eq("order_id", orderId)
       .order("created_at", { ascending: true }),
+    // Withdrawals (право на отказ) for this order — open + closed history.
+    supabase
+      .from("withdrawals")
+      .select("*")
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true }),
   ])
 
   if (orderResult.error || !orderResult.data) {
@@ -729,6 +749,11 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     console.error(`Failed to fetch invoices for order ${orderId}:`, invoicesResult.error)
   }
 
+  const withdrawals = (withdrawalsResult.data ?? []) as Withdrawal[]
+  if (withdrawalsResult.error) {
+    console.error(`Failed to fetch withdrawals for order ${orderId}:`, withdrawalsResult.error)
+  }
+
   // Surface the (at most one) initial invoice as the OrderSummary.invoice
   // shape so list-style consumers see it identically to the orders-list path.
   const initialInvoice = invoices.find((inv) => inv.type === "invoice") ?? null
@@ -743,6 +768,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     ...orderResult.data,
     invoice: invoiceSummary,
     invoices,
+    withdrawals,
     inventoryReturns: returns,
     auditEvents,
   }
@@ -1756,6 +1782,13 @@ export async function recordRefund(
     affectsInvoicedSupply?: boolean
     creditNoteSkipReason?: string
     clientIdempotencyKey: string
+    // Optional withdrawal linkage. When set, the resulting refund row carries
+    // withdrawal_id, the withdrawal's refund_id is updated, and (if conditions
+    // are met) the withdrawal auto-completes:
+    //   Path A: withdrawal.status='goods_received' → completed
+    //   Path B: withdrawal.status='approved' AND return_required=false AND
+    //           completion_note set → completed
+    withdrawalId?: string
   },
 ): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
@@ -1991,6 +2024,28 @@ export async function recordRefund(
     }
   }
 
+  // Optional withdrawal linkage: when set, validate the withdrawal belongs
+  // to this order and is in a state that can carry a refund (approved or
+  // goods_received; never completed/rejected).
+  const withdrawalIdForLink = data.withdrawalId?.trim() || null
+  if (withdrawalIdForLink) {
+    if (!uuidRegex.test(withdrawalIdForLink)) {
+      throw new Error("Невалиден формат на заявка за връщане")
+    }
+    const { data: wd, error: wdError } = await supabase
+      .from("withdrawals")
+      .select("id, order_id, status, return_required, completion_note")
+      .eq("id", withdrawalIdForLink)
+      .single()
+    if (wdError || !wd) throw new Error("Заявката за връщане не е намерена")
+    if (wd.order_id !== orderId) {
+      throw new Error("Заявката не принадлежи на тази поръчка")
+    }
+    if (!["approved", "goods_received"].includes(wd.status)) {
+      throw new Error("Заявката не е в състояние, което позволява запис на възстановяване")
+    }
+  }
+
   const { data: inserted, error: insertError } = await supabase
     .from("order_refunds")
     .insert({
@@ -2006,6 +2061,7 @@ export async function recordRefund(
       recorded_by: "admin",
       refunded_at: refundedAtValue,
       client_idempotency_key: data.clientIdempotencyKey,
+      withdrawal_id: withdrawalIdForLink,
     })
     .select("id")
     .single()
@@ -2041,6 +2097,53 @@ export async function recordRefund(
       refundId,
       refundedAt: refundedAtValue,
     })
+  }
+
+  // If linked to a withdrawal, update the withdrawal: set refund_id +
+  // resolution_type='refund'. Auto-complete when conditions met:
+  //   Path A: withdrawal.status='goods_received' → completed
+  //   Path B: withdrawal.status='approved' AND return_required=false AND
+  //           completion_note set → completed
+  // Otherwise the withdrawal keeps its current status; the refund is recorded
+  // but completion happens later when admin marks goods received or completes
+  // via no-return path explicitly.
+  if (withdrawalIdForLink) {
+    const { data: wdNow } = await supabase
+      .from("withdrawals")
+      .select("status, return_required, completion_note")
+      .eq("id", withdrawalIdForLink)
+      .single()
+
+    const wdPayload: Record<string, unknown> = {
+      refund_id: refundId,
+      resolution_type: "refund",
+    }
+
+    if (wdNow) {
+      const canCompletePathA = wdNow.status === "goods_received"
+      const canCompletePathB =
+        wdNow.status === "approved" &&
+        wdNow.return_required === false &&
+        typeof wdNow.completion_note === "string" &&
+        wdNow.completion_note.trim() !== ""
+      if (canCompletePathA || canCompletePathB) {
+        wdPayload.status = "completed"
+        wdPayload.completed_at = new Date().toISOString()
+      }
+    }
+
+    const { error: wdUpdateError } = await supabase
+      .from("withdrawals")
+      .update(wdPayload)
+      .eq("id", withdrawalIdForLink)
+    if (wdUpdateError) {
+      // Money has moved; surface the error loudly but don't roll back the
+      // refund. Admin can manually complete the withdrawal from the UI.
+      console.error(
+        `Refund ${refundId} recorded but withdrawal ${withdrawalIdForLink} update failed:`,
+        wdUpdateError,
+      )
+    }
   }
 
   return { success: true, refundId, creditNoteId }
@@ -2412,6 +2515,363 @@ export async function getOrderComplaints(orderId: string): Promise<Complaint[]> 
   return (data || []) as Complaint[]
 }
 
+
+// ─── Withdrawals (право на отказ; ЗЗП Чл. 50) ───────────────────────────────
+// Admin-driven intake: customer contacts via email/phone; admin classifies and
+// creates the withdrawal here. State machine + audit triggers live in the DB
+// migration; these server actions are thin wrappers that prepare payloads,
+// run validation, and surface friendly errors.
+
+interface CreateWithdrawalInput {
+  requestedVia: WithdrawalRequestedVia
+  customerEmail: string
+  customerRequestText?: string
+}
+
+export async function createWithdrawal(
+  orderId: string,
+  data: CreateWithdrawalInput,
+): Promise<{ success: true; withdrawalId: string; withdrawalRef: string }> {
+  await requireAdmin()
+
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const requestedVia = data.requestedVia
+  if (!["email", "phone", "admin"].includes(requestedVia)) {
+    throw new Error("Невалиден канал на заявка")
+  }
+
+  const trimmedEmail = data.customerEmail?.trim().toLowerCase() ?? ""
+  if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    throw new Error("Невалиден имейл адрес на клиента")
+  }
+
+  const trimmedText = data.customerRequestText?.trim() || null
+  if (trimmedText && trimmedText.length > 2000) {
+    throw new Error("Текстът на заявката е твърде дълъг")
+  }
+
+  const supabase = await createClient()
+
+  // Fetch order data for eligibility computation. The order must exist;
+  // delivered_at drives the time-based eligibility check.
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, delivered_at, status")
+    .eq("id", orderId)
+    .single()
+
+  if (orderError || !order) {
+    throw new Error("Поръчката не е намерена")
+  }
+
+  // Time-based eligibility: requested_at <= delivered_at + 14 days.
+  // delivered_at may be null (not yet delivered) — leave eligibility null in
+  // that case; admin can still register the request, just no ruling yet.
+  let eligibilityTimeBased: boolean | null = null
+  if (order.delivered_at) {
+    const deadline = new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000
+    eligibilityTimeBased = Date.now() <= deadline
+  }
+
+  // Atomic WD-YYYY-NNNN minted server-side from the sequence
+  const { data: refData, error: refError } = await supabase.rpc("next_withdrawal_ref")
+  if (refError || !refData) {
+    console.error("Failed to mint withdrawal_ref:", refError)
+    throw new Error("Грешка при генериране на референция")
+  }
+  const withdrawalRef = String(refData)
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("withdrawals")
+    .insert({
+      order_id: orderId,
+      withdrawal_ref: withdrawalRef,
+      requested_via: requestedVia,
+      customer_email: trimmedEmail,
+      customer_request_text: trimmedText,
+      eligibility_time_based: eligibilityTimeBased,
+      // All Egg Origin SKUs are protein bars (perishable + sealed-food).
+      // The right exists, but Чл. 57 т.4+5 limits practical exercise.
+      eligibility_product_based: "perishable_or_short_shelf_life",
+      eligibility_condition: "pending_inspection",
+    })
+    .select("id, withdrawal_ref")
+    .single()
+
+  if (insertError) {
+    if (insertError.code === "23505") {
+      // uq_open_withdrawal_per_order — admin tried to register a 2nd open
+      // withdrawal on the same order.
+      throw new Error("За тази поръчка вече има отворена заявка за връщане")
+    }
+    console.error("Failed to insert withdrawal:", insertError)
+    throw new Error("Грешка при записване на заявката")
+  }
+
+  // Fire-and-forget customer ack email
+  const orderRecord = order as Record<string, unknown>
+  void sendWithdrawalReceivedEmail(orderRecord, {
+    withdrawalRef: inserted.withdrawal_ref,
+    customerEmail: trimmedEmail,
+  })
+
+  revalidateTag("withdrawals", "max")
+  return { success: true, withdrawalId: inserted.id, withdrawalRef: inserted.withdrawal_ref }
+}
+
+export async function approveWithdrawal(
+  withdrawalId: string,
+  data: { returnRequired: boolean },
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const supabase = await createClient()
+  const { data: updated, error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "approved",
+      approved_at: new Date().toISOString(),
+      approved_by: "admin",
+      return_required: data.returnRequired,
+    })
+    .eq("id", withdrawalId)
+    .eq("status", "requested")
+    .select("id, order_id, customer_email, withdrawal_ref, return_required")
+    .single()
+
+  if (error || !updated) {
+    if (error?.code) console.error("Failed to approve withdrawal:", error)
+    throw new Error("Заявката не може да бъде одобрена (възможно е да не е в статус requested)")
+  }
+
+  // Customer-facing email branches on return_required
+  void sendWithdrawalApprovedEmail({
+    orderId: updated.order_id,
+    customerEmail: updated.customer_email,
+    withdrawalRef: updated.withdrawal_ref,
+    returnRequired: updated.return_required,
+  })
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+export async function rejectWithdrawal(
+  withdrawalId: string,
+  reason: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const trimmed = reason?.trim()
+  if (!trimmed) throw new Error("Причината за отказ е задължителна")
+  if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+  // CHECK chk_no_reject_after_goods enforces this at DB level too.
+  const { data: updated, error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "rejected",
+      rejection_reason: trimmed,
+      rejected_at: new Date().toISOString(),
+      rejected_by: "admin",
+    })
+    .eq("id", withdrawalId)
+    .in("status", ["requested", "approved"])
+    .is("goods_received_at", null)
+    .select("id, order_id, customer_email, withdrawal_ref")
+    .single()
+
+  if (error || !updated) {
+    if (error?.code) console.error("Failed to reject withdrawal:", error)
+    throw new Error("Заявката не може да бъде отхвърлена в текущото състояние")
+  }
+
+  void sendWithdrawalRejectedEmail({
+    orderId: updated.order_id,
+    customerEmail: updated.customer_email,
+    withdrawalRef: updated.withdrawal_ref,
+    rejectionReason: trimmed,
+  })
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+export async function markWithdrawalGoodsReceived(
+  withdrawalId: string,
+  data: {
+    eligibilityCondition: WithdrawalEligibilityCondition
+    resolutionType?: WithdrawalResolutionType
+    returnTrackingNumber?: string
+    returnCourier?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const allowedConditions: WithdrawalEligibilityCondition[] = [
+    "sealed_sellable", "opened", "damaged", "expired", "other",
+  ]
+  if (!allowedConditions.includes(data.eligibilityCondition)) {
+    throw new Error("Невалидно състояние на върнатата стока")
+  }
+
+  const allowedResolutions: WithdrawalResolutionType[] = ["refund", "replacement", "none"]
+  if (data.resolutionType && !allowedResolutions.includes(data.resolutionType)) {
+    throw new Error("Невалиден тип резолюция")
+  }
+
+  const tracking = data.returnTrackingNumber?.trim() || null
+  if (tracking && tracking.length > 200) throw new Error("Номерът на товарителницата е твърде дълъг")
+  const courier = data.returnCourier?.trim() || null
+  if (courier && courier.length > 100) throw new Error("Името на куриера е твърде дълго")
+
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "goods_received",
+      eligibility_condition: data.eligibilityCondition,
+      resolution_type: data.resolutionType ?? null,
+      return_tracking_number: tracking,
+      return_courier: courier,
+      goods_received_at: new Date().toISOString(),
+    })
+    .eq("id", withdrawalId)
+    .eq("status", "approved")
+
+  if (error) {
+    console.error("Failed to mark goods received:", error)
+    throw new Error("Заявката не може да бъде преместена в 'получени стоки'")
+  }
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+export async function completeWithdrawalNoReturn(
+  withdrawalId: string,
+  data: {
+    resolutionType: WithdrawalResolutionType
+    completionNote: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  if (!["refund", "replacement", "none"].includes(data.resolutionType)) {
+    throw new Error("Невалиден тип резолюция")
+  }
+
+  const trimmedNote = data.completionNote?.trim()
+  if (!trimmedNote) throw new Error("Бележката за завършване е задължителна за path B")
+  if (trimmedNote.length > 1000) throw new Error("Бележката е твърде дълга")
+
+  // For Refund path B, refund must be linked first. Admin uses recordRefund
+  // (which writes refund_id on the withdrawal); this action is for
+  // replacement/none. If admin tries with resolution_type=refund but refund_id
+  // is null, the state-machine trigger raises.
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "completed",
+      resolution_type: data.resolutionType,
+      completion_note: trimmedNote,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", withdrawalId)
+    .eq("status", "approved")
+    .eq("return_required", false)
+
+  if (error) {
+    console.error("Failed to complete withdrawal (no-return path):", error)
+    if (error.message?.includes("refund_id is required")) {
+      throw new Error("За резолюция от тип 'refund' първо запишете възстановяване")
+    }
+    throw new Error("Заявката не може да бъде завършена в текущото състояние")
+  }
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+interface WithdrawalQueryParams {
+  status?: string
+  page?: number
+}
+
+export async function getWithdrawals(
+  params?: WithdrawalQueryParams,
+): Promise<{ withdrawals: Withdrawal[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("withdrawals")
+    .select("*", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range(from, to)
+
+  if (params?.status && params.status !== "all") {
+    query = query.eq("status", params.status)
+  }
+
+  const { data, error, count } = await query
+  if (error) {
+    console.error("Failed to fetch withdrawals:", error)
+    throw new Error("Грешка при зареждане на заявките")
+  }
+
+  return { withdrawals: (data ?? []) as Withdrawal[], total: count ?? 0 }
+}
+
+export async function getWithdrawal(withdrawalId: string): Promise<Withdrawal> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("withdrawals")
+    .select("*")
+    .eq("id", withdrawalId)
+    .single()
+
+  if (error || !data) {
+    throw new Error("Заявката не е намерена")
+  }
+
+  return data as Withdrawal
+}
+
+export async function getOrderWithdrawals(orderId: string): Promise<Withdrawal[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("withdrawals")
+    .select("*")
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("Failed to fetch order withdrawals:", error)
+    throw new Error("Грешка при зареждане на заявките за поръчката")
+  }
+
+  return (data ?? []) as Withdrawal[]
+}
+
+
 async function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
   if (!process.env.RESEND_API_KEY) return
 
@@ -2770,6 +3230,60 @@ export interface Complaint {
   resolution: string | null
   resolved_at: string | null
   created_by: string
+}
+
+// ─── Withdrawals (право на отказ; ЗЗП Чл. 50) ───────────────────────────────
+export type WithdrawalStatus =
+  | "requested"
+  | "approved"
+  | "goods_received"
+  | "rejected"
+  | "completed"
+
+export type WithdrawalRequestedVia = "email" | "phone" | "admin"
+
+export type WithdrawalEligibilityProductBased =
+  | "eligible"
+  | "perishable_or_short_shelf_life"
+  | "hygiene_exception"
+  | "unknown"
+
+export type WithdrawalEligibilityCondition =
+  | "pending_inspection"
+  | "sealed_sellable"
+  | "opened"
+  | "damaged"
+  | "expired"
+  | "other"
+
+export type WithdrawalResolutionType = "refund" | "replacement" | "none"
+
+export interface Withdrawal {
+  id: string
+  order_id: string
+  withdrawal_ref: string
+  requested_via: WithdrawalRequestedVia
+  customer_email: string
+  customer_request_text: string | null
+  status: WithdrawalStatus
+  eligibility_time_based: boolean | null
+  eligibility_product_based: WithdrawalEligibilityProductBased | null
+  eligibility_condition: WithdrawalEligibilityCondition | null
+  resolution_type: WithdrawalResolutionType | null
+  rejection_reason: string | null
+  refund_id: string | null
+  return_required: boolean
+  completion_note: string | null
+  return_tracking_number: string | null
+  return_courier: string | null
+  approved_at: string | null
+  approved_by: string | null
+  goods_received_at: string | null
+  rejected_at: string | null
+  rejected_by: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]; log: InventoryLogEntry[] }> {

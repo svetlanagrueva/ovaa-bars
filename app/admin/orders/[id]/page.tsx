@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
@@ -108,6 +108,12 @@ export default function AdminOrderDetailPage({
   const [refundDialogOpen, setRefundDialogOpen] = useState(false)
   const [complaintDialogOpen, setComplaintDialogOpen] = useState(false)
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false)
+  const [withdrawalDialogOpen, setWithdrawalDialogOpen] = useState(false)
+  const [withdrawalVia, setWithdrawalVia] = useState<WithdrawalRequestedVia>("email")
+  const [withdrawalEmail, setWithdrawalEmail] = useState("")
+  const [withdrawalText, setWithdrawalText] = useState("")
+  const [withdrawalLoading, setWithdrawalLoading] = useState(false)
+  const [withdrawalError, setWithdrawalError] = useState("")
 
   // Email resend state — per-email-type loading flag and a transient
   // "sent just now" marker so the admin gets immediate feedback (the
@@ -139,6 +145,7 @@ export default function AdminOrderDetailPage({
   // whole "refund → stock outcome" flow completes (not just after the refund
   // step), so a retry during Step 2 still resolves to the same refund row.
   const [refundClientKey, setRefundClientKey] = useState<string>(() => crypto.randomUUID())
+  const [refundLinkedWithdrawalId, setRefundLinkedWithdrawalId] = useState<string>("")
 
   // Two-step state machine. 'form' = refund form visible; 'stock' = refund
   // saved, stock-outcome panel visible; 'complete' = both done, dismiss banner.
@@ -345,6 +352,22 @@ export default function AdminOrderDetailPage({
                   {complaints.filter((c) => c.status === "open").length > 0 && (
                     <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
                       {complaints.filter((c) => c.status === "open").length}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setWithdrawalEmail(order?.email ?? "")
+                    setWithdrawalText("")
+                    setWithdrawalVia("email")
+                    setWithdrawalError("")
+                    setWithdrawalDialogOpen(true)
+                  }}
+                >
+                  Регистрирай заявка за връщане
+                  {(order?.withdrawals?.filter((w) => w.status === "requested" || w.status === "approved" || w.status === "goods_received").length ?? 0) > 0 && (
+                    <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                      {order?.withdrawals?.filter((w) => w.status === "requested" || w.status === "approved" || w.status === "goods_received").length}
                     </span>
                   )}
                 </DropdownMenuItem>
@@ -902,6 +925,67 @@ export default function AdminOrderDetailPage({
                 }}
               />
             ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Заявки — withdrawals (право на отказ) for this order. Complaints
+          stay in their dedicated dialog (above) since they're already part of
+          the existing flow. Each withdrawal links to /admin/returns/[id]
+          where the full state machine + actions live. */}
+      {order.withdrawals.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Заявки за връщане</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            {order.withdrawals.map((w) => {
+              const statusLabel: Record<Withdrawal["status"], string> = {
+                requested: "Подадена",
+                approved: "Одобрена",
+                goods_received: "Получени стоки",
+                rejected: "Отказана",
+                completed: "Завършена",
+              }
+              const statusColor: Record<Withdrawal["status"], string> = {
+                requested: "bg-amber-100 text-amber-800",
+                approved: "bg-blue-100 text-blue-800",
+                goods_received: "bg-violet-100 text-violet-800",
+                rejected: "bg-red-100 text-red-800",
+                completed: "bg-green-100 text-green-800",
+              }
+              return (
+                <div key={w.id} className="rounded-md border border-border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm font-medium">{w.withdrawal_ref}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusColor[w.status]}`}>
+                          {statusLabel[w.status]}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Канал: {w.requested_via} · Имейл: {w.customer_email}
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        Подадена на {new Date(w.created_at).toLocaleDateString("bg-BG", {
+                          day: "2-digit", month: "2-digit", year: "numeric",
+                        })}
+                        {w.refund_id && (
+                          <> · Свързана с възстановяване <span className="font-mono">{w.refund_id.slice(0, 8)}</span></>
+                        )}
+                      </div>
+                    </div>
+                    <Link
+                      href={`/admin/returns/${w.id}`}
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      Отвори ↗
+                    </Link>
+                  </div>
+                </div>
+              )
+            })}
           </CardContent>
         </Card>
       )}
@@ -1713,6 +1797,7 @@ export default function AdminOrderDetailPage({
               setSavedOutcomeNote("")
               setSavedOutcomeRef("")
               setRefundStep("form")
+              setRefundLinkedWithdrawalId("")
               // New UUIDs only on full flow completion — retries during
               // Step 2 keep the same key so recordRefund idempotency holds.
               setRefundClientKey(crypto.randomUUID())
@@ -1854,6 +1939,32 @@ export default function AdminOrderDetailPage({
                           <Input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
                         </div>
 
+                        {(() => {
+                          const linkable = order.withdrawals.filter(
+                            (w) => w.status === "approved" || w.status === "goods_received",
+                          )
+                          if (linkable.length === 0) return null
+                          return (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">
+                                Свързване със заявка за връщане (по избор)
+                              </label>
+                              <select
+                                value={refundLinkedWithdrawalId}
+                                onChange={(e) => setRefundLinkedWithdrawalId(e.target.value)}
+                                className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                              >
+                                <option value="">— без връзка —</option>
+                                {linkable.map((w) => (
+                                  <option key={w.id} value={w.id}>
+                                    {w.withdrawal_ref} ({w.status})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })()}
+
                         <div className="flex items-center gap-3">
                           <Button size="sm" disabled={
                             refundLoading
@@ -1877,6 +1988,7 @@ export default function AdminOrderDetailPage({
                                 affectsInvoicedSupply: refundAffectsInvoicedSupply,
                                 creditNoteSkipReason: !refundAffectsInvoicedSupply ? refundSkipReason.trim() : undefined,
                                 clientIdempotencyKey: refundClientKey,
+                                withdrawalId: refundLinkedWithdrawalId || undefined,
                               })
                               const updated = await getOrder(id)
                               setOrder(updated)
@@ -2232,6 +2344,104 @@ export default function AdminOrderDetailPage({
               )}
             </div>
           </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Withdrawals (право на отказ) — admin-driven intake. The dialog
+              is opened from the "Регистрирай заявка за връщане" item in the
+              Още действия dropdown above. The Заявки card below lists all
+              withdrawals + complaints for this order. */}
+          <Dialog
+            open={withdrawalDialogOpen}
+            onOpenChange={(open) => {
+              setWithdrawalDialogOpen(open)
+              if (!open) setWithdrawalError("")
+            }}
+          >
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Регистрирай заявка за връщане</DialogTitle>
+              </DialogHeader>
+              {withdrawalError && (
+                <p className="text-sm text-red-600">{withdrawalError}</p>
+              )}
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Право на отказ по чл. 50 ЗЗП. Регистрирайте заявка след като
+                  клиентът Ви е писал/обадил. Системата генерира уникална
+                  референция (WD-YYYY-NNNN) и изпраща потвърждение на клиента.
+                </p>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Канал на заявка</label>
+                  <select
+                    value={withdrawalVia}
+                    onChange={(e) => setWithdrawalVia(e.target.value as WithdrawalRequestedVia)}
+                    className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                  >
+                    <option value="email">Имейл</option>
+                    <option value="phone">Телефон</option>
+                    <option value="admin">Админ (вътрешна)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Имейл на клиента</label>
+                  <Input
+                    value={withdrawalEmail}
+                    onChange={(e) => setWithdrawalEmail(e.target.value)}
+                    placeholder="customer@example.com"
+                    className="h-8"
+                    maxLength={200}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Текст на заявката (по избор)</label>
+                  <textarea
+                    value={withdrawalText}
+                    onChange={(e) => setWithdrawalText(e.target.value)}
+                    placeholder="Кратко описание / резюме на имейла на клиента..."
+                    className="h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    maxLength={2000}
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={withdrawalLoading}
+                    onClick={() => setWithdrawalDialogOpen(false)}
+                  >
+                    Отказ
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={withdrawalLoading || !withdrawalEmail.trim()}
+                    onClick={async () => {
+                      setWithdrawalLoading(true)
+                      setWithdrawalError("")
+                      try {
+                        const result = await createWithdrawal(id, {
+                          requestedVia: withdrawalVia,
+                          customerEmail: withdrawalEmail.trim(),
+                          customerRequestText: withdrawalText.trim() || undefined,
+                        })
+                        setWithdrawalDialogOpen(false)
+                        setWithdrawalEmail("")
+                        setWithdrawalText("")
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                        // Navigate to detail page for the new withdrawal
+                        window.location.href = `/admin/returns/${result.withdrawalId}`
+                      } catch (err) {
+                        setWithdrawalError(err instanceof Error ? err.message : "Грешка")
+                      } finally {
+                        setWithdrawalLoading(false)
+                      }
+                    }}
+                  >
+                    {withdrawalLoading ? "Записване..." : "Регистрирай"}
+                  </Button>
+                </div>
+              </div>
             </DialogContent>
           </Dialog>
         </CardContent>

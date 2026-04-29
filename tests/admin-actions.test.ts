@@ -85,6 +85,9 @@ vi.mock("@/lib/email-sender", () => ({
   sendOrderConfirmationEmail: (...args: unknown[]) => mockSendOrderConfirmationEmail(...args),
   sendDeliveryEmail: (...args: unknown[]) => mockSendDeliveryEmail(...args),
   notifyAdminNewOrder: vi.fn(() => Promise.resolve()),
+  sendWithdrawalReceivedEmail: vi.fn(() => Promise.resolve()),
+  sendWithdrawalApprovedEmail: vi.fn(() => Promise.resolve()),
+  sendWithdrawalRejectedEmail: vi.fn(() => Promise.resolve()),
 }))
 
 // Mock next/navigation — redirect throws like it does in Next.js
@@ -269,11 +272,12 @@ describe("admin actions", () => {
     })
 
     it("returns order detail with empty inventoryReturns + auditEvents for valid UUID", async () => {
-      // getOrder fans out four parallel queries:
+      // getOrder fans out five parallel queries:
       //   1. orders JOIN (uses .single)
       //   2. inventory_log returns (thenable)
       //   3. order_audit_events (thenable)
       //   4. invoices for this order (thenable)
+      //   5. withdrawals for this order (thenable)
       const fakeOrder = { id: validUUID, status: "pending" }
       mockSupabase.single.mockResolvedValue({ data: fakeOrder, error: null })
       let callIndex = 0
@@ -290,6 +294,7 @@ describe("admin actions", () => {
         ...fakeOrder,
         invoice: null,
         invoices: [],
+        withdrawals: [],
         inventoryReturns: [],
         auditEvents: [],
       })
@@ -3867,6 +3872,207 @@ describe("admin actions", () => {
       setupChain([], { message: "connection reset" })
       const { getRecallCandidates } = await import("@/app/actions/admin")
       await expect(getRecallCandidates(validSku)).rejects.toThrow("Грешка при извличане")
+    })
+  })
+
+  // ─── Withdrawals (право на отказ) ─────────────────────────────────────────
+  describe("withdrawals", () => {
+    const validOrderId = validUUID
+    const validWithdrawalId = "11111111-1111-1111-1111-111111111111"
+
+    describe("createWithdrawal", () => {
+      it("rejects invalid order UUID", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal("bad-id", {
+            requestedVia: "email",
+            customerEmail: "x@x.com",
+          }),
+        ).rejects.toThrow("Невалиден формат на поръчка")
+      })
+
+      it("rejects invalid requestedVia", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, {
+            requestedVia: "fax" as never,
+            customerEmail: "x@x.com",
+          }),
+        ).rejects.toThrow("Невалиден канал на заявка")
+      })
+
+      it("rejects invalid customer email", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, {
+            requestedVia: "email",
+            customerEmail: "not-an-email",
+          }),
+        ).rejects.toThrow("Невалиден имейл адрес")
+      })
+
+      it("rejects request_text > 2000 chars", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, {
+            requestedVia: "email",
+            customerEmail: "x@x.com",
+            customerRequestText: "a".repeat(2001),
+          }),
+        ).rejects.toThrow("твърде дълъг")
+      })
+
+      it("creates a withdrawal and returns ref + id", async () => {
+        // .single() returns: order fetch, then withdrawal insert
+        mockSupabase.single
+          .mockResolvedValueOnce({
+            data: { id: validOrderId, delivered_at: "2026-04-20T00:00:00Z", status: "delivered" },
+            error: null,
+          })
+          .mockResolvedValueOnce({
+            data: { id: validWithdrawalId, withdrawal_ref: "WD-2026-0001" },
+            error: null,
+          })
+        // RPC for next_withdrawal_ref
+        mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: "WD-2026-0001", error: null })) as any
+
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        const result = await createWithdrawal(validOrderId, {
+          requestedVia: "email",
+          customerEmail: "x@x.com",
+          customerRequestText: "I changed my mind",
+        })
+
+        expect(result.success).toBe(true)
+        expect(result.withdrawalId).toBe(validWithdrawalId)
+        expect(result.withdrawalRef).toBe("WD-2026-0001")
+      })
+
+      it("translates 23505 to friendly 'open withdrawal exists' message", async () => {
+        mockSupabase.single
+          .mockResolvedValueOnce({
+            data: { id: validOrderId, delivered_at: null, status: "delivered" },
+            error: null,
+          })
+          .mockResolvedValueOnce({
+            data: null,
+            error: { code: "23505", message: "duplicate key on uq_open_withdrawal_per_order" },
+          })
+        mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: "WD-2026-0001", error: null })) as any
+
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, { requestedVia: "email", customerEmail: "x@x.com" }),
+        ).rejects.toThrow("вече има отворена заявка")
+      })
+    })
+
+    describe("approveWithdrawal", () => {
+      it("rejects invalid UUID", async () => {
+        const { approveWithdrawal } = await import("@/app/actions/admin")
+        await expect(approveWithdrawal("bad-id", { returnRequired: true })).rejects.toThrow(
+          "Невалиден формат",
+        )
+      })
+
+      it("approves a requested withdrawal", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: {
+            id: validWithdrawalId,
+            order_id: validOrderId,
+            customer_email: "x@x.com",
+            withdrawal_ref: "WD-2026-0001",
+            return_required: true,
+          },
+          error: null,
+        })
+
+        const { approveWithdrawal } = await import("@/app/actions/admin")
+        const result = await approveWithdrawal(validWithdrawalId, { returnRequired: true })
+        expect(result).toEqual({ success: true })
+      })
+    })
+
+    describe("rejectWithdrawal", () => {
+      it("requires non-empty reason", async () => {
+        const { rejectWithdrawal } = await import("@/app/actions/admin")
+        await expect(rejectWithdrawal(validWithdrawalId, "  ")).rejects.toThrow("задължителна")
+      })
+
+      it("rejects with reason", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: {
+            id: validWithdrawalId,
+            order_id: validOrderId,
+            customer_email: "x@x.com",
+            withdrawal_ref: "WD-2026-0001",
+          },
+          error: null,
+        })
+
+        const { rejectWithdrawal } = await import("@/app/actions/admin")
+        const result = await rejectWithdrawal(validWithdrawalId, "Customer outside 14-day window")
+        expect(result).toEqual({ success: true })
+      })
+    })
+
+    describe("markWithdrawalGoodsReceived", () => {
+      it("rejects invalid eligibility condition", async () => {
+        const { markWithdrawalGoodsReceived } = await import("@/app/actions/admin")
+        await expect(
+          markWithdrawalGoodsReceived(validWithdrawalId, {
+            eligibilityCondition: "bogus" as never,
+          }),
+        ).rejects.toThrow("Невалидно състояние")
+      })
+
+      it("flips status with valid condition", async () => {
+        const updateChain = {
+          eq: vi.fn(() => updateChain),
+          then(resolve: (v: unknown) => void) {
+            resolve({ data: null, error: null })
+          },
+        }
+        mockSupabase.update = vi.fn(() => updateChain) as any
+
+        const { markWithdrawalGoodsReceived } = await import("@/app/actions/admin")
+        const result = await markWithdrawalGoodsReceived(validWithdrawalId, {
+          eligibilityCondition: "sealed_sellable",
+          resolutionType: "refund",
+          returnTrackingNumber: "1Z999AA1234567890",
+          returnCourier: "Speedy",
+        })
+        expect(result).toEqual({ success: true })
+      })
+    })
+
+    describe("completeWithdrawalNoReturn", () => {
+      it("requires completion_note", async () => {
+        const { completeWithdrawalNoReturn } = await import("@/app/actions/admin")
+        await expect(
+          completeWithdrawalNoReturn(validWithdrawalId, {
+            resolutionType: "none",
+            completionNote: "  ",
+          }),
+        ).rejects.toThrow("задължителна")
+      })
+
+      it("accepts replacement resolution + note", async () => {
+        const updateChain = {
+          eq: vi.fn(() => updateChain),
+          then(resolve: (v: unknown) => void) {
+            resolve({ data: null, error: null })
+          },
+        }
+        mockSupabase.update = vi.fn(() => updateChain) as any
+
+        const { completeWithdrawalNoReturn } = await import("@/app/actions/admin")
+        const result = await completeWithdrawalNoReturn(validWithdrawalId, {
+          resolutionType: "replacement",
+          completionNote: "Goodwill replacement shipped on a fresh order",
+        })
+        expect(result).toEqual({ success: true })
+      })
     })
   })
 })
