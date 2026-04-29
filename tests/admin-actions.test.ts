@@ -2489,7 +2489,26 @@ describe("admin actions", () => {
       ).rejects.toThrow("Бележката е задължителна")
     })
 
-    it("rejects batchId for non-return_in types", async () => {
+    it("rejects batchId for non-return_in/wholesale_out types", async () => {
+      // damaged accepts batchId only via reference_type='return' (separate
+      // path); other internal damage doesn't take a batch_id either.
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+          sku: "EGO-DC-12",
+          type: "sample_out",
+          quantity: 1,
+          referenceType: "internal",
+          referenceId: "SAMPLE-2026-001",
+          notes: "Влогер sample",
+          batchId: "BATCH-001",
+        }),
+      ).rejects.toThrow("Номер на партида е допустим само за връщане или оптова продажба")
+    })
+
+    it("rejects wholesale_out without batchId (EU 931/2011)", async () => {
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       await expect(
@@ -2497,15 +2516,16 @@ describe("admin actions", () => {
           idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
-          quantity: 5,
+          quantity: 10,
           referenceType: "invoice",
-          referenceId: "INV-001",
-          batchId: "BATCH-001",
+          referenceId: "INV-2026-001",
+          notes: "B2B delivery to gym",
+          // batchId missing — should reject
         }),
-      ).rejects.toThrow("Номер на партида е допустим само за връщане")
+      ).rejects.toThrow("задължителен за оптови продажби")
     })
 
-    it("records wholesale_out successfully", async () => {
+    it("records wholesale_out successfully with batchId", async () => {
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       const result = await recordStockMovement({
@@ -2516,6 +2536,7 @@ describe("admin actions", () => {
         referenceType: "invoice",
         referenceId: "INV-2026-001",
         notes: "B2B delivery to gym",
+        batchId: "BATCH-001",
       })
 
       expect(result).toEqual({ success: true })
@@ -4241,6 +4262,154 @@ describe("admin actions", () => {
           completionNote: "Goodwill replacement shipped on a fresh order",
         })
         expect(result).toEqual({ success: true })
+      })
+    })
+  })
+
+  // ─── Batch traceability ─────────────────────────────────────────────────
+  describe("batch traceability", () => {
+    const validBatchId = "11111111-1111-1111-1111-111111111111"
+    const validOrderId = validUUID
+
+    describe("recallBatch", () => {
+      it("rejects invalid UUID", async () => {
+        const { recallBatch } = await import("@/app/actions/admin")
+        await expect(
+          recallBatch("bad-id", "Контаминация в склада на доставчика"),
+        ).rejects.toThrow("Невалиден формат")
+      })
+
+      it("rejects reason shorter than 20 characters", async () => {
+        const { recallBatch } = await import("@/app/actions/admin")
+        await expect(
+          recallBatch(validBatchId, "къса"),
+        ).rejects.toThrow("поне 20 символа")
+      })
+
+      it("rejects reason longer than 1000 characters", async () => {
+        const { recallBatch } = await import("@/app/actions/admin")
+        await expect(
+          recallBatch(validBatchId, "x".repeat(1001)),
+        ).rejects.toThrow("твърде дълга")
+      })
+
+      it("recalls successfully with sufficient reason", async () => {
+        // Update returns one row; affected_orders RPC returns empty array.
+        const updateChain = {
+          eq: vi.fn(() => updateChain),
+          select: vi.fn(() => updateChain),
+          then(resolve: (v: unknown) => void) {
+            resolve({ data: [{ id: validBatchId }], error: null })
+          },
+        }
+        mockSupabase.update = vi.fn(() => updateChain) as any
+        mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: [], error: null })) as any
+
+        const { recallBatch } = await import("@/app/actions/admin")
+        const result = await recallBatch(
+          validBatchId,
+          "Съмнения за повишена влажност в склад на доставчика, потенциална контаминация",
+        )
+        expect(result.success).toBe(true)
+        expect(result.affectedOrdersCount).toBe(0)
+      })
+    })
+
+    describe("confirmShipmentBatches", () => {
+      it("rejects when order is not in confirmed state", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "delivered" },
+          error: null,
+        })
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 1 },
+          ]),
+        ).rejects.toThrow("потвърдени поръчки")
+      })
+
+      it("rejects when allocations don't sum to ordered quantity", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "confirmed" },
+          error: null,
+        })
+        const calls: unknown[] = [
+          mockSupabase, // 1. orders fetch (uses .single)
+          mockThenableResult([{ id: 1, sku: "EGO-MIX-12", quantity: 3 }], null), // 2. order_items
+          mockThenableResult([], null), // 3. existing allocations
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 2 },
+          ]),
+        ).rejects.toThrow("трябва да съвпадне с поръчаното")
+      })
+
+      it("rejects allocation against an inactive (recalled) batch", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "confirmed" },
+          error: null,
+        })
+        const calls: unknown[] = [
+          mockSupabase,
+          mockThenableResult([{ id: 1, sku: "EGO-MIX-12", quantity: 1 }], null),
+          mockThenableResult([], null),
+          mockThenableResult(
+            [{ id: validBatchId, sku: "EGO-MIX-12", status: "recalled", batch_number: "LOT-X" }],
+            null,
+          ),
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 1 },
+          ]),
+        ).rejects.toThrow("не е активна")
+      })
+
+      it("rejects allocation when batch SKU doesn't match item SKU", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "confirmed" },
+          error: null,
+        })
+        const calls: unknown[] = [
+          mockSupabase,
+          mockThenableResult([{ id: 1, sku: "EGO-MIX-12", quantity: 1 }], null),
+          mockThenableResult([], null),
+          mockThenableResult(
+            [{ id: validBatchId, sku: "EGO-DC-12", status: "active", batch_number: "LOT-Y" }],
+            null,
+          ),
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 1 },
+          ]),
+        ).rejects.toThrow("не съвпада със SKU на артикула")
       })
     })
   })

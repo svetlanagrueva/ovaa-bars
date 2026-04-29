@@ -3462,6 +3462,67 @@ export interface Complaint {
   created_by: string
 }
 
+// ─── Batch traceability (EU 178/2002 Чл. 18; EU 931/2011) ──────────────────
+export type ProductBatchStatus = "active" | "recalled"
+
+export interface ProductBatch {
+  id: string
+  sku: string
+  batch_number: string
+  expiry_date: string
+  status: ProductBatchStatus
+  recalled_at: string | null
+  recalled_by: string | null
+  recall_reason: string | null
+  notes: string | null
+  created_at: string
+  created_by: string
+}
+
+export interface ProductBatchWithAvailability extends ProductBatch {
+  quantity_available: number
+}
+
+export interface OrderItemBatch {
+  id: string
+  order_item_id: number
+  product_batch_id: string
+  quantity: number
+  confirmed_at: string
+  confirmed_by: string
+}
+
+export interface BatchSuggestion {
+  orderItemId: number
+  sku: string
+  productName: string
+  orderedQuantity: number
+  alreadyAllocated: number
+  remainingToAllocate: number
+  suggestions: Array<{
+    productBatchId: string
+    batchNumber: string
+    expiryDate: string
+    quantityAvailable: number
+    suggestedQuantity: number
+  }>
+  shortfall: number  // positive when active batches can't cover the order
+}
+
+export interface BatchAffectedOrder {
+  order_id: string
+  order_status: string
+  customer_email: string
+  customer_first_name: string
+  customer_last_name: string
+  customer_phone: string
+  customer_city: string
+  shipped_at: string | null
+  delivered_at: string | null
+  quantity_from_batch: number
+  tracking_number: string | null
+}
+
 // ─── Withdrawals (право на отказ; ЗЗП Чл. 50) ───────────────────────────────
 export type WithdrawalStatus =
   | "requested"
@@ -3677,9 +3738,20 @@ export async function recordStockMovement(data: {
     throw new Error("Бележката е твърде дълга")
   }
 
-  // Validate batchId/expiryDate — only for return_in
-  if (data.batchId && data.type !== "return_in") {
-    throw new Error("Номер на партида е допустим само за връщане")
+  // Validate batchId/expiryDate.
+  //   - return_in: batch + expiry allowed (re-stocking with original batch info)
+  //   - wholesale_out: batch_id REQUIRED (EU 931/2011 — commercial consignments
+  //     to other businesses must reference batch/lot). Provides legal traceability
+  //     for B2B sales without requiring full Tier 1 batch tables.
+  //   - others: batch fields not allowed
+  if (data.type === "wholesale_out") {
+    if (!data.batchId?.trim()) {
+      throw new Error(
+        "Номер на партида е задължителен за оптови продажби (EU 931/2011 — изисква партида на търговските пратки)",
+      )
+    }
+  } else if (data.batchId && data.type !== "return_in") {
+    throw new Error("Номер на партида е допустим само за връщане или оптова продажба")
   }
   if (data.expiryDate && data.type !== "return_in") {
     throw new Error("Срок на годност е допустим само за връщане")
@@ -3949,4 +4021,382 @@ export async function getRecallCandidates(
   })
 
   return candidates
+}
+
+
+// ─── Batch traceability (EU 178/2002, EU 931/2011) ──────────────────────────
+// Tier 1 batch tracking: product_batches + order_item_batches populated at
+// ship time. Inventory layer (inventory_log/inventory_current) unchanged.
+//
+// Layer split:
+//   - inventory_log     : SKU-level movements (existing)
+//   - product_batches   : supplier-batch metadata (NEW; sku, batch_number, expiry, status)
+//   - order_item_batches: per-shipment per-line allocation (NEW; tied to order_item)
+//
+// Both new tables are append-mostly: order_item_batches is fully immutable
+// post-insert; product_batches allows only the active → recalled forward
+// transition with metadata atomically populated.
+
+export async function getProductBatches(params?: {
+  sku?: string
+  status?: ProductBatchStatus | "all"
+}): Promise<ProductBatchWithAvailability[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  let query = supabase
+    .from("product_batches")
+    .select("*")
+    .order("expiry_date", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
+
+  if (params?.sku) {
+    query = query.eq("sku", params.sku)
+  }
+  if (params?.status && params.status !== "all") {
+    query = query.eq("status", params.status)
+  }
+
+  const { data, error } = await query
+  if (error) {
+    console.error("Failed to fetch product_batches:", error)
+    throw new Error("Грешка при зареждане на партидите")
+  }
+
+  // Compute available quantity per batch via the helper RPC. Could be done
+  // in a single SQL with a lateral join; per-batch RPC keeps the logic in
+  // one place and the call count is bounded by total batches (small).
+  const batches = (data ?? []) as ProductBatch[]
+  const results: ProductBatchWithAvailability[] = []
+  for (const b of batches) {
+    const { data: qty, error: qtyError } = await supabase.rpc("batch_quantity_available", {
+      p_batch_id: b.id,
+    })
+    if (qtyError) {
+      console.error(`Failed to compute availability for batch ${b.id}:`, qtyError)
+    }
+    results.push({ ...b, quantity_available: typeof qty === "number" ? qty : 0 })
+  }
+  return results
+}
+
+export async function getProductBatch(id: string): Promise<ProductBatchWithAvailability> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(id)) throw new Error("Невалиден формат на партида")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("product_batches")
+    .select("*")
+    .eq("id", id)
+    .single()
+
+  if (error || !data) throw new Error("Партидата не е намерена")
+
+  const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: id })
+  return { ...(data as ProductBatch), quantity_available: typeof qty === "number" ? qty : 0 }
+}
+
+// FEFO suggestion. For each order_item that hasn't been fully allocated
+// yet, list active batches ordered by expiry_date ASC and greedily allocate.
+// If active batches don't cover the order, the result includes a shortfall
+// the admin must resolve (block allocation, receive new stock, recall, etc.).
+export async function suggestBatchesForShipment(orderId: string): Promise<BatchSuggestion[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  // Order items + product names
+  const { data: orderItems, error: itemsError } = await supabase
+    .from("order_items")
+    .select("id, sku, product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (itemsError || !orderItems) {
+    throw new Error("Грешка при зареждане на артикулите по поръчката")
+  }
+
+  // Existing allocations (idempotent — admin reopens dialog after partial save)
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: existingAllocs } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity")
+    .in("order_item_id", itemIds)
+  const allocByItem = new Map<number, number>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { order_item_id: number; quantity: number }
+    allocByItem.set(row.order_item_id, (allocByItem.get(row.order_item_id) ?? 0) + row.quantity)
+  }
+
+  // Active batches per SKU. Fetch once for all distinct SKUs in this order.
+  const skus = Array.from(new Set(orderItems.map((i) => i.sku)))
+  const { data: batches } = await supabase
+    .from("product_batches")
+    .select("id, sku, batch_number, expiry_date, status")
+    .in("sku", skus)
+    .eq("status", "active")
+    .order("expiry_date", { ascending: true })
+  const batchesBySku = new Map<string, Array<{ id: string; sku: string; batch_number: string; expiry_date: string }>>()
+  for (const b of batches ?? []) {
+    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
+    if (!batchesBySku.has(row.sku)) batchesBySku.set(row.sku, [])
+    batchesBySku.get(row.sku)!.push(row)
+  }
+
+  // Compute available qty per relevant batch via RPC
+  const allBatchIds = (batches ?? []).map((b) => (b as { id: string }).id)
+  const availByBatch = new Map<string, number>()
+  for (const bid of allBatchIds) {
+    const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: bid })
+    availByBatch.set(bid, typeof qty === "number" ? qty : 0)
+  }
+
+  // Build suggestions per order_item
+  const suggestions: BatchSuggestion[] = []
+  // Track running drawdown across items in case two items share a SKU/batch.
+  const runningDrawdown = new Map<string, number>()
+
+  for (const item of orderItems) {
+    const oi = item as { id: number; sku: string; product_name: string; quantity: number }
+    const alreadyAllocated = allocByItem.get(oi.id) ?? 0
+    const remaining = oi.quantity - alreadyAllocated
+    const itemSuggestion: BatchSuggestion = {
+      orderItemId: oi.id,
+      sku: oi.sku,
+      productName: oi.product_name,
+      orderedQuantity: oi.quantity,
+      alreadyAllocated,
+      remainingToAllocate: remaining,
+      suggestions: [],
+      shortfall: 0,
+    }
+
+    if (remaining <= 0) {
+      suggestions.push(itemSuggestion)
+      continue
+    }
+
+    let need = remaining
+    for (const b of batchesBySku.get(oi.sku) ?? []) {
+      if (need <= 0) break
+      const available = (availByBatch.get(b.id) ?? 0) - (runningDrawdown.get(b.id) ?? 0)
+      if (available <= 0) continue
+      const take = Math.min(need, available)
+      itemSuggestion.suggestions.push({
+        productBatchId: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        quantityAvailable: available,
+        suggestedQuantity: take,
+      })
+      runningDrawdown.set(b.id, (runningDrawdown.get(b.id) ?? 0) + take)
+      need -= take
+    }
+
+    itemSuggestion.shortfall = Math.max(0, need)
+    suggestions.push(itemSuggestion)
+  }
+
+  return suggestions
+}
+
+// Persist allocations. Strict guards (mirroring DB triggers but with friendly
+// error messages):
+//   - sum per item == ordered quantity (full allocation, not partial)
+//   - all selected batches are active
+//   - SKU consistency (DB trigger is the backstop)
+//   - no allocation for an order whose status doesn't allow shipping
+//
+// Idempotency: if all items already have full allocation, returns success
+// without inserting anything (admin reopened the dialog and re-confirmed).
+export async function confirmShipmentBatches(
+  orderId: string,
+  allocations: Array<{
+    orderItemId: number
+    productBatchId: string
+    quantity: number
+  }>,
+): Promise<{ success: true; inserted: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  if (!Array.isArray(allocations)) {
+    throw new Error("Невалидни алокации")
+  }
+
+  const supabase = await createClient()
+
+  // Order must be in a shippable status (confirmed). Reject otherwise.
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, status")
+    .eq("id", orderId)
+    .single()
+  if (orderError || !order) throw new Error("Поръчката не е намерена")
+  if (order.status !== "confirmed") {
+    throw new Error(`Алокирането на партиди е възможно само за потвърдени поръчки (текущ статус: ${order.status})`)
+  }
+
+  // Order items
+  const { data: orderItems, error: itemsError } = await supabase
+    .from("order_items")
+    .select("id, sku, quantity")
+    .eq("order_id", orderId)
+  if (itemsError || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+  const itemMap = new Map(orderItems.map((i) => [i.id, i as { id: number; sku: string; quantity: number }]))
+
+  // Existing allocations (for idempotency)
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: existingAllocs, error: existingError } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity")
+    .in("order_item_id", itemIds)
+  if (existingError) throw new Error("Грешка при проверка на съществуващи алокации")
+  const existingPairs = new Set(
+    (existingAllocs ?? []).map((a) => `${(a as { order_item_id: number }).order_item_id}-${(a as { product_batch_id: string }).product_batch_id}`),
+  )
+  const existingByItem = new Map<number, number>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { order_item_id: number; quantity: number }
+    existingByItem.set(row.order_item_id, (existingByItem.get(row.order_item_id) ?? 0) + row.quantity)
+  }
+
+  // Validate input shape + filter out duplicates that already exist
+  const toInsert: Array<{ order_item_id: number; product_batch_id: string; quantity: number }> = []
+  const incomingByItem = new Map<number, number>()
+  const seenPairs = new Set<string>()
+  for (const a of allocations) {
+    if (!Number.isInteger(a.orderItemId) || a.orderItemId <= 0) {
+      throw new Error("Невалиден артикул в поръчката")
+    }
+    if (!UUID_REGEX.test(a.productBatchId)) {
+      throw new Error("Невалиден формат на партида")
+    }
+    if (!Number.isInteger(a.quantity) || a.quantity < 1) {
+      throw new Error("Количеството трябва да е положително цяло число")
+    }
+    if (!itemMap.has(a.orderItemId)) {
+      throw new Error(`Артикул ${a.orderItemId} не принадлежи на тази поръчка`)
+    }
+    const pairKey = `${a.orderItemId}-${a.productBatchId}`
+    if (seenPairs.has(pairKey)) {
+      throw new Error("Един и същ артикул-партида е посочен повече от веднъж")
+    }
+    seenPairs.add(pairKey)
+    incomingByItem.set(a.orderItemId, (incomingByItem.get(a.orderItemId) ?? 0) + a.quantity)
+    if (!existingPairs.has(pairKey)) {
+      toInsert.push({
+        order_item_id: a.orderItemId,
+        product_batch_id: a.productBatchId,
+        quantity: a.quantity,
+      })
+    }
+  }
+
+  // Per-item: existing + incoming must equal ordered quantity exactly.
+  // Partial allocations are not allowed at shipment time (DB has no equality
+  // constraint; this is the place to enforce it).
+  for (const [itemId, item] of itemMap) {
+    const totalAllocated = (existingByItem.get(itemId) ?? 0) + (incomingByItem.get(itemId) ?? 0)
+    if (totalAllocated !== item.quantity) {
+      throw new Error(
+        `Алокираното количество за SKU ${item.sku} (${totalAllocated}) трябва да съвпадне с поръчаното (${item.quantity})`,
+      )
+    }
+  }
+
+  if (toInsert.length === 0) {
+    return { success: true, inserted: 0 } // idempotent — already fully allocated
+  }
+
+  // Validate target batches: must exist, must be active, sku must match item.
+  const targetBatchIds = Array.from(new Set(toInsert.map((r) => r.product_batch_id)))
+  const { data: targetBatches, error: batchesError } = await supabase
+    .from("product_batches")
+    .select("id, sku, status, batch_number")
+    .in("id", targetBatchIds)
+  if (batchesError) throw new Error("Грешка при проверка на партидите")
+  const batchMap = new Map((targetBatches ?? []).map((b) => [(b as { id: string }).id, b as { id: string; sku: string; status: string; batch_number: string }]))
+  for (const r of toInsert) {
+    const b = batchMap.get(r.product_batch_id)
+    if (!b) throw new Error(`Партидата ${r.product_batch_id} не е намерена`)
+    if (b.status !== "active") {
+      throw new Error(`Партида ${b.batch_number} не е активна (статус: ${b.status}); не може да се ползва за изпращане`)
+    }
+    const item = itemMap.get(r.order_item_id)!
+    if (b.sku !== item.sku) {
+      throw new Error(`Партида ${b.batch_number} (SKU ${b.sku}) не съвпада със SKU на артикула (${item.sku})`)
+    }
+  }
+
+  // Insert. The DB triggers (sku consistency, immutable) are the backstop.
+  const { error: insertError, count } = await supabase
+    .from("order_item_batches")
+    .insert(toInsert, { count: "exact" })
+  if (insertError) {
+    console.error("Failed to insert order_item_batches:", insertError)
+    throw new Error("Грешка при записване на алокациите на партиди")
+  }
+
+  revalidateTag("product-batches", "max")
+  return { success: true, inserted: count ?? toInsert.length }
+}
+
+// Recall a batch. Forward transition only (active → recalled). DB trigger
+// enforces metadata atomicity; we set everything in the same UPDATE.
+export async function recallBatch(
+  batchId: string,
+  reason: string,
+): Promise<{ success: true; affectedOrdersCount: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(batchId)) throw new Error("Невалиден формат на партида")
+
+  const trimmed = reason?.trim()
+  if (!trimmed || trimmed.length < 20) {
+    throw new Error("Причината за изтегляне трябва да е поне 20 символа")
+  }
+  if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from("product_batches")
+    .update({
+      status: "recalled",
+      recalled_at: now,
+      recalled_by: "admin",
+      recall_reason: trimmed,
+    })
+    .eq("id", batchId)
+    .eq("status", "active")  // idempotency guard
+    .select("id")
+
+  if (error) {
+    console.error("Failed to recall batch:", error)
+    throw new Error("Грешка при изтегляне на партидата")
+  }
+  if (!data || data.length === 0) {
+    throw new Error("Партидата не е намерена или вече е изтеглена")
+  }
+
+  // Count affected orders for the success response (admin sees the worklist size)
+  const { data: affected } = await supabase.rpc("affected_orders_for_batch", { p_batch_id: batchId })
+  const affectedOrdersCount = Array.isArray(affected) ? affected.length : 0
+
+  revalidateTag("product-batches", "max")
+  return { success: true, affectedOrdersCount }
+}
+
+export async function getBatchAffectedOrders(batchId: string): Promise<BatchAffectedOrder[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(batchId)) throw new Error("Невалиден формат на партида")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase.rpc("affected_orders_for_batch", { p_batch_id: batchId })
+  if (error) {
+    console.error("Failed to fetch affected orders:", error)
+    throw new Error("Грешка при зареждане на засегнатите поръчки")
+  }
+  return (data ?? []) as BatchAffectedOrder[]
 }
