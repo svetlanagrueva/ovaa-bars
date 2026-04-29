@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
@@ -1769,6 +1769,9 @@ export default function AdminOrderDetailPage({
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Запиши възстановяване</DialogTitle>
+                <DialogDescription>
+                  Запишете извършено възстановяване (Stripe или банков превод). Изпълнете първо превода, после въведете тук референцията.
+                </DialogDescription>
               </DialogHeader>
               {refundError && (
                 <p className="text-sm text-red-600">{refundError}</p>
@@ -2245,6 +2248,9 @@ export default function AdminOrderDetailPage({
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Рекламации</DialogTitle>
+                <DialogDescription>
+                  Регистрирайте рекламация по ЗЗП Чл. 127 или приключете съществуваща.
+                </DialogDescription>
               </DialogHeader>
               {complaintError && (
                 <p className="text-sm text-red-600">{complaintError}</p>
@@ -2361,6 +2367,9 @@ export default function AdminOrderDetailPage({
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>Регистрирай заявка за връщане</DialogTitle>
+                <DialogDescription>
+                  Право на отказ по ЗЗП Чл. 50. Регистрирайте заявка след контакт с клиента.
+                </DialogDescription>
               </DialogHeader>
               {withdrawalError && (
                 <p className="text-sm text-red-600">{withdrawalError}</p>
@@ -2466,6 +2475,9 @@ export default function AdminOrderDetailPage({
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Следдоставно събитие</DialogTitle>
+            <DialogDescription>
+              Запишете събитие след доставка (отказана доставка, изгубена пратка, върнат продукт, изтегляне).
+            </DialogDescription>
           </DialogHeader>
           {outcomeError && (
             <p className="text-sm text-red-600">{outcomeError}</p>
