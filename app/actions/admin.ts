@@ -2015,11 +2015,17 @@ export async function recordRefund(
     )
   }
 
-  // Validate refundedAt not before delivered_at
+  // Validate refundedAt not before delivered_at. Compare by calendar date
+  // (UTC), not by timestamp — same-day delivery + refund is valid even when
+  // the delivery is timestamped 13:00 and the refund picker submits as
+  // midnight or 23:59. Truncating to YYYY-MM-DD avoids false rejections.
   if (order.delivered_at && data.refundedAt) {
-    const deliveredDate = new Date(order.delivered_at)
-    const refundDate = new Date(data.refundedAt)
-    if (refundDate < deliveredDate) {
+    const deliveredDay = new Date(order.delivered_at).toISOString().slice(0, 10)
+    // data.refundedAt may already be YYYY-MM-DD (date picker) or full ISO.
+    const refundDay = /^\d{4}-\d{2}-\d{2}$/.test(data.refundedAt)
+      ? data.refundedAt
+      : new Date(data.refundedAt).toISOString().slice(0, 10)
+    if (refundDay < deliveredDay) {
       throw new Error("Датата на възстановяване не може да е преди датата на доставка")
     }
   }
