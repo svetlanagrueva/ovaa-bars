@@ -11,6 +11,7 @@ import {
   type Withdrawal,
   type WithdrawalEligibilityCondition,
   type WithdrawalResolutionType,
+  type WithdrawalWithOrderContext,
 } from "@/app/actions/admin"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -35,7 +36,7 @@ const STATUS_BADGE: Record<Withdrawal["status"], string> = {
 
 export default function AdminWithdrawalDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const [w, setW] = useState<Withdrawal | null>(null)
+  const [w, setW] = useState<WithdrawalWithOrderContext | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
@@ -342,6 +343,16 @@ export default function AdminWithdrawalDetailPage({ params }: { params: Promise<
                 <option value="none">Без резолюция</option>
               </select>
             </div>
+            {goodsResolution === "refund" && !w.order.paid_at && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <strong>Внимание:</strong> поръчката още не е маркирана като платена
+                {w.order.payment_method === "cod"
+                  ? " (наложен платеж — плащането се записва след получено плащане от куриера)"
+                  : ""}.
+                Запис на възстановяване няма да е възможен, докато <strong>paid_at</strong> не бъде попълнен.
+                Можете да продължите, но завършването на заявката ще изисква първо да маркирате плащането.
+              </p>
+            )}
             <div>
               <Label htmlFor="rt" className="mb-1 block">Номер на товарителница (по избор)</Label>
               <Input id="rt" value={returnTracking} onChange={(e) => setReturnTracking(e.target.value)} maxLength={200} />

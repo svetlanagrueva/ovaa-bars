@@ -3922,6 +3922,22 @@ describe("admin actions", () => {
         ).rejects.toThrow("твърде дълъг")
       })
 
+      it("rejects creation on non-delivered orders (Чл. 50 only matures after delivery)", async () => {
+        for (const status of ["pending", "confirmed", "shipped", "cancelled", "expired"]) {
+          mockSupabase.single.mockResolvedValueOnce({
+            data: { id: validOrderId, delivered_at: null, status },
+            error: null,
+          })
+          const { createWithdrawal } = await import("@/app/actions/admin")
+          await expect(
+            createWithdrawal(validOrderId, {
+              requestedVia: "email",
+              customerEmail: "x@x.com",
+            }),
+          ).rejects.toThrow("Право на отказ важи след доставка")
+        }
+      })
+
       it("creates a withdrawal and returns ref + id", async () => {
         // .single() returns: order fetch, then withdrawal insert
         mockSupabase.single

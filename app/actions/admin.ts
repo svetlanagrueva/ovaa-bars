@@ -2565,9 +2565,21 @@ export async function createWithdrawal(
     throw new Error("Поръчката не е намерена")
   }
 
+  // ЗЗП Чл. 50 — the withdrawal right matures only after the customer
+  // physically receives the goods. Pre-delivery cancellation is a different
+  // flow (regular order cancellation): the customer's contract hasn't yet
+  // been fully performed, so there's no completed sale to "withdraw" from.
+  // Hard-block creation for non-delivered orders to keep the register clean
+  // and point admin at the correct flow.
+  if (order.status !== "delivered") {
+    throw new Error(
+      "Право на отказ важи след доставка. За отмяна на потвърдена поръчка използвайте Действия → Отказ.",
+    )
+  }
+
   // Time-based eligibility: requested_at <= delivered_at + 14 days.
-  // delivered_at may be null (not yet delivered) — leave eligibility null in
-  // that case; admin can still register the request, just no ruling yet.
+  // delivered_at is set since status='delivered' (chk_delivered_after_shipped
+  // ensures the timestamp is populated when status flips).
   let eligibilityTimeBased: boolean | null = null
   if (order.delivered_at) {
     const deadline = new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000
@@ -2834,14 +2846,23 @@ export async function getWithdrawals(
   return { withdrawals: (data ?? []) as Withdrawal[], total: count ?? 0 }
 }
 
-export async function getWithdrawal(withdrawalId: string): Promise<Withdrawal> {
+export interface WithdrawalWithOrderContext extends Withdrawal {
+  order: {
+    status: string
+    payment_method: string
+    paid_at: string | null
+    delivered_at: string | null
+  }
+}
+
+export async function getWithdrawal(withdrawalId: string): Promise<WithdrawalWithOrderContext> {
   await requireAdmin()
   if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
 
   const supabase = await createClient()
   const { data, error } = await supabase
     .from("withdrawals")
-    .select("*")
+    .select("*, order:orders(status, payment_method, paid_at, delivered_at)")
     .eq("id", withdrawalId)
     .single()
 
@@ -2849,7 +2870,7 @@ export async function getWithdrawal(withdrawalId: string): Promise<Withdrawal> {
     throw new Error("Заявката не е намерена")
   }
 
-  return data as Withdrawal
+  return data as WithdrawalWithOrderContext
 }
 
 export async function getOrderWithdrawals(orderId: string): Promise<Withdrawal[]> {
