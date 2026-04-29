@@ -75,7 +75,7 @@ async function findOrderForDispute(
   return order
 }
 
-// Idempotent upsert of a Stripe Refund into order_refunds.
+// Idempotent upsert of a Stripe Refund into refunds.
 // Natural key: stripe_refund_id (unique partial index). First arrival wins,
 // subsequent arrivals (retries, cross-event overlap) are no-ops.
 //
@@ -111,7 +111,7 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
   // Covers the admin-UI-then-webhook ordering — admin recorded the refund
   // first with the Stripe ID, webhook arrival has nothing to add.
   const { data: existing } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .select("id")
     .eq("stripe_refund_id", refund.id)
     .maybeSingle()
@@ -119,7 +119,7 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
 
   const refundedAtIso = new Date(refund.created * 1000).toISOString()
   const { data: inserted, error: insertError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .insert({
       order_id: order.id,
       stripe_refund_id: refund.id,
@@ -140,7 +140,7 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
     // 23505 on stripe_refund_id means a concurrent upsert beat us. That's
     // the idempotent success case; treat as handled.
     if (insertError.code !== "23505") {
-      console.error(`Failed to insert order_refunds row for refund ${refund.id}:`, sanitizeError(insertError))
+      console.error(`Failed to insert refunds row for refund ${refund.id}:`, sanitizeError(insertError))
     }
     return
   }
@@ -518,7 +518,7 @@ export async function POST(request: Request) {
             `Dispute: ${dispute.id}\n\n` +
             `The disputed amount has been refunded to the cardholder by ` +
             `Stripe. A refund.created event already (or will) record this ` +
-            `in order_refunds with source='stripe_webhook'.\n\n` +
+            `in refunds with source='stripe_webhook'.\n\n` +
             `Dashboard: ${disputeUrl}`,
         )
       } else {

@@ -225,7 +225,7 @@ export interface OrderDetail extends OrderSummary {
   withdrawals: Withdrawal[]
   // Inventory movements of type return_in / damaged for this order, used by
   // the admin UI to show the kредитно-известие breakdown per refund (linked
-  // via inventory_log.reference_id = order_refunds.id). No FK relationship
+  // via inventory_log.reference_id = refunds.id). No FK relationship
   // exists in the DB (reference_id is polymorphic text), so we fetch
   // separately and match client-side.
   inventoryReturns: OrderInventoryReturn[]
@@ -675,7 +675,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
           cancelledQuantity:cancelled_quantity,
           lineNo:line_no
         ),
-        refunds:order_refunds(
+        refunds(
           id,
           order_id,
           stripe_refund_id,
@@ -693,9 +693,9 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
         )
       `)
       .eq("id", orderId)
-      .order("refunded_at", { foreignTable: "order_refunds", ascending: false })
+      .order("refunded_at", { foreignTable: "refunds", ascending: false })
       .single(),
-    // inventory_log has no FK to order_refunds (reference_id is polymorphic
+    // inventory_log has no FK to refunds (reference_id is polymorphic
     // text), so PostgREST can't nest it under refunds. Fetch separately and
     // let the client match by reference_id = refund.id.
     supabase
@@ -1736,8 +1736,8 @@ export async function resendDeliveryEmail(
 }
 
 // ─── Refund tracking ─────────────────────────────────────────────────────────
-// Refunds live in the order_refunds child table (one row per refund, many per
-// order). Single-responsibility: recordRefund writes ONLY to order_refunds.
+// Refunds live in the refunds child table (one row per refund, many per
+// order). Single-responsibility: recordRefund writes ONLY to refunds.
 // Stock movements linked to a refund are recorded by a separate server action
 // (recordStockMovement) — the UI orchestrates the "refund → stock outcome"
 // flow as two explicit steps, preserving the three-layer separation:
@@ -1880,7 +1880,7 @@ export async function recordRefund(
   // Fast-path idempotency: if a refund with this client_idempotency_key
   // exists, this is a retry. Return the existing ID without re-inserting.
   const { data: existingRefunds, error: existingError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .select("id, order_id")
     .eq("client_idempotency_key", data.clientIdempotencyKey)
   if (existingError) {
@@ -1997,7 +1997,7 @@ export async function recordRefund(
 
   // Sum existing refunds for friendly overshoot message (trigger is backstop).
   const { data: sumRows, error: sumError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .select("amount_cents")
     .eq("order_id", orderId)
   if (sumError) {
@@ -2053,7 +2053,7 @@ export async function recordRefund(
   }
 
   const { data: inserted, error: insertError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .insert({
       order_id: orderId,
       stripe_refund_id: trimmedStripeRefundId,
@@ -2078,7 +2078,7 @@ export async function recordRefund(
       // stripe_refund_id (webhook recorded this refund already). Fetch by
       // the client key to disambiguate.
       const { data: recovered } = await supabase
-        .from("order_refunds")
+        .from("refunds")
         .select("id, order_id")
         .eq("client_idempotency_key", data.clientIdempotencyKey)
       if (recovered && recovered.length > 0 && recovered[0].order_id === orderId) {
@@ -2156,7 +2156,7 @@ export async function recordRefund(
 }
 
 // Admin-annotation edits on existing refund rows.
-// Mutable fields on order_refunds: reason, bank_transfer_ref,
+// Mutable fields on refunds: reason, bank_transfer_ref,
 // credit_note_skip_reason. Audit event emitted automatically by the
 // emit_order_refund_annotation_audit trigger.
 //
@@ -2206,7 +2206,7 @@ export async function updateRefundAnnotation(
 
   const supabase = await createClient()
   const { data: updated, error } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .update(updatePayload)
     .eq("id", refundId)
     .select("id")

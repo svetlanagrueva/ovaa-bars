@@ -2741,11 +2741,11 @@ describe("admin actions", () => {
     const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     // recordRefund DB-call sequence (post invoices-table refactor):
-    //   1. order_refunds .eq(client_idempotency_key=…) — idempotency check
+    //   1. refunds .eq(client_idempotency_key=…) — idempotency check
     //   2. orders .single() — order row
     //   3. invoices .maybeSingle() — invoice lookup (drives credit-note guard)
-    //   4. order_refunds .eq(order_id=…) — existing-sum query
-    //   5. order_refunds .insert().single() — inserted refund row
+    //   4. refunds .eq(order_id=…) — existing-sum query
+    //   5. refunds .insert().single() — inserted refund row
     //   When affects_invoiced_supply=true (default), autoCreateCreditNoteRow runs:
     //   6. invoices .maybeSingle() — re-fetch invoice
     //   7. invoices .insert().single() — credit_note row (only when invoice has number)
@@ -2767,7 +2767,7 @@ describe("admin actions", () => {
       }
       const invoiceLookup = options.invoiceLookup ?? null
 
-      // .single() queue — orders fetch, then order_refunds insert, then
+      // .single() queue — orders fetch, then refunds insert, then
       // (optionally) invoices insert when expectCreditNoteInsert.
       mockSupabase.single
         .mockResolvedValueOnce({ data: options.order ?? defaultOrder, error: null })
@@ -2798,7 +2798,7 @@ describe("admin actions", () => {
         mockSupabase,
         // 4. existing refunds sum
         mockThenableResult(options.existingRefunds ?? [], null),
-        // 5. order_refunds insert
+        // 5. refunds insert
         mockSupabase,
         // 6. invoices lookup (autoCreateCreditNoteRow) — runs when affects=true
         mockSupabase,
@@ -3115,7 +3115,7 @@ describe("admin actions", () => {
         refundId: "already-saved-id",
         creditNoteId: null,
       })
-      // No insert on order_refunds since row already exists
+      // No insert on refunds since row already exists
       expect(insertSpy).not.toHaveBeenCalled()
     })
 
