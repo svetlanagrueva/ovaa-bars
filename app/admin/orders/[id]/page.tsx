@@ -114,6 +114,7 @@ export default function AdminOrderDetailPage({
   const [withdrawalText, setWithdrawalText] = useState("")
   const [withdrawalLoading, setWithdrawalLoading] = useState(false)
   const [withdrawalError, setWithdrawalError] = useState("")
+  const [withdrawalResult, setWithdrawalResult] = useState<{ id: string; ref: string } | null>(null)
 
   // Email resend state — per-email-type loading flag and a transient
   // "sent just now" marker so the admin gets immediate feedback (the
@@ -2244,7 +2245,7 @@ export default function AdminOrderDetailPage({
           {/* Complaints section — moved to dialog. Triggered from "Още
               действия" dropdown. Existing complaints and the new-complaint
               form all live here. */}
-          <Dialog open={complaintDialogOpen} onOpenChange={(open) => { setComplaintDialogOpen(open); if (!open) setComplaintError("") }}>
+          <Dialog open={complaintDialogOpen} onOpenChange={(open) => { setComplaintDialogOpen(open); if (!open) { setComplaintError(""); setComplaintResult("") } }}>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Рекламации</DialogTitle>
@@ -2309,46 +2310,54 @@ export default function AdminOrderDetailPage({
                 ))}
               </div>
             )}
-            <div className="space-y-2">
-              <Input value={complaintDefect} onChange={(e) => setComplaintDefect(e.target.value)} placeholder="Описание на несъответствието" className="h-8" maxLength={2000} />
-              <select value={complaintDemand} onChange={(e) => setComplaintDemand(e.target.value)} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
-                <option value="">Претенция на потребителя...</option>
-                <option value="refund">Възстановяване на сумата</option>
-                <option value="replacement">Замяна</option>
-                <option value="repair">Ремонт</option>
-                <option value="discount">Отстъпка</option>
-              </select>
-              <div className="flex items-center gap-3">
-                <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
-                  setComplaintLoading(true)
-                  setComplaintResult("")
-                  setComplaintError("")
-                  try {
-                    const result = await recordComplaint(id, {
-                      defectDescription: complaintDefect.trim(),
-                      customerDemand: complaintDemand as "refund" | "replacement" | "repair" | "discount",
-                    })
-                    setComplaintResult(result.complaintRef)
-                    setComplaintDefect("")
-                    setComplaintDemand("")
-                    const updated = await getOrderComplaints(id)
-                    setComplaints(updated)
-                  } catch (err) {
-                    setComplaintError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
-                  } finally {
-                    setComplaintLoading(false)
-                  }
-                }}>
-                  {complaintLoading ? "Записване..." : "Регистрирай рекламация"}
-                </Button>
-              </div>
-              {complaintResult && (
+            {complaintResult ? (
+              // Just-registered state: show success + offer to register another.
+              // Hides the form so admin doesn't accidentally re-submit.
+              <div className="space-y-3">
                 <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900">
                   <p className="font-medium">Рекламация регистрирана: {complaintResult}</p>
                   <p className="mt-1 text-xs">Предоставете този номер на клиента като потвърждение за регистрация на рекламацията.</p>
                 </div>
-              )}
-            </div>
+                <Button size="sm" variant="outline" onClick={() => setComplaintResult("")}>
+                  Регистрирай нова рекламация
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Input value={complaintDefect} onChange={(e) => setComplaintDefect(e.target.value)} placeholder="Описание на несъответствието" className="h-8" maxLength={2000} />
+                <select value={complaintDemand} onChange={(e) => setComplaintDemand(e.target.value)} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                  <option value="">Претенция на потребителя...</option>
+                  <option value="refund">Възстановяване на сумата</option>
+                  <option value="replacement">Замяна</option>
+                  <option value="repair">Ремонт</option>
+                  <option value="discount">Отстъпка</option>
+                </select>
+                <div className="flex items-center gap-3">
+                  <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
+                    setComplaintLoading(true)
+                    setComplaintResult("")
+                    setComplaintError("")
+                    try {
+                      const result = await recordComplaint(id, {
+                        defectDescription: complaintDefect.trim(),
+                        customerDemand: complaintDemand as "refund" | "replacement" | "repair" | "discount",
+                      })
+                      setComplaintResult(result.complaintRef)
+                      setComplaintDefect("")
+                      setComplaintDemand("")
+                      const updated = await getOrderComplaints(id)
+                      setComplaints(updated)
+                    } catch (err) {
+                      setComplaintError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
+                    } finally {
+                      setComplaintLoading(false)
+                    }
+                  }}>
+                    {complaintLoading ? "Записване..." : "Регистрирай рекламация"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
             </DialogContent>
           </Dialog>
@@ -2361,7 +2370,10 @@ export default function AdminOrderDetailPage({
             open={withdrawalDialogOpen}
             onOpenChange={(open) => {
               setWithdrawalDialogOpen(open)
-              if (!open) setWithdrawalError("")
+              if (!open) {
+                setWithdrawalError("")
+                setWithdrawalResult(null)
+              }
             }}
           >
             <DialogContent className="max-w-md">
@@ -2374,83 +2386,109 @@ export default function AdminOrderDetailPage({
               {withdrawalError && (
                 <p className="text-sm text-red-600">{withdrawalError}</p>
               )}
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Право на отказ по чл. 50 ЗЗП. Регистрирайте заявка след като
-                  клиентът Ви е писал/обадил. Системата генерира уникална
-                  референция (WD-YYYY-NNNN) и изпраща потвърждение на клиента.
-                </p>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Канал на заявка</label>
-                  <select
-                    value={withdrawalVia}
-                    onChange={(e) => setWithdrawalVia(e.target.value as WithdrawalRequestedVia)}
-                    className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
-                  >
-                    <option value="email">Имейл</option>
-                    <option value="phone">Телефон</option>
-                    <option value="admin">Админ (вътрешна)</option>
-                  </select>
+              {withdrawalResult ? (
+                // Just-registered state: show success + offer to register another
+                // or open the new withdrawal's detail page. Hides the form so
+                // admin doesn't accidentally re-submit.
+                <div className="space-y-3">
+                  <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900">
+                    <p className="font-medium">Заявка регистрирана: {withdrawalResult.ref}</p>
+                    <p className="mt-1 text-xs">
+                      Изпратихме потвърждение на клиента. Прегледайте допустимостта и одобрете
+                      или отхвърлете от страницата на заявката.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        window.location.href = `/admin/returns/${withdrawalResult.id}`
+                      }}
+                    >
+                      Отвори заявката ↗
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setWithdrawalResult(null)}>
+                      Регистрирай нова
+                    </Button>
+                  </div>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Имейл на клиента</label>
-                  <Input
-                    value={withdrawalEmail}
-                    onChange={(e) => setWithdrawalEmail(e.target.value)}
-                    placeholder="customer@example.com"
-                    className="h-8"
-                    maxLength={200}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Текст на заявката (по избор)</label>
-                  <textarea
-                    value={withdrawalText}
-                    onChange={(e) => setWithdrawalText(e.target.value)}
-                    placeholder="Кратко описание / резюме на имейла на клиента..."
-                    className="h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                    maxLength={2000}
-                  />
-                </div>
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={withdrawalLoading}
-                    onClick={() => setWithdrawalDialogOpen(false)}
-                  >
-                    Отказ
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={withdrawalLoading || !withdrawalEmail.trim()}
-                    onClick={async () => {
-                      setWithdrawalLoading(true)
-                      setWithdrawalError("")
-                      try {
-                        const result = await createWithdrawal(id, {
-                          requestedVia: withdrawalVia,
-                          customerEmail: withdrawalEmail.trim(),
-                          customerRequestText: withdrawalText.trim() || undefined,
-                        })
-                        setWithdrawalDialogOpen(false)
-                        setWithdrawalEmail("")
-                        setWithdrawalText("")
-                        const updated = await getOrder(id)
-                        setOrder(updated)
-                        // Navigate to detail page for the new withdrawal
-                        window.location.href = `/admin/returns/${result.withdrawalId}`
-                      } catch (err) {
-                        setWithdrawalError(err instanceof Error ? err.message : "Грешка")
-                      } finally {
-                        setWithdrawalLoading(false)
-                      }
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Право на отказ по чл. 50 ЗЗП. Регистрирайте заявка след като
+                    клиентът Ви е писал/обадил. Системата генерира уникална
+                    референция (WD-YYYY-NNNN) и изпраща потвърждение на клиента.
+                  </p>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Канал на заявка</label>
+                    <select
+                      value={withdrawalVia}
+                      onChange={(e) => setWithdrawalVia(e.target.value as WithdrawalRequestedVia)}
+                      className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                    >
+                      <option value="email">Имейл</option>
+                      <option value="phone">Телефон</option>
+                      <option value="admin">Админ (вътрешна)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Имейл на клиента</label>
+                    <Input
+                      value={withdrawalEmail}
+                      onChange={(e) => setWithdrawalEmail(e.target.value)}
+                      placeholder="customer@example.com"
+                      className="h-8"
+                      maxLength={200}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Текст на заявката (по избор)</label>
+                    <textarea
+                      value={withdrawalText}
+                      onChange={(e) => setWithdrawalText(e.target.value)}
+                      placeholder="Кратко описание / резюме на имейла на клиента..."
+                      className="h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                      maxLength={2000}
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={withdrawalLoading}
+                      onClick={() => setWithdrawalDialogOpen(false)}
+                    >
+                      Отказ
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={withdrawalLoading || !withdrawalEmail.trim()}
+                      onClick={async () => {
+                        setWithdrawalLoading(true)
+                        setWithdrawalError("")
+                        try {
+                          const result = await createWithdrawal(id, {
+                            requestedVia: withdrawalVia,
+                            customerEmail: withdrawalEmail.trim(),
+                            customerRequestText: withdrawalText.trim() || undefined,
+                          })
+                          setWithdrawalEmail("")
+                          setWithdrawalText("")
+                          const updated = await getOrder(id)
+                          setOrder(updated)
+                          setWithdrawalResult({ id: result.withdrawalId, ref: result.withdrawalRef })
+                        } catch (err) {
+                          setWithdrawalError(err instanceof Error ? err.message : "Грешка")
+                        } finally {
+                          setWithdrawalLoading(false)
+                        }
                     }}
                   >
                     {withdrawalLoading ? "Записване..." : "Регистрирай"}
                   </Button>
                 </div>
               </div>
+              )}
             </DialogContent>
           </Dialog>
         </CardContent>
