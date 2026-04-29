@@ -179,6 +179,7 @@ export interface OrderDetail extends OrderSummary {
   postal_code: string
   notes: string
   items: Array<{
+    id: number
     productId: string
     productName: string
     sku: string
@@ -257,6 +258,15 @@ export interface OrderInventoryReturn {
   created_at: string
 }
 
+export interface RefundItem {
+  id: string
+  refund_id: string
+  order_item_id: number
+  quantity: number
+  amount_cents: number
+  created_at: string
+}
+
 export interface OrderRefund {
   id: string
   order_id: string
@@ -272,6 +282,10 @@ export interface OrderRefund {
   refunded_at: string
   created_at: string
   updated_at: string
+  // Per-line allocation (NEW). Empty when refund is a custom amount only
+  // (no item allocation). Webhook-originated refunds always have empty
+  // items since the webhook has no item context.
+  items: RefundItem[]
 }
 
 export interface Invoice {
@@ -667,6 +681,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       .select(`
         *,
         items:order_items(
+          id,
           productId:product_id,
           productName:product_name,
           sku,
@@ -689,7 +704,15 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
           recorded_by,
           refunded_at,
           created_at,
-          updated_at
+          updated_at,
+          items:refund_items(
+            id,
+            refund_id,
+            order_item_id,
+            quantity,
+            amount_cents,
+            created_at
+          )
         )
       `)
       .eq("id", orderId)
@@ -1789,6 +1812,21 @@ export async function recordRefund(
     //   Path B: withdrawal.status='approved' AND return_required=false AND
     //           completion_note set → completed
     withdrawalId?: string
+    // Optional per-line allocation. When provided, refund_items rows are
+    // inserted alongside the refund row. Each item:
+    //   - orderItemId must belong to this order
+    //   - quantity > 0
+    //   - amountCents > 0; defaults to order_item.unit_price_cents * quantity
+    //     if omitted (caller supplies the override for diminished-value /
+    //     discount cases)
+    //   - sum(amountCents) ≤ refundAmount (DB trigger enforces; caller can
+    //     pre-validate for friendly errors)
+    // Webhook-originated refunds always pass items=undefined (no item context).
+    items?: Array<{
+      orderItemId: number
+      quantity: number
+      amountCents?: number
+    }>
   },
 ): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
@@ -1857,6 +1895,35 @@ export async function recordRefund(
   }
   if (data.refundMethod === "stripe" && trimmedBankTransferRef) {
     throw new Error("Stripe възстановяванията нямат референция на банков превод")
+  }
+
+  // ── refund_items shape validation (no DB needed) ─────────────────────────
+  // Catch the "obvious" input bugs (empty array, duplicates, non-positive
+  // quantity/amount) before opening any DB connection. The DB-dependent
+  // checks (item belongs to order, qty cap, amount cap) run later, after
+  // we've fetched the order + order_items.
+  if (data.items !== undefined) {
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("Списъкът с артикули е празен")
+    }
+    const seenItemIds = new Set<number>()
+    for (const it of data.items) {
+      if (!Number.isInteger(it.orderItemId) || it.orderItemId <= 0) {
+        throw new Error("Невалиден артикул в поръчката")
+      }
+      if (seenItemIds.has(it.orderItemId)) {
+        throw new Error("Един и същ артикул е посочен повече от веднъж")
+      }
+      seenItemIds.add(it.orderItemId)
+      if (!Number.isInteger(it.quantity) || it.quantity < 1) {
+        throw new Error("Количеството трябва да е положително цяло число")
+      }
+      if (it.amountCents !== undefined) {
+        if (!Number.isInteger(it.amountCents) || it.amountCents < 1) {
+          throw new Error("Сумата по артикул трябва да е положително цяло число")
+        }
+      }
+    }
   }
 
   // Validate refundedAt
@@ -2052,6 +2119,67 @@ export async function recordRefund(
     }
   }
 
+  // ── refund_items DB-dependent validation (item belongs, qty cap, sum cap) ─
+  // Shape validation already ran at the top of the function. Here we resolve
+  // default amounts and check sums against the order_items + existing
+  // refund_items rows — the DB triggers are the last-line backstop.
+  const itemsInput = data.items
+  let resolvedItems: Array<{ orderItemId: number; quantity: number; amountCents: number }> = []
+  if (itemsInput !== undefined) {
+    // Fetch order_items for this order — used to verify each orderItemId
+    // belongs here, look up unit_price_cents for defaults, and check qty caps.
+    const { data: orderItems, error: itemsError } = await supabase
+      .from("order_items")
+      .select("id, quantity, unit_price_cents")
+      .eq("order_id", orderId)
+    if (itemsError || !orderItems) {
+      console.error("Failed to fetch order_items for refund:", itemsError)
+      throw new Error("Грешка при проверка на артикулите")
+    }
+    const orderItemMap = new Map(orderItems.map((oi: { id: number; quantity: number; unit_price_cents: number }) => [oi.id, oi]))
+
+    // Existing refund_items quantities for the items in this batch — used to
+    // pre-check the qty cap (sum across all refunds + this batch ≤ ordered).
+    const targetIds = itemsInput.map((i) => i.orderItemId)
+    const { data: existingItems, error: existingError } = await supabase
+      .from("refund_items")
+      .select("order_item_id, quantity")
+      .in("order_item_id", targetIds)
+    if (existingError) {
+      console.error("Failed to fetch existing refund_items:", existingError)
+      throw new Error("Грешка при проверка на съществуващи артикулни възстановявания")
+    }
+    const existingByItem = new Map<number, number>()
+    for (const r of existingItems ?? []) {
+      const row = r as { order_item_id: number; quantity: number }
+      existingByItem.set(row.order_item_id, (existingByItem.get(row.order_item_id) ?? 0) + row.quantity)
+    }
+
+    // Resolve each input item: validate ownership, default amount if needed,
+    // pre-check qty cap.
+    let allocatedTotal = 0
+    for (const it of itemsInput) {
+      const oi = orderItemMap.get(it.orderItemId)
+      if (!oi) {
+        throw new Error(`Артикул ${it.orderItemId} не принадлежи на тази поръчка`)
+      }
+      const alreadyRefundedQty = existingByItem.get(it.orderItemId) ?? 0
+      if (alreadyRefundedQty + it.quantity > oi.quantity) {
+        throw new Error(
+          `Количеството за артикул ${it.orderItemId} (${alreadyRefundedQty} вече възстановени + ${it.quantity} ново = ${alreadyRefundedQty + it.quantity}) надвишава поръчаните ${oi.quantity} бройки`,
+        )
+      }
+      const amount = it.amountCents ?? oi.unit_price_cents * it.quantity
+      allocatedTotal += amount
+      resolvedItems.push({ orderItemId: it.orderItemId, quantity: it.quantity, amountCents: amount })
+    }
+    if (allocatedTotal > data.refundAmount) {
+      throw new Error(
+        `Алокираната сума по артикули (${(allocatedTotal / 100).toFixed(2)} лв) надвишава общата сума на възстановяването (${(data.refundAmount / 100).toFixed(2)} лв)`,
+      )
+    }
+  }
+
   const { data: inserted, error: insertError } = await supabase
     .from("refunds")
     .insert({
@@ -2093,6 +2221,47 @@ export async function recordRefund(
   }
 
   const refundId = inserted!.id
+
+  // Insert refund_items rows if items were provided. On any insert failure,
+  // delete the refund row to keep things consistent (no orphan refund without
+  // its allocation). Append-only constraints on refunds DELETE block the
+  // cleanup, but only if any refund_items rows already landed — first-row
+  // failure leaves the refund with no items, so the orphan would persist.
+  // Workaround: best-effort cleanup; if the rollback DELETE fails, log loudly
+  // and rely on admin reconciliation. Pre-launch this is acceptable; a
+  // post-launch hardening would migrate to a Postgres function for atomicity.
+  if (resolvedItems.length > 0) {
+    const itemRows = resolvedItems.map((r) => ({
+      refund_id: refundId,
+      order_item_id: r.orderItemId,
+      quantity: r.quantity,
+      amount_cents: r.amountCents,
+    }))
+    const { error: itemsInsertError } = await supabase.from("refund_items").insert(itemRows)
+    if (itemsInsertError) {
+      console.error(
+        `Failed to insert refund_items for refund ${refundId}; rolling back refund row:`,
+        itemsInsertError,
+      )
+      // The refund row's append-only DELETE trigger will reject this; we
+      // need to bypass it for rollback. Best path: configure a session
+      // bypass via app.allow_refund_delete (not implemented yet), or
+      // accept the orphan. For MVP, attempt the delete; if it fails we
+      // log and surface the original error.
+      const { error: deleteError } = await supabase
+        .from("refunds")
+        .delete()
+        .eq("id", refundId)
+      if (deleteError) {
+        console.error(
+          `CRITICAL: refund ${refundId} cannot be rolled back (refunds is append-only). ` +
+          `Orphaned refund row exists without item allocations. Manual cleanup required.`,
+          deleteError,
+        )
+      }
+      throw new Error("Грешка при записване на артикулните позиции на възстановяването")
+    }
+  }
 
   // Auto-create credit_note row if all three conditions hold (#1 and #2 are
   // checked inside autoCreateCreditNoteRow; #3 is the affects flag).

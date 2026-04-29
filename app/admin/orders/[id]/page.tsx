@@ -147,6 +147,14 @@ export default function AdminOrderDetailPage({
   // step), so a retry during Step 2 still resolves to the same refund row.
   const [refundClientKey, setRefundClientKey] = useState<string>(() => crypto.randomUUID())
   const [refundLinkedWithdrawalId, setRefundLinkedWithdrawalId] = useState<string>("")
+  // Refund mode: "items" — admin picks specific order_items to allocate;
+  // refund total computed from items + optional additional. "amount" — admin
+  // types a single refund total (no per-line allocation, used for shipping
+  // disputes / goodwill). Webhook-created refunds are always "amount" with
+  // no items input. Default to items since that's the legally-cleanest case.
+  const [refundMode, setRefundMode] = useState<"items" | "amount">("items")
+  const [itemSelections, setItemSelections] = useState<Record<number, { quantity: string; amountOverride: string }>>({})
+  const [refundAdditionalAmount, setRefundAdditionalAmount] = useState<string>("")
 
   // Two-step state machine. 'form' = refund form visible; 'stock' = refund
   // saved, stock-outcome panel visible; 'complete' = both done, dismiss banner.
@@ -1882,6 +1890,9 @@ export default function AdminOrderDetailPage({
               setSavedOutcomeRef("")
               setRefundStep("form")
               setRefundLinkedWithdrawalId("")
+              setRefundMode("items")
+              setItemSelections({})
+              setRefundAdditionalAmount("")
               // New UUIDs only on full flow completion — retries during
               // Step 2 keep the same key so recordRefund idempotency holds.
               setRefundClientKey(crypto.randomUUID())
@@ -1953,15 +1964,164 @@ export default function AdminOrderDetailPage({
                             </div>
                           )
                         })()}
+                        {/* Mode selector — items mode (allocates to specific
+                            order lines, drives credit-note breakdown) vs
+                            amount-only (shipping disputes, goodwill). Items
+                            mode computes the refund total from selections;
+                            amount mode lets admin type it. */}
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={refundMode === "items" ? "default" : "outline"}
+                            onClick={() => setRefundMode("items")}
+                          >
+                            По артикули
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={refundMode === "amount" ? "default" : "outline"}
+                            onClick={() => setRefundMode("amount")}
+                          >
+                            Допълнителна сума само
+                          </Button>
+                        </div>
+
+                        {refundMode === "items" && (() => {
+                          // Compute items total from current selections; uses
+                          // unit_price_cents × quantity unless admin entered
+                          // an override amount.
+                          let itemsTotalCents = 0
+                          for (const oi of order.items) {
+                            const sel = itemSelections[oi.id]
+                            if (!sel) continue
+                            const qty = parseInt(sel.quantity, 10) || 0
+                            if (qty < 1) continue
+                            const overrideEur = parseFloat(sel.amountOverride)
+                            const lineCents = sel.amountOverride && !isNaN(overrideEur)
+                              ? Math.round(overrideEur * 100)
+                              : oi.priceInCents * qty
+                            itemsTotalCents += lineCents
+                          }
+                          const additionalEur = parseFloat(refundAdditionalAmount)
+                          const additionalCents = !isNaN(additionalEur) && additionalEur > 0
+                            ? Math.round(additionalEur * 100)
+                            : 0
+                          const totalCents = itemsTotalCents + additionalCents
+                          return (
+                            <>
+                              <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+                                <p className="text-xs text-muted-foreground">
+                                  Изберете артикули за възстановяване. Сумата по подразбиране е
+                                  единична цена × количество; може да я промените.
+                                </p>
+                                {order.items.map((oi) => {
+                                  const sel = itemSelections[oi.id]
+                                  const checked = !!sel
+                                  return (
+                                    <div key={oi.id} className="rounded-md border border-border/60 bg-background p-2 text-xs">
+                                      <label className="flex items-start gap-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={(e) => {
+                                            setItemSelections((prev) => {
+                                              const next = { ...prev }
+                                              if (e.target.checked) {
+                                                next[oi.id] = { quantity: "1", amountOverride: "" }
+                                              } else {
+                                                delete next[oi.id]
+                                              }
+                                              return next
+                                            })
+                                          }}
+                                          className="mt-0.5"
+                                        />
+                                        <span className="flex-1">
+                                          <span className="font-medium text-foreground">{oi.productName}</span>
+                                          <span className="ml-2 text-muted-foreground">{formatPrice(oi.priceInCents)} / бр. · поръчани {oi.quantity}</span>
+                                        </span>
+                                      </label>
+                                      {checked && (
+                                        <div className="mt-2 grid grid-cols-2 gap-2 pl-6">
+                                          <div>
+                                            <label className="mb-1 block text-[10px] text-muted-foreground">Количество</label>
+                                            <Input
+                                              type="number"
+                                              min={1}
+                                              max={oi.quantity}
+                                              value={sel.quantity}
+                                              onChange={(e) =>
+                                                setItemSelections((prev) => ({
+                                                  ...prev,
+                                                  [oi.id]: { ...prev[oi.id], quantity: e.target.value },
+                                                }))
+                                              }
+                                              className="h-7 text-xs"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="mb-1 block text-[10px] text-muted-foreground">Сума (€) — override</label>
+                                            <Input
+                                              type="number"
+                                              step="0.01"
+                                              min="0.01"
+                                              placeholder={((oi.priceInCents * (parseInt(sel.quantity, 10) || 1)) / 100).toFixed(2)}
+                                              value={sel.amountOverride}
+                                              onChange={(e) =>
+                                                setItemSelections((prev) => ({
+                                                  ...prev,
+                                                  [oi.id]: { ...prev[oi.id], amountOverride: e.target.value },
+                                                }))
+                                              }
+                                              className="h-7 text-xs"
+                                            />
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">
+                                    Допълнителна сума (€) — за доставка / goodwill / неаллокирана част
+                                  </label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={refundAdditionalAmount}
+                                    onChange={(e) => setRefundAdditionalAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="h-8"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs">
+                                  <span className="text-muted-foreground">Общо за възстановяване:</span>
+                                  <span className="font-medium">{formatPrice(totalCents)}</span>
+                                </div>
+                                {totalCents > remainingCents && (
+                                  <p className="text-[11px] text-red-700">
+                                    Сумата надвишава остатъка по поръчката ({formatPrice(remainingCents)}).
+                                  </p>
+                                )}
+                              </div>
+                            </>
+                          )
+                        })()}
+
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div>
                             <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
                             <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setRefundDate(e.target.value)} className="h-8" />
                           </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
-                            <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} className="h-8" />
-                          </div>
+                          {refundMode === "amount" && (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                              <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} className="h-8" />
+                            </div>
+                          )}
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div>
@@ -2050,18 +2210,55 @@ export default function AdminOrderDetailPage({
                         })()}
 
                         <div className="flex items-center gap-3">
-                          <Button size="sm" disabled={
-                            refundLoading
-                            || !refundReason.trim()
-                            || (refundMethod === "stripe" && !refundStripeId.trim())
-                            || (refundMethod === "bank_transfer" && !refundBankTransferRef.trim())
-                            || (!refundAffectsInvoicedSupply && !refundSkipReason.trim())
-                          } onClick={async () => {
+                          <Button size="sm" disabled={(() => {
+                            if (refundLoading) return true
+                            if (!refundReason.trim()) return true
+                            if (refundMethod === "stripe" && !refundStripeId.trim()) return true
+                            if (refundMethod === "bank_transfer" && !refundBankTransferRef.trim()) return true
+                            if (!refundAffectsInvoicedSupply && !refundSkipReason.trim()) return true
+                            // Items mode: at least one item OR a non-zero
+                            // additional amount is required (otherwise the
+                            // refund total is 0).
+                            if (refundMode === "items") {
+                              const hasSelection = Object.keys(itemSelections).length > 0
+                              const additional = parseFloat(refundAdditionalAmount)
+                              const hasAdditional = !isNaN(additional) && additional > 0
+                              if (!hasSelection && !hasAdditional) return true
+                            }
+                            return false
+                          })()} onClick={async () => {
                             setRefundLoading(true)
                             setRefundError("")
                             try {
-                              const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
-                              const amountCents = Math.round(amountFloat * 100)
+                              // Compute the refund total + items array based on mode.
+                              let amountCents: number
+                              let itemsForRecord: Array<{ orderItemId: number; quantity: number; amountCents?: number }> | undefined
+                              if (refundMode === "items") {
+                                const items: Array<{ orderItemId: number; quantity: number; amountCents: number }> = []
+                                let itemsTotal = 0
+                                for (const oi of order.items) {
+                                  const sel = itemSelections[oi.id]
+                                  if (!sel) continue
+                                  const qty = parseInt(sel.quantity, 10)
+                                  if (!Number.isInteger(qty) || qty < 1) continue
+                                  const overrideEur = parseFloat(sel.amountOverride)
+                                  const lineCents = sel.amountOverride && !isNaN(overrideEur) && overrideEur > 0
+                                    ? Math.round(overrideEur * 100)
+                                    : oi.priceInCents * qty
+                                  items.push({ orderItemId: oi.id, quantity: qty, amountCents: lineCents })
+                                  itemsTotal += lineCents
+                                }
+                                const additionalEur = parseFloat(refundAdditionalAmount)
+                                const additionalCents = !isNaN(additionalEur) && additionalEur > 0
+                                  ? Math.round(additionalEur * 100)
+                                  : 0
+                                amountCents = itemsTotal + additionalCents
+                                itemsForRecord = items.length > 0 ? items : undefined
+                              } else {
+                                const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
+                                amountCents = Math.round(amountFloat * 100)
+                                itemsForRecord = undefined
+                              }
                               const result = await recordRefund(id, {
                                 refundAmount: amountCents,
                                 refundReason: refundReason.trim(),
@@ -2073,6 +2270,7 @@ export default function AdminOrderDetailPage({
                                 creditNoteSkipReason: !refundAffectsInvoicedSupply ? refundSkipReason.trim() : undefined,
                                 clientIdempotencyKey: refundClientKey,
                                 withdrawalId: refundLinkedWithdrawalId || undefined,
+                                items: itemsForRecord,
                               })
                               const updated = await getOrder(id)
                               setOrder(updated)
@@ -2926,12 +3124,20 @@ function RefundRow({
         refund.amount_cents,
         inventoryReturns.map((r) => ({ sku: r.sku, quantity: r.quantity, type: r.type })),
         orderItems.map((i) => ({
+          id: i.id,
           sku: i.sku,
           productName: i.productName,
           unitPriceCents: i.priceInCents,
         })),
+        // refund_items takes precedence — explicit allocation captures admin
+        // intent for shipping/goodwill/discount cases that have no inventory return.
+        refund.items.map((it) => ({
+          orderItemId: it.order_item_id,
+          quantity: it.quantity,
+          amountCents: it.amount_cents,
+        })),
       ),
-    [refund.amount_cents, inventoryReturns, orderItems],
+    [refund.amount_cents, refund.items, inventoryReturns, orderItems],
   )
 
   const copyText = useMemo(
@@ -2983,6 +3189,30 @@ function RefundRow({
               <span className="ml-2 font-mono">{refund.bank_transfer_ref}</span>
             )}
           </div>
+          {refund.items.length > 0 && (() => {
+            // Item summary surfaces the allocation when refund_items exists.
+            // Format: "1 × Микс Кутия + 2 × Друг бар" with optional
+            // "+ X.XX € допълнително" when the items don't sum to the full
+            // refund total (the unallocated portion).
+            const parts: string[] = []
+            const itemsTotal = refund.items.reduce((s, it) => s + it.amount_cents, 0)
+            const additionalCents = refund.amount_cents - itemsTotal
+            for (const it of refund.items) {
+              const oi = orderItems.find((o) => o.id === it.order_item_id)
+              const label = oi ? oi.productName : `артикул #${it.order_item_id}`
+              parts.push(`${it.quantity} × ${label}`)
+            }
+            const itemsLabel = parts.join(" + ")
+            return (
+              <div className="mt-1 text-xs">
+                <span className="text-muted-foreground">Артикули:</span>{" "}
+                <span>{itemsLabel}</span>
+                {additionalCents > 0 && (
+                  <span className="text-muted-foreground"> + {formatPrice(additionalCents)} допълнително</span>
+                )}
+              </div>
+            )
+          })()}
         </div>
         {!editing && (
           <Button size="sm" variant="outline" onClick={() => { setEditing(true); setError("") }}>
