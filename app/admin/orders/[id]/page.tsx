@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, suggestBatchesForShipment, confirmShipmentBatches, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchSuggestion } from "@/app/actions/admin"
 import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatPrice } from "@/lib/products"
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
@@ -45,8 +45,11 @@ export default function AdminOrderDetailPage({
   const [cancellationReason, setCancellationReason] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
-  const [manualInvoiceNumber, setManualInvoiceNumber] = useState("")
   const [shipmentForm, setShipmentForm] = useState<ShipmentFormData | null>(null)
+  // Batch traceability — populated when shipment dialog opens. allocations
+  // is keyed by order_item_id; default = FEFO suggestion (admin can override).
+  const [batchSuggestions, setBatchSuggestions] = useState<BatchSuggestion[]>([])
+  const [batchAllocations, setBatchAllocations] = useState<Record<number, Array<{ productBatchId: string; quantity: string }>>>({})
   const [shipmentDisplay, setShipmentDisplay] = useState<ShipmentDisplayInfo | null>(null)
   const [shipmentOpen, setShipmentOpen] = useState(false)
   const [shipmentLoading, setShipmentLoading] = useState(false)
@@ -109,6 +112,13 @@ export default function AdminOrderDetailPage({
   const [refundDialogOpen, setRefundDialogOpen] = useState(false)
   const [complaintDialogOpen, setComplaintDialogOpen] = useState(false)
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false)
+  const [withdrawalDialogOpen, setWithdrawalDialogOpen] = useState(false)
+  const [withdrawalVia, setWithdrawalVia] = useState<WithdrawalRequestedVia>("email")
+  const [withdrawalEmail, setWithdrawalEmail] = useState("")
+  const [withdrawalText, setWithdrawalText] = useState("")
+  const [withdrawalLoading, setWithdrawalLoading] = useState(false)
+  const [withdrawalError, setWithdrawalError] = useState("")
+  const [withdrawalResult, setWithdrawalResult] = useState<{ id: string; ref: string } | null>(null)
 
   // Email resend state — per-email-type loading flag and a transient
   // "sent just now" marker so the admin gets immediate feedback (the
@@ -131,13 +141,24 @@ export default function AdminOrderDetailPage({
   const [refundReason, setRefundReason] = useState("")
   const [refundMethod, setRefundMethod] = useState<"stripe" | "bank_transfer">("stripe")
   const [refundDate, setRefundDate] = useState("")
-  const [refundCreditNote, setRefundCreditNote] = useState("")
   const [refundStripeId, setRefundStripeId] = useState("")
+  const [refundBankTransferRef, setRefundBankTransferRef] = useState("")
+  const [refundAffectsInvoicedSupply, setRefundAffectsInvoicedSupply] = useState(true)
+  const [refundSkipReason, setRefundSkipReason] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
   // client_idempotency_key for the refund insert. Regenerated after the
   // whole "refund → stock outcome" flow completes (not just after the refund
   // step), so a retry during Step 2 still resolves to the same refund row.
   const [refundClientKey, setRefundClientKey] = useState<string>(() => crypto.randomUUID())
+  const [refundLinkedWithdrawalId, setRefundLinkedWithdrawalId] = useState<string>("")
+  // Refund mode: "items" — admin picks specific order_items to allocate;
+  // refund total computed from items + optional additional. "amount" — admin
+  // types a single refund total (no per-line allocation, used for shipping
+  // disputes / goodwill). Webhook-created refunds are always "amount" with
+  // no items input. Default to items since that's the legally-cleanest case.
+  const [refundMode, setRefundMode] = useState<"items" | "amount">("items")
+  const [itemSelections, setItemSelections] = useState<Record<number, { quantity: string; amountOverride: string }>>({})
+  const [refundAdditionalAmount, setRefundAdditionalAmount] = useState<string>("")
 
   // Two-step state machine. 'form' = refund form visible; 'stock' = refund
   // saved, stock-outcome panel visible; 'complete' = both done, dismiss banner.
@@ -344,6 +365,22 @@ export default function AdminOrderDetailPage({
                   {complaints.filter((c) => c.status === "open").length > 0 && (
                     <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
                       {complaints.filter((c) => c.status === "open").length}
+                    </span>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setWithdrawalEmail(order?.email ?? "")
+                    setWithdrawalText("")
+                    setWithdrawalVia("email")
+                    setWithdrawalError("")
+                    setWithdrawalDialogOpen(true)
+                  }}
+                >
+                  Регистрирай заявка за връщане
+                  {(order?.withdrawals?.filter((w) => w.status === "requested" || w.status === "approved" || w.status === "goods_received").length ?? 0) > 0 && (
+                    <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                      {order?.withdrawals?.filter((w) => w.status === "requested" || w.status === "approved" || w.status === "goods_received").length}
                     </span>
                   )}
                 </DropdownMenuItem>
@@ -793,124 +830,29 @@ export default function AdminOrderDetailPage({
           </CardContent>
         </Card>
 
-        {/* Invoice */}
+        {/* Документи (фактури + кредитни известия) */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Фактура</CardTitle>
+            <CardTitle className="text-base">Документи</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {order.invoice_number ? (
-              <div><span className="text-muted-foreground">Номер:</span> <span className="font-mono">{order.invoice_number}</span></div>
-            ) : order.needs_invoice ? (
-              (() => {
-                // Tax event: card = payment at checkout (created_at), COD = delivery
-                const taxEventDate = order.payment_method === "cod"
-                  ? (order.delivered_at ? new Date(order.delivered_at) : null)
-                  : new Date(order.created_at)
-                const deadline = taxEventDate ? new Date(taxEventDate.getTime() + 5 * 24 * 60 * 60 * 1000) : null
-                const now = new Date()
-                const daysLeft = deadline ? Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null
-
-                return (
-                  <div className="space-y-2">
-                    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
-                      Клиентът е поискал фактура
-                    </div>
-                    {daysLeft !== null && (
-                      <div className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        daysLeft <= 0
-                          ? "border border-red-300 bg-red-50 text-red-900"
-                          : daysLeft <= 2
-                            ? "border border-amber-300 bg-amber-50 text-amber-900"
-                            : "border border-border bg-secondary text-foreground"
-                      }`}>
-                        {daysLeft <= 0
-                          ? `Срокът за издаване е изтекъл! (${deadline!.toLocaleDateString("bg-BG")})`
-                          : `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} за издаване (до ${deadline!.toLocaleDateString("bg-BG")})`
-                        }
-                      </div>
-                    )}
-                    {order.payment_method === "cod" && order.status !== "delivered" && (
-                      <div className="text-xs text-muted-foreground">
-                        Срокът започва след доставка (наложен платеж)
-                      </div>
-                    )}
-                  </div>
-                )
-              })()
-            ) : (
-              <div className="text-muted-foreground">Фактура не е поискана</div>
-            )}
-            {order.invoice_date && (
-              <div><span className="text-muted-foreground">Дата:</span> {new Date(order.invoice_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
-            )}
-            {order.invoice_type && (
-              <div><span className="text-muted-foreground">Тип:</span> {order.invoice_type === "company" ? "Юридическо лице" : "Физическо лице"}</div>
-            )}
-            {order.invoice_company_name && <div><span className="text-muted-foreground">Фирма:</span> {order.invoice_company_name}</div>}
-            {order.invoice_eik && <div><span className="text-muted-foreground">ЕИК:</span> {order.invoice_eik}</div>}
-            {order.invoice_vat_number && <div><span className="text-muted-foreground">ДДС номер:</span> {order.invoice_vat_number}</div>}
-            {order.invoice_mol && <div><span className="text-muted-foreground">МОЛ:</span> {order.invoice_mol}</div>}
-            {order.invoice_address && <div><span className="text-muted-foreground">Адрес:</span> {order.invoice_address}</div>}
-            {order.invoice_number ? (
-              <div className="space-y-2 pt-2">
-                <div><span className="text-muted-foreground">Фактура №:</span> <span className="font-medium">{order.invoice_number}</span></div>
-                {order.invoice_sent_at ? (
-                  <div className="text-xs text-muted-foreground">
-                    Изпратена на клиента на {new Date(order.invoice_sent_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={actionLoading}
-                    onClick={async () => {
-                      setInvoiceError("")
-                      setActionLoading(true)
-                      try {
-                        await markInvoiceSent(id)
-                        const updated = await getOrder(id)
-                        setOrder(updated)
-                      } catch (err) {
-                        setInvoiceError(err instanceof Error ? err.message : "Грешка")
-                      } finally {
-                        setActionLoading(false)
-                      }
-                    }}
-                  >
-                    Отбележи като изпратена на клиента
-                  </Button>
-                )}
+          <CardContent className="space-y-3 text-sm">
+            {order.invoices.length === 0 ? (
+              <div className="text-muted-foreground">
+                Клиентът не е поискал фактура за тази поръчка, така че не се
+                изисква и кредитно известие при възстановяване.
               </div>
             ) : (
-              <div className="flex gap-2 pt-2">
-                <Input
-                  placeholder="Номер на фактура"
-                  value={manualInvoiceNumber}
-                  onChange={(e) => setManualInvoiceNumber(e.target.value)}
-                  className="h-8 w-48"
-                />
-                <Button
-                  size="sm"
-                  disabled={actionLoading || !manualInvoiceNumber.trim()}
-                  onClick={async () => {
-                    setInvoiceError("")
-                    setActionLoading(true)
-                    try {
-                      await setInvoiceNumber(id, manualInvoiceNumber)
-                      const updated = await getOrder(id)
-                      setOrder(updated)
-                      setManualInvoiceNumber("")
-                    } catch (err) {
-                      setInvoiceError(err instanceof Error ? err.message : "Грешка при записване на фактура")
-                    } finally {
-                      setActionLoading(false)
-                    }
+              order.invoices.map((inv) => (
+                <InvoiceRow
+                  key={inv.id}
+                  invoice={inv}
+                  order={order}
+                  onChanged={async () => {
+                    const updated = await getOrder(id)
+                    setOrder(updated)
                   }}
-                >
-                  Запази
-                </Button>
-              </div>
+                />
+              ))
             )}
             {invoiceError && (
               <p className="mt-2 text-sm text-red-600">{invoiceError}</p>
@@ -986,6 +928,7 @@ export default function AdminOrderDetailPage({
               <RefundRow
                 key={r.id}
                 refund={r}
+                creditNoteInvoice={order.invoices.find((inv) => inv.type === "credit_note" && inv.refund_id === r.id)}
                 orderId={order.id}
                 orderItems={order.items}
                 inventoryReturns={order.inventoryReturns.filter(ret => ret.reference_id === r.id)}
@@ -995,6 +938,147 @@ export default function AdminOrderDetailPage({
                 }}
               />
             ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Заявки — withdrawals (право на отказ) for this order. Complaints
+          stay in their dedicated dialog (above) since they're already part of
+          the existing flow. Each withdrawal links to /admin/returns/[id]
+          where the full state machine + actions live. */}
+      {(order.withdrawals.length > 0 || complaints.length > 0) && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Свързани заявки</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            {(() => {
+              const wdStatusLabel: Record<Withdrawal["status"], string> = {
+                requested: "Подадена",
+                approved: "Одобрена",
+                goods_received: "Получени стоки",
+                rejected: "Отказана",
+                completed: "Завършена",
+              }
+              const wdStatusColor: Record<Withdrawal["status"], string> = {
+                requested: "bg-amber-100 text-amber-800",
+                approved: "bg-blue-100 text-blue-800",
+                goods_received: "bg-violet-100 text-violet-800",
+                rejected: "bg-red-100 text-red-800",
+                completed: "bg-green-100 text-green-800",
+              }
+              const cmpStatusLabel: Record<string, string> = {
+                open: "Отворена",
+                resolved: "Приключена",
+                rejected: "Отхвърлена",
+              }
+              const cmpStatusColor: Record<string, string> = {
+                open: "bg-amber-100 text-amber-800",
+                resolved: "bg-green-100 text-green-800",
+                rejected: "bg-red-100 text-red-800",
+              }
+              const cmpDemandLabel: Record<string, string> = {
+                refund: "Възстановяване",
+                replacement: "Замяна",
+                repair: "Ремонт",
+                discount: "Отстъпка",
+              }
+
+              // Unify into a single list sorted by created_at desc so the
+              // most recent activity surfaces first regardless of type.
+              type Row =
+                | { type: "withdrawal"; created_at: string; data: Withdrawal }
+                | { type: "complaint"; created_at: string; data: Complaint }
+              const rows: Row[] = [
+                ...order.withdrawals.map((w) => ({ type: "withdrawal" as const, created_at: w.created_at, data: w })),
+                ...complaints.map((c) => ({ type: "complaint" as const, created_at: c.reported_at, data: c })),
+              ].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+
+              return rows.map((row) => {
+                if (row.type === "withdrawal") {
+                  const w = row.data
+                  return (
+                    <div key={`w-${w.id}`} className="rounded-md border border-border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-blue-800">
+                              Право на отказ
+                            </span>
+                            <span className="font-mono text-sm font-medium">{w.withdrawal_ref}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${wdStatusColor[w.status]}`}>
+                              {wdStatusLabel[w.status]}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Канал: {w.requested_via} · Имейл: {w.customer_email}
+                          </div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            Подадена на {new Date(w.created_at).toLocaleDateString("bg-BG", {
+                              day: "2-digit", month: "2-digit", year: "numeric",
+                            })}
+                            {w.refund_id && (
+                              <> · Свързана с възстановяване <span className="font-mono">{w.refund_id.slice(0, 8)}</span></>
+                            )}
+                          </div>
+                        </div>
+                        <Link
+                          href={`/admin/returns/${w.id}`}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          Отвори ↗
+                        </Link>
+                      </div>
+                    </div>
+                  )
+                }
+                const c = row.data
+                return (
+                  <div key={`c-${c.id}`} className="rounded-md border border-border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-purple-800">
+                            Рекламация
+                          </span>
+                          <span className="font-mono text-sm font-medium">{c.complaint_ref}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${cmpStatusColor[c.status] ?? "bg-muted"}`}>
+                            {cmpStatusLabel[c.status] ?? c.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {c.defect_description.length > 100 ? c.defect_description.slice(0, 100) + "…" : c.defect_description}
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          Претенция: {cmpDemandLabel[c.customer_demand] ?? c.customer_demand}
+                          {" · "}
+                          Подадена на {new Date(c.reported_at).toLocaleDateString("bg-BG", {
+                            day: "2-digit", month: "2-digit", year: "numeric",
+                          })}
+                          {c.resolved_at && (
+                            <> · Приключена на {new Date(c.resolved_at).toLocaleDateString("bg-BG", {
+                              day: "2-digit", month: "2-digit", year: "numeric",
+                            })}</>
+                          )}
+                        </div>
+                        {c.resolution && (
+                          <div className="mt-1 text-xs">
+                            <span className="text-muted-foreground">Решение:</span> {c.resolution}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setComplaintDialogOpen(true)}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        Отвори ↗
+                      </button>
+                    </div>
+                  </div>
+                )
+              })
+            })()}
           </CardContent>
         </Card>
       )}
@@ -1095,8 +1179,18 @@ export default function AdminOrderDetailPage({
               const events = [
                 { label: "Поръчка създадена", date: order.created_at },
                 { label: "Потвърдена", date: order.confirmed_at || confirmedFallback },
-                { label: "Фактура издадена", date: order.invoice_date, detail: order.invoice_number ? `#${order.invoice_number}` : undefined },
-                { label: "Фактура изпратена", date: order.invoice_sent_at },
+                ...order.invoices
+                  .filter((inv) => inv.type === "invoice" && inv.invoice_number && inv.invoice_date)
+                  .map((inv) => ({ label: "Фактура издадена", date: inv.invoice_date, detail: `#${inv.invoice_number}` })),
+                ...order.invoices
+                  .filter((inv) => inv.type === "invoice" && inv.sent_at)
+                  .map((inv) => ({ label: "Фактура изпратена", date: inv.sent_at })),
+                ...order.invoices
+                  .filter((inv) => inv.type === "credit_note" && inv.invoice_number && inv.invoice_date)
+                  .map((inv) => ({ label: "Кредитно известие издадено", date: inv.invoice_date, detail: `#${inv.invoice_number}` })),
+                ...order.invoices
+                  .filter((inv) => inv.type === "credit_note" && inv.sent_at)
+                  .map((inv) => ({ label: "Кредитно известие изпратено", date: inv.sent_at })),
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
                 { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
@@ -1253,9 +1347,26 @@ export default function AdminOrderDetailPage({
                           }
                           setActionError("")
                           try {
-                            const { form, display } = await getShipmentDefaults(id)
+                            const [{ form, display }, suggestions] = await Promise.all([
+                              getShipmentDefaults(id),
+                              suggestBatchesForShipment(id),
+                            ])
                             setShipmentForm(form)
                             setShipmentDisplay(display)
+                            setBatchSuggestions(suggestions)
+                            // Initialize allocations from FEFO suggestion: each
+                            // line gets its suggested rows with the suggested qty.
+                            // Admin can edit before confirming.
+                            const initialAllocs: Record<number, Array<{ productBatchId: string; quantity: string }>> = {}
+                            for (const s of suggestions) {
+                              if (s.suggestions.length > 0) {
+                                initialAllocs[s.orderItemId] = s.suggestions.map((b) => ({
+                                  productBatchId: b.productBatchId,
+                                  quantity: String(b.suggestedQuantity),
+                                }))
+                              }
+                            }
+                            setBatchAllocations(initialAllocs)
                             setSelectedOfficeNumericId(
                               display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
                             )
@@ -1549,13 +1660,116 @@ export default function AdminOrderDetailPage({
                         </div>
                       </div>
 
+                      {/* ── Batch traceability — per-line allocation ─────────── */}
+                      {batchSuggestions.length > 0 && (
+                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium">Партиди (проследяване)</h4>
+                            <span className="text-[11px] text-muted-foreground">FEFO предложение — може да се промени</span>
+                          </div>
+                          {batchSuggestions.map((sug) => {
+                            const lineAllocs = batchAllocations[sug.orderItemId] ?? []
+                            const allocatedQty = lineAllocs.reduce((s, a) => s + (parseInt(a.quantity, 10) || 0), 0)
+                            const remaining = sug.orderedQuantity - allocatedQty
+                            const allBatches = sug.suggestions
+                            return (
+                              <div key={sug.orderItemId} className="rounded-md border border-border/60 bg-background p-3 text-xs">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <span className="font-medium text-foreground">{sug.productName}</span>
+                                    <span className="ml-2 text-muted-foreground">{sug.orderedQuantity} бр.</span>
+                                  </div>
+                                  <span className={`text-[11px] ${remaining === 0 ? "text-green-700" : "text-amber-700"}`}>
+                                    {allocatedQty}/{sug.orderedQuantity} разпределени
+                                  </span>
+                                </div>
+                                {sug.shortfall > 0 && allBatches.length === 0 && (
+                                  <p className="mt-2 rounded-md border border-red-300 bg-red-50 p-2 text-[11px] text-red-900">
+                                    Няма активни партиди за този SKU. Добавете нова партида в Склад преди да изпратите.
+                                  </p>
+                                )}
+                                {allBatches.length > 0 && (
+                                  <div className="mt-2 space-y-1">
+                                    {allBatches.map((b) => {
+                                      const alloc = lineAllocs.find((a) => a.productBatchId === b.productBatchId)
+                                      return (
+                                        <div key={b.productBatchId} className="grid grid-cols-[1fr_auto] gap-2 items-center">
+                                          <div className="truncate">
+                                            <span className="font-mono">{b.batchNumber}</span>
+                                            <span className="ml-2 text-muted-foreground">
+                                              изт. {new Date(b.expiryDate).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                                              {" · "}налични {b.quantityAvailable}
+                                            </span>
+                                          </div>
+                                          <Input
+                                            type="number"
+                                            min={0}
+                                            max={b.quantityAvailable}
+                                            value={alloc?.quantity ?? "0"}
+                                            onChange={(e) => {
+                                              const newVal = e.target.value
+                                              setBatchAllocations((prev) => {
+                                                const next = { ...prev }
+                                                const lineList = next[sug.orderItemId] ? [...next[sug.orderItemId]] : []
+                                                const existingIdx = lineList.findIndex((x) => x.productBatchId === b.productBatchId)
+                                                if (existingIdx >= 0) {
+                                                  lineList[existingIdx] = { ...lineList[existingIdx], quantity: newVal }
+                                                } else {
+                                                  lineList.push({ productBatchId: b.productBatchId, quantity: newVal })
+                                                }
+                                                next[sug.orderItemId] = lineList
+                                                return next
+                                              })
+                                            }}
+                                            className="h-7 w-20 text-xs"
+                                          />
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
                       <div className="flex gap-2 pt-2">
                         <Button
-                          disabled={shipmentLoading || officePickerError}
+                          disabled={shipmentLoading || officePickerError || (() => {
+                            // Block submit if any line's allocations don't sum to ordered qty
+                            for (const sug of batchSuggestions) {
+                              const lineAllocs = batchAllocations[sug.orderItemId] ?? []
+                              const allocatedQty = lineAllocs.reduce((s, a) => s + (parseInt(a.quantity, 10) || 0), 0)
+                              if (allocatedQty !== sug.orderedQuantity) return true
+                            }
+                            return false
+                          })()}
                           onClick={async () => {
                             setShipmentLoading(true)
                             setActionError("")
                             try {
+                              // Step 1: persist batch allocations (locks them at ship time).
+                              // Skips if no batches in the system (legacy/empty state).
+                              if (batchSuggestions.length > 0) {
+                                const flatAllocs: Array<{ orderItemId: number; productBatchId: string; quantity: number }> = []
+                                for (const [orderItemIdStr, lineList] of Object.entries(batchAllocations)) {
+                                  for (const a of lineList) {
+                                    const qty = parseInt(a.quantity, 10)
+                                    if (Number.isInteger(qty) && qty > 0) {
+                                      flatAllocs.push({
+                                        orderItemId: parseInt(orderItemIdStr, 10),
+                                        productBatchId: a.productBatchId,
+                                        quantity: qty,
+                                      })
+                                    }
+                                  }
+                                }
+                                if (flatAllocs.length > 0) {
+                                  await confirmShipmentBatches(id, flatAllocs)
+                                }
+                              }
+                              // Step 2: only after allocations land, generate the courier label.
                               const { trackingNumber: tn } = await generateShipment(id, shipmentForm)
                               setTrackingNumber(tn)
                               setShipmentOpen(false)
@@ -1768,6 +1982,9 @@ export default function AdminOrderDetailPage({
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Запиши възстановяване</DialogTitle>
+                <DialogDescription>
+                  Запишете извършено възстановяване (Stripe или банков превод). Изпълнете първо превода, после въведете тук референцията.
+                </DialogDescription>
               </DialogHeader>
               {refundError && (
                 <p className="text-sm text-red-600">{refundError}</p>
@@ -1780,8 +1997,10 @@ export default function AdminOrderDetailPage({
             const resetFlow = () => {
               setRefundAmount("")
               setRefundReason("")
-              setRefundCreditNote("")
               setRefundStripeId("")
+              setRefundBankTransferRef("")
+              setRefundAffectsInvoicedSupply(true)
+              setRefundSkipReason("")
               setStockQty({})
               setStockDisposition({})
               setStockKeys({})
@@ -1794,6 +2013,10 @@ export default function AdminOrderDetailPage({
               setSavedOutcomeNote("")
               setSavedOutcomeRef("")
               setRefundStep("form")
+              setRefundLinkedWithdrawalId("")
+              setRefundMode("items")
+              setItemSelections({})
+              setRefundAdditionalAmount("")
               // New UUIDs only on full flow completion — retries during
               // Step 2 keep the same key so recordRefund idempotency holds.
               setRefundClientKey(crypto.randomUUID())
@@ -1865,15 +2088,164 @@ export default function AdminOrderDetailPage({
                             </div>
                           )
                         })()}
+                        {/* Mode selector — items mode (allocates to specific
+                            order lines, drives credit-note breakdown) vs
+                            amount-only (shipping disputes, goodwill). Items
+                            mode computes the refund total from selections;
+                            amount mode lets admin type it. */}
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={refundMode === "items" ? "default" : "outline"}
+                            onClick={() => setRefundMode("items")}
+                          >
+                            По артикули
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={refundMode === "amount" ? "default" : "outline"}
+                            onClick={() => setRefundMode("amount")}
+                          >
+                            Допълнителна сума само
+                          </Button>
+                        </div>
+
+                        {refundMode === "items" && (() => {
+                          // Compute items total from current selections; uses
+                          // unit_price_cents × quantity unless admin entered
+                          // an override amount.
+                          let itemsTotalCents = 0
+                          for (const oi of order.items) {
+                            const sel = itemSelections[oi.id]
+                            if (!sel) continue
+                            const qty = parseInt(sel.quantity, 10) || 0
+                            if (qty < 1) continue
+                            const overrideEur = parseFloat(sel.amountOverride)
+                            const lineCents = sel.amountOverride && !isNaN(overrideEur)
+                              ? Math.round(overrideEur * 100)
+                              : oi.priceInCents * qty
+                            itemsTotalCents += lineCents
+                          }
+                          const additionalEur = parseFloat(refundAdditionalAmount)
+                          const additionalCents = !isNaN(additionalEur) && additionalEur > 0
+                            ? Math.round(additionalEur * 100)
+                            : 0
+                          const totalCents = itemsTotalCents + additionalCents
+                          return (
+                            <>
+                              <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+                                <p className="text-xs text-muted-foreground">
+                                  Изберете артикули за възстановяване. Сумата по подразбиране е
+                                  единична цена × количество; може да я промените.
+                                </p>
+                                {order.items.map((oi) => {
+                                  const sel = itemSelections[oi.id]
+                                  const checked = !!sel
+                                  return (
+                                    <div key={oi.id} className="rounded-md border border-border/60 bg-background p-2 text-xs">
+                                      <label className="flex items-start gap-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={(e) => {
+                                            setItemSelections((prev) => {
+                                              const next = { ...prev }
+                                              if (e.target.checked) {
+                                                next[oi.id] = { quantity: "1", amountOverride: "" }
+                                              } else {
+                                                delete next[oi.id]
+                                              }
+                                              return next
+                                            })
+                                          }}
+                                          className="mt-0.5"
+                                        />
+                                        <span className="flex-1">
+                                          <span className="font-medium text-foreground">{oi.productName}</span>
+                                          <span className="ml-2 text-muted-foreground">{formatPrice(oi.priceInCents)} / бр. · поръчани {oi.quantity}</span>
+                                        </span>
+                                      </label>
+                                      {checked && (
+                                        <div className="mt-2 grid grid-cols-2 gap-2 pl-6">
+                                          <div>
+                                            <label className="mb-1 block text-[10px] text-muted-foreground">Количество</label>
+                                            <Input
+                                              type="number"
+                                              min={1}
+                                              max={oi.quantity}
+                                              value={sel.quantity}
+                                              onChange={(e) =>
+                                                setItemSelections((prev) => ({
+                                                  ...prev,
+                                                  [oi.id]: { ...prev[oi.id], quantity: e.target.value },
+                                                }))
+                                              }
+                                              className="h-7 text-xs"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="mb-1 block text-[10px] text-muted-foreground">Сума (€) — override</label>
+                                            <Input
+                                              type="number"
+                                              step="0.01"
+                                              min="0.01"
+                                              placeholder={((oi.priceInCents * (parseInt(sel.quantity, 10) || 1)) / 100).toFixed(2)}
+                                              value={sel.amountOverride}
+                                              onChange={(e) =>
+                                                setItemSelections((prev) => ({
+                                                  ...prev,
+                                                  [oi.id]: { ...prev[oi.id], amountOverride: e.target.value },
+                                                }))
+                                              }
+                                              className="h-7 text-xs"
+                                            />
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                                <div>
+                                  <label className="mb-1 block text-xs text-muted-foreground">
+                                    Допълнителна сума (€) — за доставка / goodwill / неаллокирана част
+                                  </label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={refundAdditionalAmount}
+                                    onChange={(e) => setRefundAdditionalAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="h-8"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs">
+                                  <span className="text-muted-foreground">Общо за възстановяване:</span>
+                                  <span className="font-medium">{formatPrice(totalCents)}</span>
+                                </div>
+                                {totalCents > remainingCents && (
+                                  <p className="text-[11px] text-red-700">
+                                    Сумата надвишава остатъка по поръчката ({formatPrice(remainingCents)}).
+                                  </p>
+                                )}
+                              </div>
+                            </>
+                          )
+                        })()}
+
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div>
                             <label className="mb-1 block text-xs text-muted-foreground">Дата</label>
                             <Input type="date" value={refundDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setRefundDate(e.target.value)} className="h-8" />
                           </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
-                            <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} className="h-8" />
-                          </div>
+                          {refundMode === "amount" && (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">Сума (€)</label>
+                              <Input type="number" step="0.01" min="0.01" max={(remainingCents / 100).toFixed(2)} placeholder={(remainingCents / 100).toFixed(2)} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} className="h-8" />
+                            </div>
+                          )}
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div>
@@ -1883,12 +2255,40 @@ export default function AdminOrderDetailPage({
                               <option value="bank_transfer">Банков превод</option>
                             </select>
                           </div>
-                          {order.needs_invoice && order.invoice_number && (
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-                              <Input value={refundCreditNote} onChange={(e) => setRefundCreditNote(e.target.value)} placeholder="Задължително" className="h-8" maxLength={100} />
-                            </div>
-                          )}
+                          {(() => {
+                            const initialInvoice = order.invoices.find((i) => i.type === "invoice")
+                            const invoiceIssued = !!initialInvoice?.invoice_number
+                            const willCreateCreditNote = invoiceIssued && refundAffectsInvoicedSupply
+                            return (
+                              <div>
+                                {invoiceIssued && (
+                                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <input
+                                      type="checkbox"
+                                      checked={refundAffectsInvoicedSupply}
+                                      onChange={(e) => setRefundAffectsInvoicedSupply(e.target.checked)}
+                                      className="rounded border-border"
+                                    />
+                                    <span>Това възстановяване намалява фактурираната сума (ще се създаде кредитно известие)</span>
+                                  </label>
+                                )}
+                                {invoiceIssued && !refundAffectsInvoicedSupply && (
+                                  <Input
+                                    value={refundSkipReason}
+                                    onChange={(e) => setRefundSkipReason(e.target.value)}
+                                    placeholder="Причина за пропуск на КИ (задължително)"
+                                    className="mt-2 h-8"
+                                    maxLength={500}
+                                  />
+                                )}
+                                {invoiceIssued && willCreateCreditNote && (
+                                  <p className="mt-1 text-[11px] text-muted-foreground">
+                                    Системата ще създаде кредитно известие в Документи; въведете номера от Microinvest след това.
+                                  </p>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </div>
                         {refundMethod === "stripe" && (
                           <div>
@@ -1896,26 +2296,105 @@ export default function AdminOrderDetailPage({
                             <Input value={refundStripeId} onChange={(e) => setRefundStripeId(e.target.value)} placeholder="re_..." className="h-8 font-mono" maxLength={100} />
                           </div>
                         )}
+                        {refundMethod === "bank_transfer" && (
+                          <div>
+                            <label className="mb-1 block text-xs text-muted-foreground">Референция на банков превод</label>
+                            <Input value={refundBankTransferRef} onChange={(e) => setRefundBankTransferRef(e.target.value)} placeholder="Номер на превод от банковата ви извадка" className="h-8 font-mono" maxLength={200} />
+                          </div>
+                        )}
                         <div>
                           <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
                           <Input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
                         </div>
 
+                        {(() => {
+                          const linkable = order.withdrawals.filter(
+                            (w) => w.status === "approved" || w.status === "goods_received",
+                          )
+                          if (linkable.length === 0) return null
+                          return (
+                            <div>
+                              <label className="mb-1 block text-xs text-muted-foreground">
+                                Свързване със заявка за връщане (по избор)
+                              </label>
+                              <select
+                                value={refundLinkedWithdrawalId}
+                                onChange={(e) => setRefundLinkedWithdrawalId(e.target.value)}
+                                className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                              >
+                                <option value="">— без връзка —</option>
+                                {linkable.map((w) => (
+                                  <option key={w.id} value={w.id}>
+                                    {w.withdrawal_ref} ({w.status})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })()}
+
                         <div className="flex items-center gap-3">
-                          <Button size="sm" disabled={refundLoading || !refundReason.trim() || (refundMethod === "stripe" && !refundStripeId.trim())} onClick={async () => {
+                          <Button size="sm" disabled={(() => {
+                            if (refundLoading) return true
+                            if (!refundReason.trim()) return true
+                            if (refundMethod === "stripe" && !refundStripeId.trim()) return true
+                            if (refundMethod === "bank_transfer" && !refundBankTransferRef.trim()) return true
+                            if (!refundAffectsInvoicedSupply && !refundSkipReason.trim()) return true
+                            // Items mode: at least one item OR a non-zero
+                            // additional amount is required (otherwise the
+                            // refund total is 0).
+                            if (refundMode === "items") {
+                              const hasSelection = Object.keys(itemSelections).length > 0
+                              const additional = parseFloat(refundAdditionalAmount)
+                              const hasAdditional = !isNaN(additional) && additional > 0
+                              if (!hasSelection && !hasAdditional) return true
+                            }
+                            return false
+                          })()} onClick={async () => {
                             setRefundLoading(true)
                             setRefundError("")
                             try {
-                              const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
-                              const amountCents = Math.round(amountFloat * 100)
+                              // Compute the refund total + items array based on mode.
+                              let amountCents: number
+                              let itemsForRecord: Array<{ orderItemId: number; quantity: number; amountCents?: number }> | undefined
+                              if (refundMode === "items") {
+                                const items: Array<{ orderItemId: number; quantity: number; amountCents: number }> = []
+                                let itemsTotal = 0
+                                for (const oi of order.items) {
+                                  const sel = itemSelections[oi.id]
+                                  if (!sel) continue
+                                  const qty = parseInt(sel.quantity, 10)
+                                  if (!Number.isInteger(qty) || qty < 1) continue
+                                  const overrideEur = parseFloat(sel.amountOverride)
+                                  const lineCents = sel.amountOverride && !isNaN(overrideEur) && overrideEur > 0
+                                    ? Math.round(overrideEur * 100)
+                                    : oi.priceInCents * qty
+                                  items.push({ orderItemId: oi.id, quantity: qty, amountCents: lineCents })
+                                  itemsTotal += lineCents
+                                }
+                                const additionalEur = parseFloat(refundAdditionalAmount)
+                                const additionalCents = !isNaN(additionalEur) && additionalEur > 0
+                                  ? Math.round(additionalEur * 100)
+                                  : 0
+                                amountCents = itemsTotal + additionalCents
+                                itemsForRecord = items.length > 0 ? items : undefined
+                              } else {
+                                const amountFloat = refundAmount ? parseFloat(refundAmount) : remainingCents / 100
+                                amountCents = Math.round(amountFloat * 100)
+                                itemsForRecord = undefined
+                              }
                               const result = await recordRefund(id, {
                                 refundAmount: amountCents,
                                 refundReason: refundReason.trim(),
                                 refundMethod,
                                 refundedAt: refundDate || undefined,
-                                creditNoteRef: refundCreditNote.trim() || undefined,
                                 stripeRefundId: refundMethod === "stripe" ? refundStripeId.trim() : undefined,
+                                bankTransferRef: refundMethod === "bank_transfer" ? refundBankTransferRef.trim() : undefined,
+                                affectsInvoicedSupply: refundAffectsInvoicedSupply,
+                                creditNoteSkipReason: !refundAffectsInvoicedSupply ? refundSkipReason.trim() : undefined,
                                 clientIdempotencyKey: refundClientKey,
+                                withdrawalId: refundLinkedWithdrawalId || undefined,
+                                items: itemsForRecord,
                               })
                               const updated = await getOrder(id)
                               setOrder(updated)
@@ -2168,10 +2647,13 @@ export default function AdminOrderDetailPage({
           {/* Complaints section — moved to dialog. Triggered from "Още
               действия" dropdown. Existing complaints and the new-complaint
               form all live here. */}
-          <Dialog open={complaintDialogOpen} onOpenChange={(open) => { setComplaintDialogOpen(open); if (!open) setComplaintError("") }}>
+          <Dialog open={complaintDialogOpen} onOpenChange={(open) => { setComplaintDialogOpen(open); if (!open) { setComplaintError(""); setComplaintResult("") } }}>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Рекламации</DialogTitle>
+                <DialogDescription>
+                  Регистрирайте рекламация по ЗЗП Чл. 127 или приключете съществуваща.
+                </DialogDescription>
               </DialogHeader>
               {complaintError && (
                 <p className="text-sm text-red-600">{complaintError}</p>
@@ -2230,47 +2712,185 @@ export default function AdminOrderDetailPage({
                 ))}
               </div>
             )}
-            <div className="space-y-2">
-              <Input value={complaintDefect} onChange={(e) => setComplaintDefect(e.target.value)} placeholder="Описание на несъответствието" className="h-8" maxLength={2000} />
-              <select value={complaintDemand} onChange={(e) => setComplaintDemand(e.target.value)} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
-                <option value="">Претенция на потребителя...</option>
-                <option value="refund">Възстановяване на сумата</option>
-                <option value="replacement">Замяна</option>
-                <option value="repair">Ремонт</option>
-                <option value="discount">Отстъпка</option>
-              </select>
-              <div className="flex items-center gap-3">
-                <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
-                  setComplaintLoading(true)
-                  setComplaintResult("")
-                  setComplaintError("")
-                  try {
-                    const result = await recordComplaint(id, {
-                      defectDescription: complaintDefect.trim(),
-                      customerDemand: complaintDemand as "refund" | "replacement" | "repair" | "discount",
-                    })
-                    setComplaintResult(result.complaintRef)
-                    setComplaintDefect("")
-                    setComplaintDemand("")
-                    const updated = await getOrderComplaints(id)
-                    setComplaints(updated)
-                  } catch (err) {
-                    setComplaintError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
-                  } finally {
-                    setComplaintLoading(false)
-                  }
-                }}>
-                  {complaintLoading ? "Записване..." : "Регистрирай рекламация"}
-                </Button>
-              </div>
-              {complaintResult && (
+            {complaintResult ? (
+              // Just-registered state: show success + offer to register another.
+              // Hides the form so admin doesn't accidentally re-submit.
+              <div className="space-y-3">
                 <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900">
                   <p className="font-medium">Рекламация регистрирана: {complaintResult}</p>
                   <p className="mt-1 text-xs">Предоставете този номер на клиента като потвърждение за регистрация на рекламацията.</p>
                 </div>
-              )}
-            </div>
+                <Button size="sm" variant="outline" onClick={() => setComplaintResult("")}>
+                  Регистрирай нова рекламация
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Input value={complaintDefect} onChange={(e) => setComplaintDefect(e.target.value)} placeholder="Описание на несъответствието" className="h-8" maxLength={2000} />
+                <select value={complaintDemand} onChange={(e) => setComplaintDemand(e.target.value)} className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm">
+                  <option value="">Претенция на потребителя...</option>
+                  <option value="refund">Възстановяване на сумата</option>
+                  <option value="replacement">Замяна</option>
+                  <option value="repair">Ремонт</option>
+                  <option value="discount">Отстъпка</option>
+                </select>
+                <div className="flex items-center gap-3">
+                  <Button size="sm" variant="outline" disabled={complaintLoading || !complaintDefect.trim() || !complaintDemand} onClick={async () => {
+                    setComplaintLoading(true)
+                    setComplaintResult("")
+                    setComplaintError("")
+                    try {
+                      const result = await recordComplaint(id, {
+                        defectDescription: complaintDefect.trim(),
+                        customerDemand: complaintDemand as "refund" | "replacement" | "repair" | "discount",
+                      })
+                      setComplaintResult(result.complaintRef)
+                      setComplaintDefect("")
+                      setComplaintDemand("")
+                      const updated = await getOrderComplaints(id)
+                      setComplaints(updated)
+                    } catch (err) {
+                      setComplaintError(err instanceof Error ? err.message : "Грешка при записване на рекламация")
+                    } finally {
+                      setComplaintLoading(false)
+                    }
+                  }}>
+                    {complaintLoading ? "Записване..." : "Регистрирай рекламация"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Withdrawals (право на отказ) — admin-driven intake. The dialog
+              is opened from the "Регистрирай заявка за връщане" item in the
+              Още действия dropdown above. The Заявки card below lists all
+              withdrawals + complaints for this order. */}
+          <Dialog
+            open={withdrawalDialogOpen}
+            onOpenChange={(open) => {
+              setWithdrawalDialogOpen(open)
+              if (!open) {
+                setWithdrawalError("")
+                setWithdrawalResult(null)
+              }
+            }}
+          >
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Регистрирай заявка за връщане</DialogTitle>
+                <DialogDescription>
+                  Право на отказ по ЗЗП Чл. 50. Регистрирайте заявка след контакт с клиента.
+                </DialogDescription>
+              </DialogHeader>
+              {withdrawalError && (
+                <p className="text-sm text-red-600">{withdrawalError}</p>
+              )}
+              {withdrawalResult ? (
+                // Just-registered state: show success + offer to register another
+                // or open the new withdrawal's detail page. Hides the form so
+                // admin doesn't accidentally re-submit.
+                <div className="space-y-3">
+                  <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900">
+                    <p className="font-medium">Заявка регистрирана: {withdrawalResult.ref}</p>
+                    <p className="mt-1 text-xs">
+                      Изпратихме потвърждение на клиента. Прегледайте допустимостта и одобрете
+                      или отхвърлете от страницата на заявката.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        window.location.href = `/admin/returns/${withdrawalResult.id}`
+                      }}
+                    >
+                      Отвори заявката ↗
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setWithdrawalResult(null)}>
+                      Регистрирай нова
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Право на отказ по чл. 50 ЗЗП. Регистрирайте заявка след като
+                    клиентът Ви е писал/обадил. Системата генерира уникална
+                    референция (WD-YYYY-NNNN) и изпраща потвърждение на клиента.
+                  </p>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Канал на заявка</label>
+                    <select
+                      value={withdrawalVia}
+                      onChange={(e) => setWithdrawalVia(e.target.value as WithdrawalRequestedVia)}
+                      className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm"
+                    >
+                      <option value="email">Имейл</option>
+                      <option value="phone">Телефон</option>
+                      <option value="admin">Админ (вътрешна)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Имейл на клиента</label>
+                    <Input
+                      value={withdrawalEmail}
+                      onChange={(e) => setWithdrawalEmail(e.target.value)}
+                      placeholder="customer@example.com"
+                      className="h-8"
+                      maxLength={200}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Текст на заявката (по избор)</label>
+                    <textarea
+                      value={withdrawalText}
+                      onChange={(e) => setWithdrawalText(e.target.value)}
+                      placeholder="Кратко описание / резюме на имейла на клиента..."
+                      className="h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                      maxLength={2000}
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={withdrawalLoading}
+                      onClick={() => setWithdrawalDialogOpen(false)}
+                    >
+                      Отказ
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={withdrawalLoading || !withdrawalEmail.trim()}
+                      onClick={async () => {
+                        setWithdrawalLoading(true)
+                        setWithdrawalError("")
+                        try {
+                          const result = await createWithdrawal(id, {
+                            requestedVia: withdrawalVia,
+                            customerEmail: withdrawalEmail.trim(),
+                            customerRequestText: withdrawalText.trim() || undefined,
+                          })
+                          setWithdrawalEmail("")
+                          setWithdrawalText("")
+                          const updated = await getOrder(id)
+                          setOrder(updated)
+                          setWithdrawalResult({ id: result.withdrawalId, ref: result.withdrawalRef })
+                        } catch (err) {
+                          setWithdrawalError(err instanceof Error ? err.message : "Грешка")
+                        } finally {
+                          setWithdrawalLoading(false)
+                        }
+                    }}
+                  >
+                    {withdrawalLoading ? "Записване..." : "Регистрирай"}
+                  </Button>
+                </div>
+              </div>
+              )}
             </DialogContent>
           </Dialog>
         </CardContent>
@@ -2295,6 +2915,9 @@ export default function AdminOrderDetailPage({
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Следдоставно събитие</DialogTitle>
+            <DialogDescription>
+              Запишете събитие след доставка (отказана доставка, изгубена пратка, върнат продукт, изтегляне).
+            </DialogDescription>
           </DialogHeader>
           {outcomeError && (
             <p className="text-sm text-red-600">{outcomeError}</p>
@@ -2591,17 +3214,21 @@ export default function AdminOrderDetailPage({
 
 // One row in the refunds list. Shows the refund details, a computed
 // breakdown for кредитно известие (VAT 20% inclusive; copy-pasteable for
-// Microinvest), and an inline annotation edit for reason + credit_note_ref.
-// The breakdown is built from linked inventory_log rows
-// (inventory_log.reference_id = refund.id, reference_type = 'return').
+// Microinvest), and an inline annotation edit for reason +
+// bank_transfer_ref + credit_note_skip_reason. The actual credit-note
+// document number lives on the linked invoices row of type='credit_note'
+// (auto-created on refund when conditions hold) — admin edits it from the
+// Документи section.
 function RefundRow({
   refund,
+  creditNoteInvoice,
   orderId,
   orderItems,
   inventoryReturns,
   onSaved,
 }: {
   refund: OrderRefund
+  creditNoteInvoice: Invoice | undefined
   orderId: string
   orderItems: OrderDetail["items"]
   inventoryReturns: OrderInventoryReturn[]
@@ -2609,7 +3236,8 @@ function RefundRow({
 }) {
   const [editing, setEditing] = useState(false)
   const [reason, setReason] = useState(refund.reason ?? "")
-  const [creditNote, setCreditNote] = useState(refund.credit_note_ref ?? "")
+  const [bankTransferRef, setBankTransferRef] = useState(refund.bank_transfer_ref ?? "")
+  const [skipReason, setSkipReason] = useState(refund.credit_note_skip_reason ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle")
@@ -2620,12 +3248,20 @@ function RefundRow({
         refund.amount_cents,
         inventoryReturns.map((r) => ({ sku: r.sku, quantity: r.quantity, type: r.type })),
         orderItems.map((i) => ({
+          id: i.id,
           sku: i.sku,
           productName: i.productName,
           unitPriceCents: i.priceInCents,
         })),
+        // refund_items takes precedence — explicit allocation captures admin
+        // intent for shipping/goodwill/discount cases that have no inventory return.
+        refund.items.map((it) => ({
+          orderItemId: it.order_item_id,
+          quantity: it.quantity,
+          amountCents: it.amount_cents,
+        })),
       ),
-    [refund.amount_cents, inventoryReturns, orderItems],
+    [refund.amount_cents, refund.items, inventoryReturns, orderItems],
   )
 
   const copyText = useMemo(
@@ -2673,7 +3309,34 @@ function RefundRow({
             {refund.stripe_refund_id && (
               <span className="ml-2 font-mono">{refund.stripe_refund_id}</span>
             )}
+            {refund.bank_transfer_ref && (
+              <span className="ml-2 font-mono">{refund.bank_transfer_ref}</span>
+            )}
           </div>
+          {refund.items.length > 0 && (() => {
+            // Item summary surfaces the allocation when refund_items exists.
+            // Format: "1 × Микс Кутия + 2 × Друг бар" with optional
+            // "+ X.XX € допълнително" when the items don't sum to the full
+            // refund total (the unallocated portion).
+            const parts: string[] = []
+            const itemsTotal = refund.items.reduce((s, it) => s + it.amount_cents, 0)
+            const additionalCents = refund.amount_cents - itemsTotal
+            for (const it of refund.items) {
+              const oi = orderItems.find((o) => o.id === it.order_item_id)
+              const label = oi ? oi.productName : `артикул #${it.order_item_id}`
+              parts.push(`${it.quantity} × ${label}`)
+            }
+            const itemsLabel = parts.join(" + ")
+            return (
+              <div className="mt-1 text-xs">
+                <span className="text-muted-foreground">Артикули:</span>{" "}
+                <span>{itemsLabel}</span>
+                {additionalCents > 0 && (
+                  <span className="text-muted-foreground"> + {formatPrice(additionalCents)} допълнително</span>
+                )}
+              </div>
+            )
+          })()}
         </div>
         {!editing && (
           <Button size="sm" variant="outline" onClick={() => { setEditing(true); setError("") }}>
@@ -2686,10 +3349,24 @@ function RefundRow({
           {refund.reason && (
             <div><span className="text-muted-foreground">Причина:</span> {refund.reason}</div>
           )}
-          {refund.credit_note_ref && (
-            <div><span className="text-muted-foreground">Кредитно известие:</span> <span className="font-mono">{refund.credit_note_ref}</span></div>
-          )}
-          {!refund.reason && !refund.credit_note_ref && (
+          {creditNoteInvoice ? (
+            <div>
+              <span className="text-muted-foreground">Кредитно известие:</span>{" "}
+              {creditNoteInvoice.invoice_number ? (
+                <span className="font-mono">#{creditNoteInvoice.invoice_number}</span>
+              ) : (
+                <span className="text-amber-700">чака номер ↗ (виж Документи)</span>
+              )}
+            </div>
+          ) : refund.affects_invoiced_supply === false ? (
+            <div className="text-muted-foreground">
+              Не изисква кредитно известие
+              {refund.credit_note_skip_reason && (
+                <> — <span>{refund.credit_note_skip_reason}</span></>
+              )}
+            </div>
+          ) : null}
+          {!refund.reason && !creditNoteInvoice && !refund.credit_note_skip_reason && (
             <div className="text-muted-foreground italic">Няма анотации — редактирайте, за да добавите.</div>
           )}
         </div>
@@ -2775,10 +3452,18 @@ function RefundRow({
             <label className="mb-1 block text-xs text-muted-foreground">Причина</label>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Право на отказ / рекламация / ..." className="h-8" maxLength={1000} />
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Кредитно известие №</label>
-            <Input value={creditNote} onChange={(e) => setCreditNote(e.target.value)} placeholder="Незадължително" className="h-8" maxLength={100} />
-          </div>
+          {refund.method === "bank_transfer" && (
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Референция на банков превод</label>
+              <Input value={bankTransferRef} onChange={(e) => setBankTransferRef(e.target.value)} placeholder="Номер на превод" className="h-8 font-mono" maxLength={200} />
+            </div>
+          )}
+          {refund.affects_invoiced_supply === false && (
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Причина за пропуск на кредитно известие</label>
+              <Input value={skipReason} onChange={(e) => setSkipReason(e.target.value)} placeholder="Защо не се създава КИ" className="h-8" maxLength={500} />
+            </div>
+          )}
           {error && <p className="text-xs text-red-700">{error}</p>}
           <div className="flex items-center gap-2">
             <Button size="sm" disabled={saving} onClick={async () => {
@@ -2787,7 +3472,8 @@ function RefundRow({
               try {
                 await updateRefundAnnotation(refund.id, {
                   reason,
-                  creditNoteRef: creditNote,
+                  bankTransferRef: refund.method === "bank_transfer" ? bankTransferRef : undefined,
+                  creditNoteSkipReason: refund.affects_invoiced_supply === false ? skipReason : undefined,
                 })
                 setEditing(false)
                 await onSaved()
@@ -2801,7 +3487,8 @@ function RefundRow({
             </Button>
             <Button size="sm" variant="outline" disabled={saving} onClick={() => {
               setReason(refund.reason ?? "")
-              setCreditNote(refund.credit_note_ref ?? "")
+              setBankTransferRef(refund.bank_transfer_ref ?? "")
+              setSkipReason(refund.credit_note_skip_reason ?? "")
               setEditing(false)
               setError("")
             }}>
@@ -2810,6 +3497,200 @@ function RefundRow({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// One row in the Документи section. Renders a type='invoice' or
+// type='credit_note' row with status badges, the Microinvest number input
+// (if pending), and the "mark as sent" toggle. For credit notes, also shows
+// the linked refund summary, the original фактура it references, and a
+// due-date alert (5 days from refund per ЗДДС Чл. 113 ал. 4).
+function InvoiceRow({
+  invoice,
+  order,
+  onChanged,
+}: {
+  invoice: Invoice
+  order: OrderDetail
+  onChanged: () => Promise<void> | void
+}) {
+  const [number, setNumber] = useState("")
+  const [date, setDate] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  const isInvoice = invoice.type === "invoice"
+  const linkedRefund = isInvoice
+    ? null
+    : order.refunds.find((r) => r.id === invoice.refund_id)
+  const referencedInvoice = isInvoice
+    ? null
+    : order.invoices.find((i) => i.id === invoice.references_invoice_id)
+
+  const dueAlert = (() => {
+    if (invoice.invoice_number) return null
+    if (!invoice.due_at) return null
+    const due = new Date(invoice.due_at)
+    const now = new Date()
+    const daysLeft = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    const dueLabel = due.toLocaleDateString("bg-BG")
+    if (daysLeft <= 0) {
+      return { tone: "error" as const, text: `Срокът за издаване е изтекъл (${dueLabel})` }
+    }
+    if (daysLeft <= 2) {
+      return { tone: "warn" as const, text: `Остават ${daysLeft} ${daysLeft === 1 ? "ден" : "дни"} (до ${dueLabel})` }
+    }
+    return { tone: "info" as const, text: `Срок: до ${dueLabel} (${daysLeft} дни)` }
+  })()
+
+  const statusBadge = invoice.invoice_number
+    ? invoice.sent_at
+      ? { label: "изпратен", className: "bg-green-100 text-green-800" }
+      : { label: "издаден", className: "bg-blue-100 text-blue-800" }
+    : { label: "чака номер", className: "bg-amber-100 text-amber-800" }
+
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="font-medium">
+              {isInvoice ? "Фактура" : "Кредитно известие"}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusBadge.className}`}>
+              {statusBadge.label}
+            </span>
+          </div>
+          {!isInvoice && linkedRefund && (
+            <div className="text-xs text-muted-foreground">
+              ↳ за възстановяване от{" "}
+              {new Date(linkedRefund.refunded_at).toLocaleDateString("bg-BG")}{" "}
+              ({formatPrice(linkedRefund.amount_cents)})
+            </div>
+          )}
+          {!isInvoice && referencedInvoice?.invoice_number && (
+            <div className="text-xs text-muted-foreground">
+              ↳ към Фактура #{referencedInvoice.invoice_number}
+            </div>
+          )}
+          {isInvoice && (
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              {invoice.invoice_type && (
+                <div>
+                  <span>Тип:</span>{" "}
+                  {invoice.invoice_type === "company" ? "Юридическо лице" : "Физическо лице"}
+                </div>
+              )}
+              {invoice.company_name && <div>Фирма: {invoice.company_name}</div>}
+              {invoice.eik && <div>ЕИК: {invoice.eik}</div>}
+              {invoice.vat_number && <div>ДДС номер: {invoice.vat_number}</div>}
+              {invoice.mol && <div>МОЛ: {invoice.mol}</div>}
+              {invoice.address && <div>Адрес: {invoice.address}</div>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {dueAlert && (
+        <div className={`mt-2 rounded-md px-3 py-2 text-xs font-medium ${
+          dueAlert.tone === "error" ? "border border-red-300 bg-red-50 text-red-900"
+          : dueAlert.tone === "warn" ? "border border-amber-300 bg-amber-50 text-amber-900"
+          : "border border-border bg-secondary text-foreground"
+        }`}>
+          {dueAlert.text}
+        </div>
+      )}
+
+      {invoice.invoice_number ? (
+        <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+          <div>
+            <span>Номер:</span>{" "}
+            <span className="font-mono text-foreground">#{invoice.invoice_number}</span>
+          </div>
+          {invoice.invoice_date && (
+            <div>
+              <span>Дата:</span>{" "}
+              {new Date(invoice.invoice_date).toLocaleDateString("bg-BG")}
+            </div>
+          )}
+          {invoice.sent_at ? (
+            <div>
+              <span>Изпратен на клиента на:</span>{" "}
+              {new Date(invoice.sent_at).toLocaleDateString("bg-BG", {
+                day: "2-digit", month: "2-digit", year: "numeric",
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-1"
+              disabled={saving}
+              onClick={async () => {
+                setError("")
+                setSaving(true)
+                try {
+                  await markInvoiceSent(invoice.id)
+                  await onChanged()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Грешка")
+                } finally {
+                  setSaving(false)
+                }
+              }}
+            >
+              Маркирай като изпратен на клиента
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2 text-xs">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex-1 min-w-[160px]">
+              <label className="mb-1 block text-muted-foreground">Номер от Microinvest</label>
+              <Input
+                value={number}
+                onChange={(e) => setNumber(e.target.value)}
+                placeholder={isInvoice ? "напр. F-2026-0042" : "напр. KI-2026-0007"}
+                className="h-8 font-mono"
+                maxLength={50}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-muted-foreground">Дата</label>
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="h-8 w-40"
+              />
+            </div>
+            <Button
+              size="sm"
+              disabled={saving || !number.trim()}
+              onClick={async () => {
+                setError("")
+                setSaving(true)
+                try {
+                  await setInvoiceNumber(invoice.id, number.trim(), date || undefined)
+                  setNumber("")
+                  setDate("")
+                  await onChanged()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Грешка")
+                } finally {
+                  setSaving(false)
+                }
+              }}
+            >
+              {saving ? "Записване..." : "Запиши"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
     </div>
   )
 }

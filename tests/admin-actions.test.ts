@@ -85,6 +85,9 @@ vi.mock("@/lib/email-sender", () => ({
   sendOrderConfirmationEmail: (...args: unknown[]) => mockSendOrderConfirmationEmail(...args),
   sendDeliveryEmail: (...args: unknown[]) => mockSendDeliveryEmail(...args),
   notifyAdminNewOrder: vi.fn(() => Promise.resolve()),
+  sendWithdrawalReceivedEmail: vi.fn(() => Promise.resolve()),
+  sendWithdrawalApprovedEmail: vi.fn(() => Promise.resolve()),
+  sendWithdrawalRejectedEmail: vi.fn(() => Promise.resolve()),
 }))
 
 // Mock next/navigation — redirect throws like it does in Next.js
@@ -190,13 +193,24 @@ describe("admin actions", () => {
     })
 
     it("returns orders from database", async () => {
-      const fakeOrders = [{ id: "order-1" }, { id: "order-2" }]
+      // getOrders now joins invoices(type, invoice_number, invoice_date) and
+      // surfaces them as `invoice` on each summary row.
+      const fakeOrders = [
+        { id: "order-1", invoices: [] },
+        { id: "order-2", invoices: [{ type: "invoice", invoice_number: "F-1", invoice_date: "2026-04-01" }] },
+      ]
       mockSupabase.range.mockReturnValue(mockThenableResult(fakeOrders, null, 2))
 
       const { getOrders } = await import("@/app/actions/admin")
       const result = await getOrders()
 
-      expect(result).toEqual({ orders: fakeOrders, total: 2 })
+      expect(result.total).toBe(2)
+      expect(result.orders).toHaveLength(2)
+      expect(result.orders[0]).toEqual({ id: "order-1", invoice: null })
+      expect(result.orders[1]).toEqual({
+        id: "order-2",
+        invoice: { invoice_number: "F-1", invoice_date: "2026-04-01" },
+      })
       expect(mockSupabase.from).toHaveBeenCalledWith("orders")
     })
 
@@ -258,22 +272,32 @@ describe("admin actions", () => {
     })
 
     it("returns order detail with empty inventoryReturns + auditEvents for valid UUID", async () => {
-      // getOrder fans out three parallel queries: the orders JOIN (call 1),
-      // an inventory_log thenable for linked returns (call 2), and an
-      // order_audit_events thenable for timeline events (call 3). Wire all.
+      // getOrder fans out five parallel queries:
+      //   1. orders JOIN (uses .single)
+      //   2. inventory_log returns (thenable)
+      //   3. order_audit_events (thenable)
+      //   4. invoices for this order (thenable)
+      //   5. withdrawals for this order (thenable)
       const fakeOrder = { id: validUUID, status: "pending" }
       mockSupabase.single.mockResolvedValue({ data: fakeOrder, error: null })
       let callIndex = 0
       mockSupabase.from = vi.fn(() => {
         callIndex += 1
-        if (callIndex === 2 || callIndex === 3) return mockThenableResult([], null) as never
+        if (callIndex >= 2) return mockThenableResult([], null) as never
         return mockSupabase as never
       })
 
       const { getOrder } = await import("@/app/actions/admin")
       const result = await getOrder(validUUID)
 
-      expect(result).toEqual({ ...fakeOrder, inventoryReturns: [], auditEvents: [] })
+      expect(result).toEqual({
+        ...fakeOrder,
+        invoice: null,
+        invoices: [],
+        withdrawals: [],
+        inventoryReturns: [],
+        auditEvents: [],
+      })
     })
 
     it("throws when order not found", async () => {
@@ -548,13 +572,37 @@ describe("admin actions", () => {
     })
 
     it("returns paginated invoices", async () => {
-      const fakeInvoices = [{ id: "inv-1", invoice_number: "0000000001" }]
-      mockSupabase.range.mockReturnValue(mockThenableResult(fakeInvoices, null, 1))
+      // Now returns rows from invoices joined with orders for customer info.
+      // mapInvoiceRowToSummary flattens the join structure.
+      const fakeRows = [
+        {
+          id: "inv-1",
+          order_id: "order-1",
+          type: "invoice",
+          invoice_number: "F-2026-0001",
+          invoice_date: "2026-04-01",
+          due_at: null,
+          invoice_type: "individual",
+          company_name: null,
+          eik: null,
+          orders: { first_name: "Иван", last_name: "Петров", email: "i@example.com", total_amount: 5000 },
+        },
+      ]
+      mockSupabase.range.mockReturnValue(mockThenableResult(fakeRows, null, 1))
 
       const { getInvoices } = await import("@/app/actions/admin")
       const result = await getInvoices()
 
-      expect(result).toEqual({ invoices: fakeInvoices, total: 1 })
+      expect(result.total).toBe(1)
+      expect(result.invoices).toHaveLength(1)
+      expect(result.invoices[0]).toMatchObject({
+        id: "inv-1",
+        order_id: "order-1",
+        type: "invoice",
+        invoice_number: "F-2026-0001",
+        customer_first_name: "Иван",
+        customer_email: "i@example.com",
+      })
     })
 
     it("throws on database error", async () => {
@@ -659,13 +707,14 @@ describe("admin actions", () => {
     })
 
     it("returns all orders in a single batch", async () => {
-      const fakeOrders = Array.from({ length: 5 }, (_, i) => ({ id: `order-${i}` }))
+      const fakeOrders = Array.from({ length: 5 }, (_, i) => ({ id: `order-${i}`, invoices: [] }))
       mockSupabase.range.mockReturnValue(mockThenableResult(fakeOrders))
 
       const { getAllOrders } = await import("@/app/actions/admin")
       const result = await getAllOrders()
 
-      expect(result).toEqual(fakeOrders)
+      expect(result).toHaveLength(5)
+      expect(result[0]).toEqual({ id: "order-0", invoice: null })
     })
 
     it("paginates through multiple batches", async () => {
@@ -702,13 +751,27 @@ describe("admin actions", () => {
     })
 
     it("returns all invoices in a single batch", async () => {
-      const fakeInvoices = [{ id: "inv-1", invoice_number: "0000000001" }]
-      mockSupabase.range.mockReturnValue(mockThenableResult(fakeInvoices))
+      const fakeRows = [
+        {
+          id: "inv-1",
+          order_id: "order-1",
+          type: "invoice",
+          invoice_number: "F-1",
+          invoice_date: "2026-04-01",
+          due_at: null,
+          invoice_type: "individual",
+          company_name: null,
+          eik: null,
+          orders: { first_name: "X", last_name: "Y", email: "z@e.com", total_amount: 100 },
+        },
+      ]
+      mockSupabase.range.mockReturnValue(mockThenableResult(fakeRows))
 
       const { getAllInvoices } = await import("@/app/actions/admin")
       const result = await getAllInvoices()
 
-      expect(result).toEqual(fakeInvoices)
+      expect(result).toHaveLength(1)
+      expect(result[0]).toMatchObject({ id: "inv-1", type: "invoice", invoice_number: "F-1" })
     })
 
     it("throws on database error", async () => {
@@ -797,13 +860,8 @@ describe("admin actions", () => {
     })
 
     it("creates sale successfully", async () => {
-      // Mock getLowestPrice30Days chain (history + pastSales)
-      mockSupabase.limit = vi.fn()
-        .mockReturnValueOnce(mockThenableResult([]))  // price history
-        .mockReturnValueOnce(mockThenableResult([]))  // past sales
-      // Mock deactivate existing sale
+      mockSupabase.limit = vi.fn(() => mockThenableResult([]))
       mockSupabase.update = vi.fn(() => mockThenableResult(null))
-      // Mock insert price history + insert sale
       mockSupabase.insert = vi.fn(() => mockThenableResult(null))
 
       const { createSale } = await import("@/app/actions/admin")
@@ -967,19 +1025,21 @@ describe("admin actions", () => {
   })
 
   describe("markInvoiceSent", () => {
-    const validOrderId = validUUID
+    // markInvoiceSent now takes the invoices.id (not orders.id) and works
+    // for both type='invoice' and type='credit_note' rows.
+    const validInvoiceId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { markInvoiceSent } = await import("@/app/actions/admin")
 
-      await expect(markInvoiceSent(validOrderId)).rejects.toThrow("Unauthorized")
+      await expect(markInvoiceSent(validInvoiceId)).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
       const { markInvoiceSent } = await import("@/app/actions/admin")
 
-      await expect(markInvoiceSent("bad-id")).rejects.toThrow("Invalid order ID")
+      await expect(markInvoiceSent("bad-id")).rejects.toThrow("Invalid invoice ID")
     })
 
     it("marks invoice as sent successfully", async () => {
@@ -989,21 +1049,21 @@ describe("admin actions", () => {
         is: vi.fn(() => updateChain),
         select: vi.fn(() => updateChain),
         then(resolve: (v: unknown) => void) {
-          resolve({ data: [{ id: validOrderId }], error: null })
+          resolve({ data: [{ id: validInvoiceId }], error: null })
         },
       }
       mockSupabase.update = vi.fn(() => updateChain)
 
       const { markInvoiceSent } = await import("@/app/actions/admin")
-      const result = await markInvoiceSent(validOrderId)
+      const result = await markInvoiceSent(validInvoiceId)
 
       expect(result).toEqual({ success: true })
       expect(mockSupabase.update).toHaveBeenCalledWith(
-        expect.objectContaining({ invoice_sent_at: expect.any(String) })
+        expect.objectContaining({ sent_at: expect.any(String) })
       )
     })
 
-    it("throws when order has no invoice or already sent", async () => {
+    it("throws when invoice has no number or already sent", async () => {
       const updateChain = {
         eq: vi.fn(() => updateChain),
         not: vi.fn(() => updateChain),
@@ -1016,7 +1076,7 @@ describe("admin actions", () => {
       mockSupabase.update = vi.fn(() => updateChain)
 
       const { markInvoiceSent } = await import("@/app/actions/admin")
-      await expect(markInvoiceSent(validOrderId)).rejects.toThrow("няма фактура или вече е отбелязана")
+      await expect(markInvoiceSent(validInvoiceId)).rejects.toThrow("няма номер или вече е отбелязан")
     })
   })
 
@@ -2429,7 +2489,26 @@ describe("admin actions", () => {
       ).rejects.toThrow("Бележката е задължителна")
     })
 
-    it("rejects batchId for non-return_in types", async () => {
+    it("rejects batchId for non-return_in/wholesale_out types", async () => {
+      // damaged accepts batchId only via reference_type='return' (separate
+      // path); other internal damage doesn't take a batch_id either.
+      const { recordStockMovement } = await import("@/app/actions/admin")
+
+      await expect(
+        recordStockMovement({
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+          sku: "EGO-DC-12",
+          type: "sample_out",
+          quantity: 1,
+          referenceType: "internal",
+          referenceId: "SAMPLE-2026-001",
+          notes: "Влогер sample",
+          batchId: "BATCH-001",
+        }),
+      ).rejects.toThrow("Номер на партида е допустим само за връщане или оптова продажба")
+    })
+
+    it("rejects wholesale_out without batchId (EU 931/2011)", async () => {
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       await expect(
@@ -2437,15 +2516,16 @@ describe("admin actions", () => {
           idempotencyKey: TEST_IDEMPOTENCY_KEY,
           sku: "EGO-DC-12",
           type: "wholesale_out",
-          quantity: 5,
+          quantity: 10,
           referenceType: "invoice",
-          referenceId: "INV-001",
-          batchId: "BATCH-001",
+          referenceId: "INV-2026-001",
+          notes: "B2B delivery to gym",
+          // batchId missing — should reject
         }),
-      ).rejects.toThrow("Номер на партида е допустим само за връщане")
+      ).rejects.toThrow("задължителен за оптови продажби")
     })
 
-    it("records wholesale_out successfully", async () => {
+    it("records wholesale_out successfully with batchId", async () => {
       const { recordStockMovement } = await import("@/app/actions/admin")
 
       const result = await recordStockMovement({
@@ -2456,6 +2536,7 @@ describe("admin actions", () => {
         referenceType: "invoice",
         referenceId: "INV-2026-001",
         notes: "B2B delivery to gym",
+        batchId: "BATCH-001",
       })
 
       expect(result).toEqual({ success: true })
@@ -2680,60 +2761,73 @@ describe("admin actions", () => {
     const validOrderId = validUUID
     const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
-    // recordRefund DB-call sequence:
-    //   1. order_refunds .eq(client_idempotency_key=…) — thenable array (idempotency check)
+    // recordRefund DB-call sequence (post invoices-table refactor):
+    //   1. refunds .eq(client_idempotency_key=…) — idempotency check
     //   2. orders .single() — order row
-    //   3. order_refunds .eq(order_id=…) — thenable array (existing-sum query)
-    //   If inventoryAdjustments present:
-    //     4. order_items .eq(order_id=…) — thenable array
-    //     5. inventory_log .eq(order_id=…).in(type, …) — thenable array (prior returns)
-    //   N.  order_refunds insert → .single() — inserted row
-    //   N+. inventory_log insert (one per adjustment) — no return value read
+    //   3. invoices .maybeSingle() — invoice lookup (drives credit-note guard)
+    //   4. refunds .eq(order_id=…) — existing-sum query
+    //   5. refunds .insert().single() — inserted refund row
+    //   When affects_invoiced_supply=true (default), autoCreateCreditNoteRow runs:
+    //   6. invoices .maybeSingle() — re-fetch invoice
+    //   7. invoices .insert().single() — credit_note row (only when invoice has number)
     function setupRecordRefundMocks(options: {
       order?: Record<string, unknown>
+      invoiceLookup?: { id: string; invoice_number: string | null } | null
       existingByIdempotencyKey?: Array<{ id: string; order_id: string }>
       existingRefunds?: Array<{ amount_cents: number }>
       insertResult?: { data: { id: string } | null; error: unknown }
-      orderItems?: Array<{ sku: string; quantity: number }>
-      priorReturns?: Array<{ sku: string; quantity: number; type: string }>
-      includeAdjustmentQueries?: boolean
+      expectCreditNoteInsert?: boolean
+      creditNoteInsertResult?: { data: { id: string } | null; error: unknown }
     } = {}) {
       const defaultOrder = {
         id: validOrderId,
         paid_at: "2026-04-01T00:00:00Z",
         delivered_at: null,
         total_amount: 5000,
-        needs_invoice: false,
-        invoice_number: null,
         stripe_payment_intent_id: "pi_test",
       }
+      const invoiceLookup = options.invoiceLookup ?? null
 
-      // .single() queue — called for: orders fetch, then order_refunds insert.
+      // .single() queue — orders fetch, then refunds insert, then
+      // (optionally) invoices insert when expectCreditNoteInsert.
       mockSupabase.single
         .mockResolvedValueOnce({ data: options.order ?? defaultOrder, error: null })
         .mockResolvedValueOnce({
           data: options.insertResult?.data ?? { id: "refund-id-xyz" },
           error: options.insertResult?.error ?? null,
         })
+      if (options.expectCreditNoteInsert) {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: options.creditNoteInsertResult?.data ?? { id: "cn-id-xyz" },
+          error: options.creditNoteInsertResult?.error ?? null,
+        })
+      }
 
-      // .from() queue — consumed in call order. Non-thenable calls return
-      // mockSupabase so the chain can still call .single(), .insert(), etc.
+      // .maybeSingle() queue — first invoice lookup in recordRefund, second
+      // in autoCreateCreditNoteRow. Both return the same shape; the second
+      // call is only made when affects_invoiced_supply=true (default).
+      mockSupabase.maybeSingle = vi.fn()
+        .mockResolvedValueOnce({ data: invoiceLookup, error: null })
+        .mockResolvedValueOnce({ data: invoiceLookup, error: null }) as any
+
       const calls: unknown[] = [
         // 1. idempotency check
         mockThenableResult(options.existingByIdempotencyKey ?? [], null),
-        // 2. orders fetch (uses mockSupabase.single)
+        // 2. orders fetch
         mockSupabase,
-        // 3. existing refunds sum
+        // 3. invoices lookup (recordRefund)
+        mockSupabase,
+        // 4. existing refunds sum
         mockThenableResult(options.existingRefunds ?? [], null),
+        // 5. refunds insert
+        mockSupabase,
+        // 6. invoices lookup (autoCreateCreditNoteRow) — runs when affects=true
+        mockSupabase,
       ]
-      if (options.includeAdjustmentQueries) {
-        // 4. order_items fetch
-        calls.push(mockThenableResult(options.orderItems ?? [], null))
-        // 5. inventory_log prior returns
-        calls.push(mockThenableResult(options.priorReturns ?? [], null))
+      if (options.expectCreditNoteInsert) {
+        // 7. invoices insert (credit_note)
+        calls.push(mockSupabase)
       }
-      // N. order_refunds insert (uses mockSupabase.single)
-      calls.push(mockSupabase)
 
       let idx = 0
       mockSupabase.from = vi.fn(() => {
@@ -2752,6 +2846,7 @@ describe("admin actions", () => {
           refundAmount: 1000,
           refundReason: "Customer withdrawal",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Unauthorized")
@@ -2764,6 +2859,7 @@ describe("admin actions", () => {
           refundAmount: 1000,
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Невалиден формат на поръчка")
@@ -2788,6 +2884,7 @@ describe("admin actions", () => {
           refundAmount: 0,
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("положително цяло число")
@@ -2800,6 +2897,7 @@ describe("admin actions", () => {
           refundAmount: 1000,
           refundReason: "  ",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("Причината за възстановяване е задължителна")
@@ -2866,6 +2964,7 @@ describe("admin actions", () => {
           refundAmount: 1000,
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("неплатена поръчка")
@@ -2900,6 +2999,7 @@ describe("admin actions", () => {
           refundAmount: 6000,
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("остатъка")
@@ -2917,38 +3017,36 @@ describe("admin actions", () => {
           refundAmount: 1000, // 3000 + 1500 + 1000 = 5500 > 5000
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("остатъка")
     })
 
-    it("requires creditNoteRef when invoice was issued", async () => {
+    it("blocks refund when invoice exists but invoice_number not yet set", async () => {
+      // Guard from ЗДДС Чл. 115: refund that would require кредитно известие
+      // can't proceed if the original фактура hasn't been issued in Microinvest.
       setupRecordRefundMocks({
         order: {
           id: validOrderId,
           paid_at: "2026-04-01T00:00:00Z",
           total_amount: 5000,
-          needs_invoice: true,
-          invoice_number: "INV-001",
           stripe_payment_intent_id: "pi_test",
         },
+        invoiceLookup: { id: "inv-id-xyz", invoice_number: null },
         existingRefunds: [],
       })
-      const { stripe } = await import("@/lib/stripe")
-      vi.mocked(stripe.refunds.retrieve).mockResolvedValueOnce(
-        mockStripeRefund({ id: "re_abc123", payment_intent: "pi_test", amount: 5000 }) as never,
-      )
 
       const { recordRefund } = await import("@/app/actions/admin")
       await expect(
         recordRefund(validOrderId, {
           refundAmount: 5000,
           refundReason: "Customer withdrawal",
-          refundMethod: "stripe",
-          stripeRefundId: "re_abc123",
+          refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
-      ).rejects.toThrow("кредитно известие")
+      ).rejects.toThrow("Първо въведете номер и дата на фактурата")
     })
 
     it("records bank_transfer refund successfully with client key", async () => {
@@ -2961,10 +3059,11 @@ describe("admin actions", () => {
         refundAmount: 5000,
         refundReason: "14-day withdrawal",
         refundMethod: "bank_transfer",
+        bankTransferRef: "BT-2026-0001",
         clientIdempotencyKey: validClientKey,
       })
 
-      expect(result).toEqual({ success: true, refundId: "refund-id-xyz" })
+      expect(result).toEqual({ success: true, refundId: "refund-id-xyz", creditNoteId: null })
       expect(insertSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           order_id: validOrderId,
@@ -3007,9 +3106,19 @@ describe("admin actions", () => {
     })
 
     it("idempotent retry returns existing refund without re-inserting", async () => {
-      setupRecordRefundMocks({
-        existingByIdempotencyKey: [{ id: "already-saved-id", order_id: validOrderId }],
-      })
+      // Fast-path idempotency: when the client_idempotency_key matches an
+      // existing refund, we return its ID + look up any linked credit_note.
+      mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any
+      const calls: unknown[] = [
+        mockThenableResult([{ id: "already-saved-id", order_id: validOrderId }], null), // 1. idempotency hit
+        mockSupabase,  // 2. credit_note lookup (.maybeSingle)
+      ]
+      let idx = 0
+      mockSupabase.from = vi.fn(() => {
+        const ret = calls[idx] ?? mockSupabase
+        idx += 1
+        return ret as never
+      }) as any
       const insertSpy = vi.fn(() => mockSupabase)
       mockSupabase.insert = insertSpy
 
@@ -3018,14 +3127,16 @@ describe("admin actions", () => {
         refundAmount: 5000,
         refundReason: "14-day withdrawal",
         refundMethod: "bank_transfer",
+        bankTransferRef: "BT-2026-0001",
         clientIdempotencyKey: validClientKey,
       })
 
       expect(result).toEqual({
         success: true,
         refundId: "already-saved-id",
+        creditNoteId: null,
       })
-      // No insert on order_refunds since row already exists
+      // No insert on refunds since row already exists
       expect(insertSpy).not.toHaveBeenCalled()
     })
 
@@ -3040,6 +3151,7 @@ describe("admin actions", () => {
           refundAmount: 1000,
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("друга поръчка")
@@ -3054,8 +3166,6 @@ describe("admin actions", () => {
         paid_at: "2026-04-01T00:00:00Z",
         delivered_at: null,
         total_amount: 5000,
-        needs_invoice: false,
-        invoice_number: null,
         stripe_payment_intent_id: "pi_test",
       }
       mockSupabase.single.mockResolvedValueOnce({ data: defaultOrder, error: null })
@@ -3063,12 +3173,14 @@ describe("admin actions", () => {
         data: null,
         error: { code: "23505", message: "duplicate key on client_idempotency_key" },
       })
+      mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any
       const calls: unknown[] = [
         mockThenableResult([], null),                       // 1. idempotency check (empty)
         mockSupabase,                                        // 2. orders fetch
-        mockThenableResult([], null),                        // 3. sum
-        mockSupabase,                                        // 4. insert (fails 23505)
-        mockThenableResult(recoveredRows, null),             // 5. recovery fetch
+        mockSupabase,                                        // 3. invoice lookup (.maybeSingle)
+        mockThenableResult([], null),                        // 4. sum
+        mockSupabase,                                        // 5. insert (fails 23505)
+        mockThenableResult(recoveredRows, null),             // 6. recovery fetch
       ]
       let idx = 0
       mockSupabase.from = vi.fn(() => {
@@ -3082,6 +3194,7 @@ describe("admin actions", () => {
         refundAmount: 1000,
         refundReason: "Test",
         refundMethod: "bank_transfer",
+        bankTransferRef: "BT-2026-0001",
         clientIdempotencyKey: validClientKey,
       })
       expect(result.refundId).toBe("recovered-id")
@@ -3096,8 +3209,6 @@ describe("admin actions", () => {
         paid_at: "2026-04-01T00:00:00Z",
         delivered_at: null,
         total_amount: 5000,
-        needs_invoice: false,
-        invoice_number: null,
         stripe_payment_intent_id: "pi_test",
       }
       mockSupabase.single.mockResolvedValueOnce({ data: defaultOrder, error: null })
@@ -3105,12 +3216,14 @@ describe("admin actions", () => {
         data: null,
         error: { code: "23505", message: "duplicate key on stripe_refund_id" },
       })
+      mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any
       const calls: unknown[] = [
-        mockThenableResult([], null),
-        mockSupabase,
-        mockThenableResult([], null),
-        mockSupabase,
-        mockThenableResult([], null),  // recovery finds nothing
+        mockThenableResult([], null),                  // 1. idempotency
+        mockSupabase,                                   // 2. orders fetch
+        mockSupabase,                                   // 3. invoice lookup
+        mockThenableResult([], null),                   // 4. sum
+        mockSupabase,                                   // 5. insert (fails)
+        mockThenableResult([], null),                   // 6. recovery (empty)
       ]
       let idx = 0
       mockSupabase.from = vi.fn(() => {
@@ -3258,6 +3371,7 @@ describe("admin actions", () => {
         refundAmount: 5000,
         refundReason: "COD refund",
         refundMethod: "bank_transfer",
+        bankTransferRef: "BT-2026-0001",
         clientIdempotencyKey: validClientKey,
       })
 
@@ -3273,10 +3387,164 @@ describe("admin actions", () => {
           refundAmount: 1000,
           refundReason: "Test",
           refundMethod: "bank_transfer",
+          bankTransferRef: "BT-2026-0001",
           refundedAt: "2099-01-01",
           clientIdempotencyKey: validClientKey,
         }),
       ).rejects.toThrow("не може да е в бъдещето")
+    })
+
+    // ── refund_items input validation ────────────────────────────────────
+    describe("refund_items", () => {
+      it("rejects empty items array", async () => {
+        const { recordRefund } = await import("@/app/actions/admin")
+        await expect(
+          recordRefund(validOrderId, {
+            refundAmount: 1000,
+            refundReason: "Test",
+            refundMethod: "bank_transfer",
+            bankTransferRef: "BT-1",
+            clientIdempotencyKey: validClientKey,
+            items: [],
+          }),
+        ).rejects.toThrow("празен")
+      })
+
+      it("rejects duplicate orderItemId in input batch", async () => {
+        const { recordRefund } = await import("@/app/actions/admin")
+        await expect(
+          recordRefund(validOrderId, {
+            refundAmount: 1000,
+            refundReason: "Test",
+            refundMethod: "bank_transfer",
+            bankTransferRef: "BT-1",
+            clientIdempotencyKey: validClientKey,
+            items: [
+              { orderItemId: 1, quantity: 1 },
+              { orderItemId: 1, quantity: 1 },
+            ],
+          }),
+        ).rejects.toThrow("повече от веднъж")
+      })
+
+      it("rejects non-positive quantity", async () => {
+        const { recordRefund } = await import("@/app/actions/admin")
+        await expect(
+          recordRefund(validOrderId, {
+            refundAmount: 1000,
+            refundReason: "Test",
+            refundMethod: "bank_transfer",
+            bankTransferRef: "BT-1",
+            clientIdempotencyKey: validClientKey,
+            items: [{ orderItemId: 1, quantity: 0 }],
+          }),
+        ).rejects.toThrow("положително")
+      })
+
+      it("rejects items whose order_item_id is not on this order", async () => {
+        // setupRecordRefundMocks gives the basic chain. We inject empty
+        // order_items + empty existing refund_items so the lookup queries
+        // both succeed but the validation finds no matching line.
+        setupRecordRefundMocks({ existingRefunds: [] })
+        const calls: unknown[] = [
+          mockThenableResult([], null),                           // 1. idempotency
+          mockSupabase,                                            // 2. orders fetch
+          mockSupabase,                                            // 3. invoices lookup
+          mockThenableResult([], null),                            // 4. existing refunds sum
+          mockThenableResult([], null),                            // 5. order_items fetch (empty — orderItemId 999 won't match)
+          mockThenableResult([], null),                            // 6. existing refund_items
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { recordRefund } = await import("@/app/actions/admin")
+        await expect(
+          recordRefund(validOrderId, {
+            refundAmount: 1000,
+            refundReason: "Test",
+            refundMethod: "bank_transfer",
+            bankTransferRef: "BT-1",
+            clientIdempotencyKey: validClientKey,
+            items: [{ orderItemId: 999, quantity: 1, amountCents: 500 }],
+          }),
+        ).rejects.toThrow("не принадлежи")
+      })
+
+      it("rejects when allocated total exceeds refund amount", async () => {
+        const calls: unknown[] = [
+          mockThenableResult([], null),                            // 1. idempotency
+          mockSupabase,                                            // 2. orders fetch
+          mockSupabase,                                            // 3. invoices lookup
+          mockThenableResult([], null),                            // 4. existing refunds sum
+          mockThenableResult([{ id: 1, quantity: 5, unit_price_cents: 1000 }], null), // 5. order_items
+          mockThenableResult([], null),                            // 6. existing refund_items
+        ]
+        mockSupabase.single
+          .mockResolvedValueOnce({
+            data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", delivered_at: null, total_amount: 5000, stripe_payment_intent_id: "pi_test" },
+            error: null,
+          })
+        mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { recordRefund } = await import("@/app/actions/admin")
+        await expect(
+          recordRefund(validOrderId, {
+            refundAmount: 1000, // 10.00 lv refund
+            refundReason: "Test",
+            refundMethod: "bank_transfer",
+            bankTransferRef: "BT-1",
+            clientIdempotencyKey: validClientKey,
+            // 2 × 1000 = 2000 cents allocation > 1000 refund amount
+            items: [{ orderItemId: 1, quantity: 2, amountCents: 2000 }],
+          }),
+        ).rejects.toThrow("надвишава общата сума")
+      })
+
+      it("rejects quantity exceeding ordered quantity (pre-flight)", async () => {
+        const calls: unknown[] = [
+          mockThenableResult([], null),                            // 1. idempotency
+          mockSupabase,                                            // 2. orders fetch
+          mockSupabase,                                            // 3. invoices lookup
+          mockThenableResult([], null),                            // 4. existing refunds sum
+          mockThenableResult([{ id: 1, quantity: 2, unit_price_cents: 1000 }], null),
+          // already refunded 2/2; next refund of 1 unit overflows
+          mockThenableResult([{ order_item_id: 1, quantity: 2 }], null),
+        ]
+        mockSupabase.single
+          .mockResolvedValueOnce({
+            data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", delivered_at: null, total_amount: 5000, stripe_payment_intent_id: "pi_test" },
+            error: null,
+          })
+        mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { recordRefund } = await import("@/app/actions/admin")
+        await expect(
+          recordRefund(validOrderId, {
+            refundAmount: 1000,
+            refundReason: "Test",
+            refundMethod: "bank_transfer",
+            bankTransferRef: "BT-1",
+            clientIdempotencyKey: validClientKey,
+            items: [{ orderItemId: 1, quantity: 1, amountCents: 1000 }],
+          }),
+        ).rejects.toThrow("надвишава поръчаните")
+      })
     })
   })
 
@@ -3327,17 +3595,17 @@ describe("admin actions", () => {
       const { updateRefundAnnotation } = await import("@/app/actions/admin")
       const result = await updateRefundAnnotation(validRefundId, {
         reason: "Customer exchanged for different flavor",
-        creditNoteRef: "CN-2026-0042",
+        bankTransferRef: "BT-2026-0042",
       })
 
       expect(result).toEqual({ success: true })
       expect(updateSpy).toHaveBeenCalledWith({
         reason: "Customer exchanged for different flavor",
-        credit_note_ref: "CN-2026-0042",
+        bank_transfer_ref: "BT-2026-0042",
       })
     })
 
-    it("clears creditNoteRef when given empty string", async () => {
+    it("clears bankTransferRef when given empty string", async () => {
       const updateSpy = vi.fn(() => ({
         eq: vi.fn(() => ({
           select: vi.fn(() => Promise.resolve({ data: [{ id: validRefundId }], error: null })),
@@ -3346,9 +3614,9 @@ describe("admin actions", () => {
       mockSupabase.update = updateSpy as any
 
       const { updateRefundAnnotation } = await import("@/app/actions/admin")
-      await updateRefundAnnotation(validRefundId, { creditNoteRef: "" })
+      await updateRefundAnnotation(validRefundId, { bankTransferRef: "" })
 
-      expect(updateSpy).toHaveBeenCalledWith({ credit_note_ref: null })
+      expect(updateSpy).toHaveBeenCalledWith({ bank_transfer_ref: null })
     })
   })
 
@@ -3778,6 +4046,371 @@ describe("admin actions", () => {
       setupChain([], { message: "connection reset" })
       const { getRecallCandidates } = await import("@/app/actions/admin")
       await expect(getRecallCandidates(validSku)).rejects.toThrow("Грешка при извличане")
+    })
+  })
+
+  // ─── Withdrawals (право на отказ) ─────────────────────────────────────────
+  describe("withdrawals", () => {
+    const validOrderId = validUUID
+    const validWithdrawalId = "11111111-1111-1111-1111-111111111111"
+
+    describe("createWithdrawal", () => {
+      it("rejects invalid order UUID", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal("bad-id", {
+            requestedVia: "email",
+            customerEmail: "x@x.com",
+          }),
+        ).rejects.toThrow("Невалиден формат на поръчка")
+      })
+
+      it("rejects invalid requestedVia", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, {
+            requestedVia: "fax" as never,
+            customerEmail: "x@x.com",
+          }),
+        ).rejects.toThrow("Невалиден канал на заявка")
+      })
+
+      it("rejects invalid customer email", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, {
+            requestedVia: "email",
+            customerEmail: "not-an-email",
+          }),
+        ).rejects.toThrow("Невалиден имейл адрес")
+      })
+
+      it("rejects request_text > 2000 chars", async () => {
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, {
+            requestedVia: "email",
+            customerEmail: "x@x.com",
+            customerRequestText: "a".repeat(2001),
+          }),
+        ).rejects.toThrow("твърде дълъг")
+      })
+
+      it("rejects creation on non-delivered orders (Чл. 50 only matures after delivery)", async () => {
+        for (const status of ["pending", "confirmed", "shipped", "cancelled", "expired"]) {
+          mockSupabase.single.mockResolvedValueOnce({
+            data: { id: validOrderId, delivered_at: null, status },
+            error: null,
+          })
+          const { createWithdrawal } = await import("@/app/actions/admin")
+          await expect(
+            createWithdrawal(validOrderId, {
+              requestedVia: "email",
+              customerEmail: "x@x.com",
+            }),
+          ).rejects.toThrow("Право на отказ важи след доставка")
+        }
+      })
+
+      it("creates a withdrawal and returns ref + id", async () => {
+        // .single() returns: order fetch, then withdrawal insert
+        mockSupabase.single
+          .mockResolvedValueOnce({
+            data: { id: validOrderId, delivered_at: "2026-04-20T00:00:00Z", status: "delivered" },
+            error: null,
+          })
+          .mockResolvedValueOnce({
+            data: { id: validWithdrawalId, withdrawal_ref: "WD-2026-0001" },
+            error: null,
+          })
+        // RPC for next_withdrawal_ref
+        mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: "WD-2026-0001", error: null })) as any
+
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        const result = await createWithdrawal(validOrderId, {
+          requestedVia: "email",
+          customerEmail: "x@x.com",
+          customerRequestText: "I changed my mind",
+        })
+
+        expect(result.success).toBe(true)
+        expect(result.withdrawalId).toBe(validWithdrawalId)
+        expect(result.withdrawalRef).toBe("WD-2026-0001")
+      })
+
+      it("translates 23505 to friendly 'open withdrawal exists' message", async () => {
+        mockSupabase.single
+          .mockResolvedValueOnce({
+            data: { id: validOrderId, delivered_at: null, status: "delivered" },
+            error: null,
+          })
+          .mockResolvedValueOnce({
+            data: null,
+            error: { code: "23505", message: "duplicate key on uq_open_withdrawal_per_order" },
+          })
+        mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: "WD-2026-0001", error: null })) as any
+
+        const { createWithdrawal } = await import("@/app/actions/admin")
+        await expect(
+          createWithdrawal(validOrderId, { requestedVia: "email", customerEmail: "x@x.com" }),
+        ).rejects.toThrow("вече има отворена заявка")
+      })
+    })
+
+    describe("approveWithdrawal", () => {
+      it("rejects invalid UUID", async () => {
+        const { approveWithdrawal } = await import("@/app/actions/admin")
+        await expect(approveWithdrawal("bad-id", { returnRequired: true })).rejects.toThrow(
+          "Невалиден формат",
+        )
+      })
+
+      it("approves a requested withdrawal", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: {
+            id: validWithdrawalId,
+            order_id: validOrderId,
+            customer_email: "x@x.com",
+            withdrawal_ref: "WD-2026-0001",
+            return_required: true,
+          },
+          error: null,
+        })
+
+        const { approveWithdrawal } = await import("@/app/actions/admin")
+        const result = await approveWithdrawal(validWithdrawalId, { returnRequired: true })
+        expect(result).toEqual({ success: true })
+      })
+    })
+
+    describe("rejectWithdrawal", () => {
+      it("requires non-empty reason", async () => {
+        const { rejectWithdrawal } = await import("@/app/actions/admin")
+        await expect(rejectWithdrawal(validWithdrawalId, "  ")).rejects.toThrow("задължителна")
+      })
+
+      it("rejects with reason", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: {
+            id: validWithdrawalId,
+            order_id: validOrderId,
+            customer_email: "x@x.com",
+            withdrawal_ref: "WD-2026-0001",
+          },
+          error: null,
+        })
+
+        const { rejectWithdrawal } = await import("@/app/actions/admin")
+        const result = await rejectWithdrawal(validWithdrawalId, "Customer outside 14-day window")
+        expect(result).toEqual({ success: true })
+      })
+    })
+
+    describe("markWithdrawalGoodsReceived", () => {
+      it("rejects invalid eligibility condition", async () => {
+        const { markWithdrawalGoodsReceived } = await import("@/app/actions/admin")
+        await expect(
+          markWithdrawalGoodsReceived(validWithdrawalId, {
+            eligibilityCondition: "bogus" as never,
+          }),
+        ).rejects.toThrow("Невалидно състояние")
+      })
+
+      it("flips status with valid condition", async () => {
+        const updateChain = {
+          eq: vi.fn(() => updateChain),
+          then(resolve: (v: unknown) => void) {
+            resolve({ data: null, error: null })
+          },
+        }
+        mockSupabase.update = vi.fn(() => updateChain) as any
+
+        const { markWithdrawalGoodsReceived } = await import("@/app/actions/admin")
+        const result = await markWithdrawalGoodsReceived(validWithdrawalId, {
+          eligibilityCondition: "sealed_sellable",
+          resolutionType: "refund",
+          returnTrackingNumber: "1Z999AA1234567890",
+          returnCourier: "Speedy",
+        })
+        expect(result).toEqual({ success: true })
+      })
+    })
+
+    describe("completeWithdrawalNoReturn", () => {
+      it("requires completion_note", async () => {
+        const { completeWithdrawalNoReturn } = await import("@/app/actions/admin")
+        await expect(
+          completeWithdrawalNoReturn(validWithdrawalId, {
+            resolutionType: "none",
+            completionNote: "  ",
+          }),
+        ).rejects.toThrow("задължителна")
+      })
+
+      it("accepts replacement resolution + note", async () => {
+        const updateChain = {
+          eq: vi.fn(() => updateChain),
+          then(resolve: (v: unknown) => void) {
+            resolve({ data: null, error: null })
+          },
+        }
+        mockSupabase.update = vi.fn(() => updateChain) as any
+
+        const { completeWithdrawalNoReturn } = await import("@/app/actions/admin")
+        const result = await completeWithdrawalNoReturn(validWithdrawalId, {
+          resolutionType: "replacement",
+          completionNote: "Goodwill replacement shipped on a fresh order",
+        })
+        expect(result).toEqual({ success: true })
+      })
+    })
+  })
+
+  // ─── Batch traceability ─────────────────────────────────────────────────
+  describe("batch traceability", () => {
+    const validBatchId = "11111111-1111-1111-1111-111111111111"
+    const validOrderId = validUUID
+
+    describe("recallBatch", () => {
+      it("rejects invalid UUID", async () => {
+        const { recallBatch } = await import("@/app/actions/admin")
+        await expect(
+          recallBatch("bad-id", "Контаминация в склада на доставчика"),
+        ).rejects.toThrow("Невалиден формат")
+      })
+
+      it("rejects reason shorter than 20 characters", async () => {
+        const { recallBatch } = await import("@/app/actions/admin")
+        await expect(
+          recallBatch(validBatchId, "къса"),
+        ).rejects.toThrow("поне 20 символа")
+      })
+
+      it("rejects reason longer than 1000 characters", async () => {
+        const { recallBatch } = await import("@/app/actions/admin")
+        await expect(
+          recallBatch(validBatchId, "x".repeat(1001)),
+        ).rejects.toThrow("твърде дълга")
+      })
+
+      it("recalls successfully with sufficient reason", async () => {
+        // Update returns one row; affected_orders RPC returns empty array.
+        const updateChain = {
+          eq: vi.fn(() => updateChain),
+          select: vi.fn(() => updateChain),
+          then(resolve: (v: unknown) => void) {
+            resolve({ data: [{ id: validBatchId }], error: null })
+          },
+        }
+        mockSupabase.update = vi.fn(() => updateChain) as any
+        mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: [], error: null })) as any
+
+        const { recallBatch } = await import("@/app/actions/admin")
+        const result = await recallBatch(
+          validBatchId,
+          "Съмнения за повишена влажност в склад на доставчика, потенциална контаминация",
+        )
+        expect(result.success).toBe(true)
+        expect(result.affectedOrdersCount).toBe(0)
+      })
+    })
+
+    describe("confirmShipmentBatches", () => {
+      it("rejects when order is not in confirmed state", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "delivered" },
+          error: null,
+        })
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 1 },
+          ]),
+        ).rejects.toThrow("потвърдени поръчки")
+      })
+
+      it("rejects when allocations don't sum to ordered quantity", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "confirmed" },
+          error: null,
+        })
+        const calls: unknown[] = [
+          mockSupabase, // 1. orders fetch (uses .single)
+          mockThenableResult([{ id: 1, sku: "EGO-MIX-12", quantity: 3 }], null), // 2. order_items
+          mockThenableResult([], null), // 3. existing allocations
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 2 },
+          ]),
+        ).rejects.toThrow("трябва да съвпадне с поръчаното")
+      })
+
+      it("rejects allocation against an inactive (recalled) batch", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "confirmed" },
+          error: null,
+        })
+        const calls: unknown[] = [
+          mockSupabase,
+          mockThenableResult([{ id: 1, sku: "EGO-MIX-12", quantity: 1 }], null),
+          mockThenableResult([], null),
+          mockThenableResult(
+            [{ id: validBatchId, sku: "EGO-MIX-12", status: "recalled", batch_number: "LOT-X" }],
+            null,
+          ),
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 1 },
+          ]),
+        ).rejects.toThrow("не е активна")
+      })
+
+      it("rejects allocation when batch SKU doesn't match item SKU", async () => {
+        mockSupabase.single.mockResolvedValueOnce({
+          data: { id: validOrderId, status: "confirmed" },
+          error: null,
+        })
+        const calls: unknown[] = [
+          mockSupabase,
+          mockThenableResult([{ id: 1, sku: "EGO-MIX-12", quantity: 1 }], null),
+          mockThenableResult([], null),
+          mockThenableResult(
+            [{ id: validBatchId, sku: "EGO-DC-12", status: "active", batch_number: "LOT-Y" }],
+            null,
+          ),
+        ]
+        let idx = 0
+        mockSupabase.from = vi.fn(() => {
+          const ret = calls[idx] ?? mockSupabase
+          idx += 1
+          return ret as never
+        }) as any
+
+        const { confirmShipmentBatches } = await import("@/app/actions/admin")
+        await expect(
+          confirmShipmentBatches(validOrderId, [
+            { orderItemId: 1, productBatchId: validBatchId, quantity: 1 },
+          ]),
+        ).rejects.toThrow("не съвпада със SKU на артикула")
+      })
     })
   })
 })

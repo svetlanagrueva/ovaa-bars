@@ -2,10 +2,14 @@
 
 ## Structure
 - `/admin/dashboard` — revenue stats, action items, recent orders
-- `/admin/orders` — paginated order list with filters (status, search, date, invoice)
-- `/admin/orders/[id]` — order detail with history timeline, invoice management, admin notes, actions
-- `/admin/invoices` — paginated invoice list with search, date filter, PDF download
-- `/admin/inventory` — stock level cards per SKU, add-batch dialog, movement log
+- `/admin/orders` — paginated order list with filters (status, search, date, invoice, payment)
+- `/admin/orders/[id]` — order detail with timeline, Документи card, Свързани заявки, admin notes, actions
+- `/admin/invoices` — paginated invoice list with search, date filter, CSV export
+- `/admin/inventory` — stock level cards per SKU, add-batch dialog, movement log with SKU filter, recall candidates by SKU
+- `/admin/batches` — Tier 1 batch traceability list with SKU + status filter, expiry warnings
+- `/admin/batches/[id]` — batch detail with affected-orders table, CSV export, recall workflow
+- `/admin/returns` — unified inbox of withdrawals + complaints (type filter)
+- `/admin/returns/[id]` — withdrawal detail with state-machine actions
 - `/admin/sales` — product promotions management (EU Omnibus compliant)
 - `/admin/promo-codes` — promo code management
 - `/admin/login` — single password auth
@@ -17,90 +21,197 @@
 - Middleware protects all `/admin/*` routes except `/admin/login`
 
 ## Dashboard
-- Revenue stats via Postgres RPC function `dashboard_stats` (SQL aggregation, not in-memory)
+- Revenue stats via Postgres RPC `dashboard_stats` (SQL aggregation, not in-memory)
 - Shows product revenue only (excludes shipping_fee and cod_fee)
-- Action items: pending orders, invoices awaiting issuance, COD orders awaiting courier settlement
+- Action items: pending orders, invoices awaiting issuance (`type='invoice' AND invoice_number IS NULL`), credit notes awaiting (`type='credit_note' AND invoice_number IS NULL`), COD orders awaiting courier settlement, withdrawals pending (open: requested|approved|goods_received), inventory debt SKUs
 - Awaiting settlement links to `/admin/orders?status=delivered&paymentFilter=awaiting-settlement`
 - Last 10 orders with links
 
 ## Orders
 - Pagination: 100 per page, with total count
 - Filters: status tabs, text search (ID/name/email), date range, invoice filter (all/requested/issued/pending), payment filter (all/awaiting-settlement/settled)
-- URL params supported: `?status=pending`, `?invoiceFilter=pending`, `?paymentFilter=awaiting-settlement` (for dashboard links)
+- URL params supported: `?status=pending`, `?invoiceFilter=pending`, `?paymentFilter=awaiting-settlement`
 - CSV export fetches ALL matching results via `getAllOrders` (batches of 1000)
 - CSV columns: ID, date, name, email, phone, city, products revenue, promo discount, shipping fee, COD fee, total, payment, delivery, status, invoice #, invoice date
 
 ## Order Detail
 - Customer info, order details, product breakdown with stored fees
 - Price breakdown uses stored `shipping_fee` and `cod_fee` (not recalculated from constants)
-- **Exception flows behind "Още действия" dropdown** (top-right of the page header, next to the status badge). Three actions live here as Radix Dialog modals rather than always-rendered cards: `Запиши възстановяване` (gated on `order.paid_at`), `Регистрирай рекламация` (always available, shows count of open complaints as a badge), `Следдоставно събитие` (gated on `status ∈ {shipped, delivered}`). Mirrors Shopify's "More actions" pattern — the routine flow (status, settlement, contact edits, invoice) stays uncluttered, and refund/complaint/outcome are one click away when needed. The "Refunds" list (read-only summary of historical refunds) stays inline so admin sees refund state at a glance without opening anything; only the *new-refund form* moved into the dialog. When the dropdown has no usable items (unpaid + not shipped, e.g. a fresh `confirmed` card order before webhook), it collapses to a single "Регистрирай рекламация" button. Outcome → refund hand-off: the "Open refund form" CTA in the outcome callout closes the outcome dialog and opens the refund dialog with prefilled values; idempotency-key + linked-context state preserved across the swap.
-- Invoice section: issue invoice (with confirmation dialog), download PDF (invoice or proforma)
-- Invoice deadline: 5 days from payment (card: created_at, COD: delivered_at)
-- History timeline (История card): two sources merged in chronological order.
-  - **Column-derived events** (always rendered): "Поръчка създадена", "Потвърдена", "Фактура издадена", "Фактура изпратена", "Изпратена", "Доставена", "Плащане получено", "Възстановяване", "Рекламация", "Отказана". These read directly from the corresponding columns/related rows on `orders`/`order_refunds`/`complaints`.
-  - **Domain events from `order_audit_events`** (server-filtered allowlist): `order_items_changed`, `contact_info_changed`, `email_resent`, `status_force_override`, `data_repair`, `delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`, `refund_annotation_edited`, `external_refund`, `payment_failed`, `dispute_opened`, `dispute_closed`, `dispute_funds_reinstated`. Server filters via `.in("event_type", ...)` so column-derived event types (`status_changed`, `*_recorded`, `tracking_number_set`, `cod_confirmed`, etc.) aren't double-counted in the timeline; they're already represented by their respective columns. Each surfaced event has a Bulgarian label + payload-driven detail in the client (e.g. `order_items_changed` shows `{product_name}: {old} → {new}`).
-  - **Admin notes are NOT in the timeline** — they live solely in the dedicated "Вътрешни бележки" card. Earlier versions duplicated them as "Бележка" entries in both surfaces; the cleaner split is system events in the timeline, free-form admin commentary in its own card. (Note: this is the opposite of Shopify's pattern, where the Timeline IS the comments feature; we deliberately split for clarity.)
-  - `order_audit_events` is the authoritative source for everything that isn't a column on `orders` directly. Refund inserts emit `refunded` (visible via the dedicated "Възстановяване" timeline branch); refund annotation edits emit `refund_annotation_edited` (surfaced in the timeline). Outcome and refund events are **not cross-referenced at the DB layer** — they're separate rows in the audit log, correlated by temporal proximity in the timeline view. This follows the three-layer separation: outcome = audit, refund = money, inventory = goods.
-  - When adding a new outcome / domain event type: 1) add to `record_order_outcome` allow-list (migration), 2) add to `TIMELINE_EVENT_TYPES` in `getOrder` if it should appear in the history, 3) add a case to `renderAuditEvent` in `app/admin/orders/[id]/page.tsx` so it has a Bulgarian label.
-- Order edit (contact + quantity): admin can correct wrong-address / typo-phone / "add one more box" scenarios on confirmed-but-not-shipped orders without cancel+reorder churn.
-  - Contact edit: customer-info card has an inline "Редактирай" button (visible only on `status='confirmed'`). Editable fields: first_name, last_name, phone, email, address, postal_code, city, notes. Email is editable (lowercased server-side to satisfy `chk_orders_email_lowercase`); a small inline warning surfaces when the new value differs from the original because email is the unsubscribe key — changing it decouples the order from the previous `email_unsubscribes` row. `updateOrderContact` validates each provided field, trims, and atomically updates orders with `.eq('status', 'confirmed')` guard. **The client only sends fields that actually changed** vs. the order's current values — pre-filled values that match get skipped, so a pure "redact one field" save doesn't trip non-empty validation on an unrelated field that was already empty in legacy data. Errors render inline above the Save / Отказ buttons via a dedicated `contactError` state (the shared `actionError` lives in the Действия card much further down and used to swallow contact validation rejections silently). The `emit_order_audit_events` trigger auto-emits a `contact_info_changed` event with per-field `{old, new}` pairs via `jsonb_strip_nulls` (migration `20260424140000`).
-  - Quantity edit (COD only): each line in the products card has a "Редактирай" button visible only when `payment_method='cod' AND status='confirmed' AND tracking_number IS NULL`. Delegates to the `edit_order_quantity` RPC which atomically locks `order_items FOR UPDATE`, calls reserve/restore inventory for the delta, updates `order_items.quantity` + `orders.total_amount`. Fee structure (shipping, cod, discount) stays frozen on edit — admin crossing a free-shipping threshold does not get it recomputed. Card orders route through `replaces_order_id` instead (charging the delta requires a new Stripe session). `updateOrderQuantity` emits `order_items_changed` via `record_order_outcome` RPC with `{sku, product_name, old_quantity, new_quantity, delta, new_total_cents}` payload.
-- COD phone confirmation: for `payment_method='cod' AND status='confirmed'` orders, a prominent amber banner prompts the admin to call the customer before shipping. A "Маркирай обаждането като потвърдено" button calls `markCodConfirmed` → sets `cod_confirmed_at` (server timestamp) + `cod_confirmed_by='admin'`, emits a `cod_confirmed` audit event via the existing `emit_order_audit_events` trigger. Once confirmed, the banner turns green and shows the timestamp. `markCodConfirmed` validates: COD payment, status=`confirmed`, not-already-confirmed (idempotent guard via `.is('cod_confirmed_at', null)` at UPDATE time for race safety).
-- COD shipment soft block: when admin opens "Генерирай товарителница" on a COD order with `cod_confirmed_at IS NULL`, an inline amber warning renders next to the button AND the click triggers `window.confirm` requiring explicit override (not a hard block — emergencies still ship, but the skip is deliberate). Rationale: COD refusal rate in BG is measurably 5-25%; phone confirmation before shipping materially lowers it. Policy becomes a visible gate. Promote to hard block only if ops data shows admin skipping confirmations abusively.
-- COD settlement: form in Действия card for delivered unpaid COD orders (date picker, amount, ППП ref, bank ref); green status card shown after settlement recorded
-- COD settlement date picker: `min` set to delivery date, `max` set to today; server validates date is not before delivery or in the future; date stored at 23:59:59 UTC to sort after same-day events
-- Card payment section: shows paid_at confirmation date (set automatically by webhook)
-- Admin notes: append-only JSONB array of `{text, created_at, author}` entries; notes shown in reverse-chronological list + appear in timeline. `addAdminNote` server action calls the `add_admin_note` RPC (atomic `jsonb ||` append), which kills the read-modify-write race of the previous fetch+spread+update pattern. Author defaults to `'admin'` pre-launch.
-- Actions: status transitions with validation, cancellation requires reason field
-- Invoice sent tracking: "Отбележи като изпратена на клиента" button appears after invoice number is saved; sets `invoice_sent_at`
-- Post-shipment outcomes (`delivery_refused`, `package_lost`, `returned`, `recalled`): recorded via `recordOrderOutcome` — a **pure outcome recorder**, single-responsibility. No refund or inventory writes happen inside this action; those are handled separately by `recordRefund` (money) and `recordStockMovement` (goods). The UI coordinates them as a **guided multi-step flow**: after a successful outcome save, a context-specific "Next step" callout appears with buttons for "Open refund form" and "Later" ("Got it" for `delivery_refused`-style deferred cases; all four outcome types can now either refund-now or defer). Each step is its own server action, independently idempotent. This preserves the three-layer separation between audit, money, and goods.
-  - **Prefill from outcome context**: when the admin clicks "Отвори формата за възстановяване" in the callout, the refund form is auto-populated from the just-saved outcome — amount = full remaining balance, reason = `[<outcome label>] <outcome note>` (with optional ref), scroll + ring-highlight + focus on the amount input. The outcome note and first available reference (return / recall / courier) are preserved in component state across the outcome form's field reset so the prefill has material to work with.
-  - **"Linked to outcome" banner**: when the refund form was opened from an outcome callout, a small amber banner appears at the top of the refund card showing which outcome type + ref the refund is tied to. The banner has an "Изчисти" link that strips the prefill if the admin wants to start fresh. Banner clears on full-flow completion (flow reset).
-  - The linkage is **UI-only** — no DB column ties a refund row to an outcome event. Timeline correlation is temporal. The refund's free-text `reason` field carries the outcome label as a prefix for human traceability.
-- Refunds: child table `order_refunds` — multiple refunds per order supported. Admin UI shows the refunds list with computed total (fully-refunded vs partially-refunded badge). **Two-step flow** in the refund card — each step is its own server action; UI does the orchestration.
-  - **Step 1 — refund** (`recordRefund`): records a single row in `order_refunds`. Pure money concern, no inventory side effects. Phase 1 flow: admin issues Stripe refund in Stripe dashboard (card) or initiates bank transfer (COD), then records here. For card refunds the admin pastes the Stripe `re_...` refund ID; the unique index on `stripe_refund_id` dedupes against webhook arrivals from either direction. Client idempotency key (UUID generated per flow) guards against double-submit.
-    - **Stripe verification on paste**: when `method='stripe'` and `stripeRefundId` is supplied, `recordRefund` calls `stripe.refunds.retrieve(id)` and checks four things before inserting the row: (1) the refund exists (Stripe `resource_missing` → friendly "не е намерен в Stripe" error); (2) `status === 'succeeded'` — don't log money-didn't-move events; (3) `payment_intent` matches `order.stripe_payment_intent_id` — catches paste-from-wrong-order; (4) `amount` matches `refundAmount` — catches admin typos in either field. One API call (~200ms) per admin Stripe refund in exchange for rejecting phantom / misattributed rows at source rather than at reconciliation time. Bank-transfer refunds skip the verification entirely (no gateway to check).
-  - **Step 2 — stock outcome**: admin picks one of two paths:
-    - *Per-SKU physical return*: per-item quantity + disposition inputs (`sellable` → `return_in`, `damaged` → `damaged`). Submit loops `recordStockMovement` calls with `reference_type='return'`, `reference_id=<refund.id>`, `orderId=<order.id>`. Each call gets its own UUID stored in component state, preserved across retries so a mid-loop failure can be retried without duplicate inserts. Progress indicator shows "done / total"; failures list which (sku, disposition) pairs failed and prompts retry.
-    - *Skip with reason*: radio list — `no_return` (goodwill), `package_lost`, `customer_keeps`, `other` (+ free-text). Appends an admin_note via `add_admin_note` RPC explaining the skip. Useful audit trail for refund-fraud analysis later.
-  - **Return cap**: `recordStockMovement` enforces `sum(prior returns for this order+sku) + this quantity ≤ sum(order_out for this order+sku)` when called with `referenceType='return'`, `type ∈ {return_in, damaged}`, and `orderId` set. DB trigger `trg_enforce_order_return_cap` is the backstop with matching Bulgarian wording. Warehouse-internal damage (reference_type='internal') is uncapped — see `inventory.md` § Return cap.
-  - **Full-flow idempotency**: the `client_idempotency_key` UUID is regenerated only when the whole two-step flow completes (or admin clicks "Record new refund"). A retry during Step 2 re-resolves to the same refund row via `recordRefund`'s fast-path check.
-  - Annotation edits: `RefundRow` component allows admin to edit `reason` and `credit_note_ref` on any row (including webhook-created rows that arrived before the admin's action). `updateRefundAnnotation` only touches the two annotation columns; financial fields stay immutable per the append-only trigger. Each actual change emits a `refund_annotation_edited` audit event (AFTER UPDATE trigger, migration `20260424120000`) carrying per-field `{old, new}` pairs, so BG tax auditors / fraud investigators can reconstruct the evolution of every credit-note reference and reason. No-op UPDATEs do not emit.
-  - **Кредитно известие breakdown**: each `RefundRow` renders a VAT-20%-inclusive per-line breakdown (gross / VAT / net) derived from the linked `inventory_log` return rows (reference_type='return', reference_id=refund.id) × `order_items.unit_price_cents`. A "Копирай" button copies a formatted Bulgarian text block to clipboard — admin pastes it into Microinvest when issuing the кредитно известие. Handles the three shapes: full match (lines = refund amount), mismatch (handling-fee / partial-discount case — surfaced with an amber note), and no-returns (goodwill / shipping-only refund). Math lives in `lib/refund-breakdown.ts`, no DB schema for line allocation — data is reconstructed from existing tables. VAT rate is hardcoded 20%; if the catalog ever adds a reduced-rate product, promote to per-item `vat_rate` column.
-  - Webhook path: `refund.created` / `refund.updated` / `refund.failed` / `charge.refunded` all converge on `upsertRefundFromStripe`, which branches by `refund.status`:
-    - `succeeded` → insert row (idempotent via `stripe_refund_id` unique partial index); fires `alertAdmin` on new insert only.
-    - `failed` → admin alert only (`⚠ Stripe refund FAILED — …` with `failure_reason` + Stripe dashboard link + "ACTION REQUIRED"); no DB write because phase 1 doesn't store rows for money that didn't move.
-    - `canceled` → informational alert; no DB write.
-    - `pending` / `requires_action` → silent skip; the eventual transition event (`refund.updated` or `refund.failed`) is what we act on.
-  - The Stripe webhook configuration must subscribe to all four refund events (`refund.created`, `refund.updated`, `refund.failed`, `charge.refunded`) for full coverage.
+- **Exception flows behind "Още действия" dropdown** (top-right of the page header). Three actions live here as Radix Dialog modals:
+  - `Запиши възстановяване` (gated on `order.paid_at`) — opens the refund form
+  - `Регистрирай рекламация` (always available; shows count of open complaints as a badge)
+  - `Регистрирай отказ (Чл. 50 ЗЗП)` (gated on `order.status='delivered'`; hard block on non-delivered with friendly Bulgarian message — withdrawal right kicks in only after receipt of goods)
+  - `Следдоставно събитие` (gated on `status ∈ {shipped, delivered}`)
+  - Below a separator: email resend items (`Препрати потвърждение` / `Препрати известие за изпращане` / `Препрати известие за доставка`), gated by state.
+  When the dropdown has no usable items, it collapses to a single "Регистрирай рекламация" button. Outcome → refund hand-off: the "Open refund form" CTA in the outcome callout closes the outcome dialog and opens the refund dialog with prefilled values; idempotency-key + linked-context state preserved across the swap.
+
+### Документи card (replaces the previous invoice section)
+Lists all `invoices` rows for the order (one type='invoice' + zero-or-more type='credit_note'). Each row has its own controls:
+- "Запази номер" input + button → `setInvoiceNumber(invoiceId, invoiceNumber)` saves number and sets `invoice_date`. Works for both initial фактури and кредитни известия (the same flow because Microinvest issues both with sequential numbers).
+- "Отбележи като изпратена" button (visible after invoice_number is saved) → `markInvoiceSent(invoiceId)` sets `sent_at`.
+- For credit_note rows: shows reference to the original `invoice_number`, the linked refund amount, and the 5-day deadline `due_at` (refund.refunded_at + 5 days per ЗДДС Чл. 113 ал. 4).
+- Initial invoice deadline: 5 days from tax event (card: created_at, COD: delivered_at).
+
+### Свързани заявки card (renamed from "Заявки за връщане")
+Unified list of withdrawals + complaints for this order in one card. Each entry shows: type (отказ / рекламация), ref (WD-YYYY-NNNN or RCL-YYYY-NNNN), status, created_at, "Отвори ↗" link. Withdrawals link to `/admin/returns/[id]`; complaints link to in-page detail.
+
+### History timeline (История card)
+Two sources merged in chronological order:
+- **Column-derived events** (always rendered): "Поръчка създадена", "Потвърдена", "Изпратена", "Доставена", "Плащане получено", "Възстановяване" (per refund row), "Рекламация" (per complaint row), "Отказана", plus invoice events derived from `invoices` rows (number set, sent_at set, plus the same for credit_notes).
+- **Domain events from `order_audit_events`** (server-filtered allowlist): `order_items_changed`, `contact_info_changed`, `email_resent`, `status_force_override`, `data_repair`, `delivery_refused`, `package_lost`, `returned`, `recalled`, `partial_return`, `refund_annotation_edited`, `external_refund`, `payment_failed`, `dispute_opened`, `dispute_closed`, `dispute_funds_reinstated`, `withdrawal_requested`, `withdrawal_approved`, `withdrawal_goods_received`, `withdrawal_rejected`, `withdrawal_completed`, `withdrawal_status_force_override`, `invoice_number_set`, `invoice_marked_sent`, `credit_note_number_set`, `credit_note_marked_sent`. Server filters via `.in("event_type", ...)` so column-derived event types (`status_changed`, `*_recorded`, `tracking_number_set`, `cod_confirmed`) aren't double-counted; they're already represented by their respective columns.
+- **Admin notes are NOT in the timeline** — they live solely in the dedicated "Вътрешни бележки" card.
+- When adding a new outcome / domain event type: 1) add to `record_order_outcome` allow-list (migration), 2) add to `TIMELINE_EVENT_TYPES` in `getOrder` if it should appear, 3) add a case to `renderAuditEvent` in `app/admin/orders/[id]/page.tsx`.
+
+### Order edit (contact + quantity)
+Admin can correct wrong-address / typo-phone / "add one more box" scenarios on confirmed-but-not-shipped orders without cancel+reorder churn.
+- Contact edit: customer-info card has an inline "Редактирай" button (visible only on `status='confirmed'`). Editable fields: first_name, last_name, phone, email, address, postal_code, city, notes. Email is editable (lowercased server-side); inline warning surfaces when the new email differs because email is the unsubscribe key. `updateOrderContact` validates each provided field, trims, atomically updates with `.eq('status', 'confirmed')` guard. **The client only sends fields that actually changed** vs. the order's current values. Errors render inline above the Save / Отказ buttons via a dedicated `contactError` state. The `emit_order_audit_events` trigger auto-emits a `contact_info_changed` event with per-field `{old, new}` pairs via `jsonb_strip_nulls`.
+- Quantity edit (COD only): each line in the products card has a "Редактирай" button visible only when `payment_method='cod' AND status='confirmed' AND tracking_number IS NULL`. Delegates to the `edit_order_quantity` RPC. Fee structure stays frozen on edit. Card orders route through `replaces_order_id` instead. `updateOrderQuantity` emits `order_items_changed` via `record_order_outcome`.
+
+### COD phone confirmation
+For `payment_method='cod' AND status='confirmed'` orders, a prominent amber banner prompts the admin to call the customer before shipping. "Маркирай обаждането като потвърдено" → `markCodConfirmed` sets `cod_confirmed_at` + `cod_confirmed_by='admin'`, emits a `cod_confirmed` audit event. Once confirmed, the banner turns green. Idempotent via `.is('cod_confirmed_at', null)` guard at UPDATE time.
+
+### COD shipment soft block
+When admin opens "Генерирай товарителница" on a COD order with `cod_confirmed_at IS NULL`, an inline amber warning renders next to the button AND the click triggers `window.confirm` requiring explicit override (not a hard block).
+
+### COD settlement
+Form in Действия card for delivered unpaid COD orders (date picker, amount, ППП ref, bank ref); green status card shown after settlement recorded. Date picker `min` set to delivery date, `max` set to today; server validates date is not before delivery or in the future; date stored at 23:59:59 UTC.
+
+### Card payment section
+Shows paid_at confirmation date (set automatically by webhook).
+
+### Admin notes
+Append-only JSONB array of `{text, created_at, author}` entries; reverse-chronological list. `addAdminNote` calls the `add_admin_note` RPC (atomic `jsonb ||` append). Author defaults to `'admin'` pre-launch.
+
+### Actions
+Status transitions with validation, cancellation requires reason field.
+
+### Post-shipment outcomes
+`delivery_refused`, `package_lost`, `returned`, `recalled` recorded via `recordOrderOutcome` — a **pure outcome recorder**, single-responsibility. No refund or inventory writes inside this action; those are handled separately by `recordRefund` (money) and `recordStockMovement` (goods). The UI coordinates them as a **guided multi-step flow**:
+- After a successful outcome save, a context-specific "Next step" callout appears with buttons for "Open refund form" and "Later" / "Got it".
+- **Prefill from outcome context**: clicking "Отвори формата за възстановяване" auto-populates the refund form — amount = full remaining balance, reason = `[<outcome label>] <outcome note>`, scroll + ring-highlight + focus.
+- **"Linked to outcome" banner** in the refund form when opened from an outcome callout. The banner has an "Изчисти" link to strip the prefill.
+- Linkage is **UI-only** — no DB column ties a refund row to an outcome event. Timeline correlation is temporal.
+
+## Refund flow
+
+### Two-step flow
+**Step 1 — refund** (`recordRefund`): records a single row in `refunds`. Pure money concern, no inventory side effects. Phase 1 flow: admin issues Stripe refund in Stripe dashboard (card) or initiates bank transfer (COD), then records here. For card refunds the admin pastes the Stripe `re_...` refund ID; the unique index on `stripe_refund_id` dedupes against webhook arrivals from either direction. Client idempotency key (UUID) guards against double-submit.
+
+- **Stripe verification on paste**: when `method='stripe'` and `stripeRefundId` is supplied, `recordRefund` calls `stripe.refunds.retrieve(id)` and checks: (1) refund exists; (2) `status==='succeeded'`; (3) `payment_intent` matches `order.stripe_payment_intent_id`; (4) `amount` matches `refundAmount`. One API call (~200ms) per admin Stripe refund.
+- **affects_invoiced_supply** (defaults true): when the refund cancels/reduces an invoiced supply, a credit_note row should be auto-created. Admin can opt out by unchecking + providing a `credit_note_skip_reason` (audit trail for why no кредитно известие).
+- **bank_transfer_ref**: required when `method='bank_transfer'` (DB CHECK enforces).
+- **withdrawal_id**: optional dropdown linking the refund to a specific withdrawal. Set once, immutable.
+- **Auto-creation of credit_note row**: after refund insert, `lib/credit-note.ts:autoCreateCreditNoteRow` checks the three conditions (invoice exists + invoice_number set + affects_invoiced_supply=true). If all true, inserts an `invoices` row with `type='credit_note'`, `refund_id`, `references_invoice_id`, `due_at = refunded_at + 5 days`. If any fails, no credit_note is created.
+
+**Step 2 — refund mode + stock outcome**:
+- **Mode "По артикули" (per-line allocation)**: admin picks specific order lines + quantities for the refund. Inserts `refund_items` rows. Independent of inventory — supports cases like shipping disputes, partial price reductions on specific items, or goodwill discounts where no goods physically move. Optionally followed by per-SKU disposition (`sellable` → `return_in`, `damaged` → audit-only `damaged`) which inserts `inventory_log` rows with `reference_type='return'`, `reference_id=<refund.id>`, `order_id=<order.id>`. Each call gets its own UUID stored in component state, preserved across retries.
+- **Mode "Допълнителна сума само" (additional amount only, no items)**: refund row records the money; no `refund_items` rows; admin may still add disposition rows. Useful for shipping-only refunds and goodwill bumps that don't tie to a specific line.
+- **Skip with reason**: radio list — `no_return` (goodwill), `package_lost`, `customer_keeps`, `other` (+ free-text). Appends an admin_note via `add_admin_note` RPC. Useful audit trail for refund-fraud analysis.
+
+**Return cap**: `recordStockMovement` enforces `sum(prior returns for order+sku) + this quantity ≤ sum(order_out for order+sku)` when `referenceType='return' + type ∈ {return_in, damaged} + orderId` set. DB trigger `trg_enforce_order_return_cap` is the backstop with matching Bulgarian wording.
+
+**Refund cap**: `enforce_refunds_total` trigger — sum across all refund rows cannot exceed `orders.total_amount`. Backstop to server-action validation.
+
+**Refund_items caps**: `enforce_refund_items_quantity_cap` (per order_item: sum ≤ ordered quantity) + `enforce_refund_items_amount_cap` (per refund: sum ≤ refund amount). Items can sum to LESS than refund total — the difference is non-allocated.
+
+**Full-flow idempotency**: `client_idempotency_key` UUID regenerated only when the whole flow completes (or admin clicks "Record new refund"). A retry during Step 2 re-resolves to the same refund row.
+
+### Annotation edits
+`RefundRow` allows admin to edit `reason`, `bank_transfer_ref`, `credit_note_skip_reason` on any row (including webhook-created rows). `updateRefundAnnotation` only touches those three columns; financial fields stay immutable per the append-only trigger. Each actual change emits a `refund_annotation_edited` audit event with per-field `{old, new}` pairs. No-op UPDATEs do not emit. (`credit_note_ref` was dropped — credit-note linkage now lives on `invoices.refund_id`.)
+
+### Кредитно известие breakdown
+Each `RefundRow` renders a VAT-20%-inclusive per-line breakdown (gross / VAT / net). Precedence (in `lib/refund-breakdown.ts`):
+1. **`refund_items` rows** (authoritative when present) — sum of allocated amounts.
+2. **`inventory_log` return rows** (`reference_type='return' AND reference_id=refund.id`) × `order_items.unit_price_cents` — derived when no refund_items.
+3. **No-returns** (goodwill / shipping-only).
+A "Копирай" button copies a formatted Bulgarian text block to clipboard — admin pastes it into Microinvest when issuing the кредитно известие. Handles three shapes: full match (lines = refund amount), mismatch (handling-fee / partial-discount case — surfaced with an amber note), no-returns. VAT rate hardcoded 20%.
+
+### Webhook path (Stripe refunds)
+`refund.created` / `refund.updated` / `refund.failed` / `charge.refunded` all converge on `upsertRefundFromStripe`, which branches by `refund.status`:
+- `succeeded` → insert row (idempotent via `stripe_refund_id` unique partial index); fires `alertAdmin` on new insert only.
+- `failed` → admin alert only (`⚠ Stripe refund FAILED — …`); no DB write because phase 1 doesn't store rows for money that didn't move.
+- `canceled` → informational alert; no DB write.
+- `pending` / `requires_action` → silent skip.
+
+Webhook-originated refunds default `affects_invoiced_supply=true` and leave `refund_items` empty. The Stripe webhook configuration must subscribe to all four refund events for full coverage.
+
+## Withdrawals (право на отказ — Чл. 50 ЗЗП)
+
+### Intake
+Admin-driven only — no public form. Customer emails or calls; admin opens the order, classifies, and registers via `Регистрирай отказ` in the "Още действия" dropdown. Hard block when order isn't delivered (withdrawal right starts on receipt). Soft warn when goods_received timestamp is logged on an unpaid order (allowed but unusual).
+
+### Server actions
+- `createWithdrawal(orderId, data)` — mints WD-YYYY-NNNN via `next_withdrawal_ref()` RPC, inserts withdrawal row at `status='requested'`. Validates ambiguous-email cases (creates anyway with the email admin entered; doesn't try to deduplicate to the order's email).
+- `approveWithdrawal(id, { eligibility_*, return_required, ... })` — `requested → approved`. Sets `approved_at`, `approved_by`, plus `eligibility_*` classifications. `return_required` defaults true (Path A); set false for Path B (goodwill / customer keeps product).
+- `markWithdrawalGoodsReceived(id, { eligibility_condition, return_tracking_number?, return_courier? })` — `approved → goods_received`. Path A only.
+- `rejectWithdrawal(id, reason)` — `requested|approved → rejected`. Requires non-empty reason. Cannot reject after `goods_received_at` is set (DB CHECK).
+- `completeWithdrawalNoReturn(id, { resolution_type, completion_note, refund_id? })` — Path B `approved → completed` for non-refund resolutions (replacement, none) or when admin already has a refund_id. Requires non-empty completion_note + resolution_type.
+- **Auto-complete on refund**: when `recordRefund` is called with `withdrawalId` set, after inserting the refund row it updates the withdrawal with `refund_id` + `resolution_type='refund'`, and additionally flips status to `completed` if either condition holds:
+  - Path A: `withdrawal.status='goods_received'` → completed
+  - Path B: `withdrawal.status='approved' AND return_required=false AND completion_note IS NOT NULL` → completed
+  
+  Otherwise the withdrawal keeps its current status (refund recorded; completion happens later when admin marks goods received or completes via no-return path). If the withdrawal UPDATE fails after the refund has been inserted, the refund is NOT rolled back — money has moved; admin completes the withdrawal manually from the UI. Failure logged with both IDs for triage.
+- `getWithdrawals(filter)` / `getWithdrawal(id)` / `getOrderWithdrawals(orderId)` — read paths. The first two power `/admin/returns` and `/admin/returns/[id]`.
+
+### `/admin/returns` inbox
+Unified list of withdrawals + complaints with type filter (all / withdrawal / complaint) and status tabs. `getWithdrawals` and `getComplaints` server actions return rows; UI merges by `created_at desc`. Each entry links to its detail page.
+
+### `/admin/returns/[id]` (withdrawal detail)
+- Header: ref + status badge + order link
+- Eligibility classification card (3 dimensions: time_based, product_based, condition)
+- State-machine action buttons rendered conditionally by current status — each opens a Radix Dialog with required fields (eligibility, condition, completion_note, etc.). Hide-form-after-success pattern: after approval/rejection/completion, the form view is replaced by a success message + "Регистрирай ново действие" button to avoid stale UI state.
+- Refund linkage section: if `refund_id IS NOT NULL`, shows the linked refund row.
+- Audit trail derived from `order_audit_events` filtered to withdrawal_* event types.
+
+### Force-override path
+`force_withdrawal_status_override(p_id, p_new_status, p_reason, p_actor)` RPC for data repair. Validates reason ≥ 20 chars, writes `withdrawal_status_force_override` audit event, bypasses the state-machine trigger transaction-locally. Not surfaced in the routine UI — used via direct DB interaction or future admin tooling.
+
+## Complaints (рекламация — ЗЗП Чл. 122-127)
+- Server actions: `recordComplaint(orderId, { defect_description, customer_demand })`, `resolveComplaint(complaintId, { resolution })`, `getComplaints(filter)`, `getOrderComplaints(orderId)`
+- Auto-generated `complaint_ref` as `RCL-YYYY-NNNN` via DB sequence
+- Surfaced in `/admin/returns` (unified inbox) and order detail "Свързани заявки" card
+- Hide-form-after-success pattern in the registration dialog (matches withdrawals)
 
 ## Invoice Management
-- Invoices are generated externally via Microinvest Invoice Pro
-- Admin enters invoice number manually in order detail page (text input + save button)
-- Server action `setInvoiceNumber(orderId, invoiceNumber)` saves the number and sets `invoice_date`
-- Admin invoices page shows list of orders with invoice numbers (search, filter, CSV export)
+- Invoices generated externally via Microinvest Invoice Pro
+- Admin enters invoice number manually in order detail Документи card (text input + save button per row)
+- Server actions: `setInvoiceNumber(invoiceId, invoiceNumber)` saves the number and sets `invoice_date`; `markInvoiceSent(invoiceId)` records `sent_at`. Both work for `type='invoice'` and `type='credit_note'` rows.
+- Invoice creation: an `invoices` row with `type='invoice'` is inserted at order creation time when the customer requested a фактура (createCheckoutSession + createCODOrder paths in stripe.ts). Insert-or-rollback semantics: if the order insert succeeds but the invoice insert fails, the order is rolled back (atomicity preserved at app layer).
+- Credit_note rows auto-created by `lib/credit-note.ts:autoCreateCreditNoteRow` after refund insert. See § Refund flow.
+- Admin invoices page (`/admin/invoices`) shows list of issued invoices (search, filter, CSV export)
 - No PDF generation or invoice emailing in the codebase
 
 ## Inventory Panel (`/admin/inventory`)
 - Stock cards per SKU: red badge = 0, amber ≤ 20, green > 20
-- "Добави партида" dialog: product dropdown, quantity, batch ID, expiry date, notes — inserts `batch_in` row into `inventory_log`
-- Movement log table: date, SKU, type badge, ±quantity, before/after columns, batch ID or order link, expiry date
-- Server actions: `getInventoryStatus()`, `addInventoryBatch()` (validates SKU against PRODUCTS list), `getRecallCandidates()`
-- Cancellation from order detail automatically calls `restore_inventory` RPC — stock updates immediately
+- "Добави партида" dialog: product dropdown, quantity, batch ID, expiry date, notes — inserts `batch_in` row into `inventory_log` (and seeds `product_batches` if new (sku, batch_number))
+- "Запиши движение" (record stock movement) dialog for manual types: `wholesale_out` (B2B; **batch_id required**), `sample_out`, `damaged` (warehouse-internal), `return_in` (B2B / orphaned), `adjustment_gain`, `adjustment_loss`. Customer-return movements go through the refund flow, not here.
+- Movement log table: filter by SKU dropdown ("Последни движения"). Columns: date, SKU, type badge, ±quantity (or "0 (audit)" for customer-return-damaged), before/after, batch ID or order link, expiry date
+- Server actions: `getInventoryStatus()`, `addInventoryBatch()`, `recordStockMovement()`, `getRecallCandidates()`
+- Cancellation from order detail automatically calls `restore_inventory` RPC
 
-### Recall / batch traceability export
-Food-safety workflow: if a batch has a problem (supplier defect, expiry miscount, contamination), admin needs a contactable list of customers to phone/email. `getRecallCandidates(sku, fromDate?, toDate?)` returns orders containing the SKU, filtered to non-terminal statuses (`confirmed`, `shipped`, `delivered`) — the three audiences that need different actions:
-- `confirmed` → cancel + refund before shipment
-- `shipped` → intercept where possible, warn customer not to consume
-- `delivered` → possibly consumed, offer refund/replacement, symptom intake
+### Recall / batch traceability export (over-approximate by SKU)
+Lives in `/admin/inventory` → "Изтегляне от пазара / рекол" card. Useful for: pre-Tier 1 historical orders, suspected supplier issue without confirmed batch number, broad customer outreach.
+- SKU dropdown (required), optional from/to date range, status filter to non-terminal (`confirmed`, `shipped`, `delivered`)
+- "Покажи" runs the fetch; "Експорт CSV" builds the full list with BOM + Bulgarian header labels. Filename: `recall-<sku>-<date>.csv`.
+- Sort: `confirmed` first, `shipped` second, `delivered` third (escalating-risk order).
 
-Over-approximates by SKU, not by batch: we don't track which batch shipped to which order (would need FIFO batch consumption at ship time). Acceptable at current volume — admin does phone-level triage on the list. If volume grows to where the over-approximation becomes expensive, add a per-order batch allocation column.
+## Batches Panel (`/admin/batches`)
+- List page: SKU filter dropdown + status tabs (Всички / Активни / Изтеглени)
+- Each row: SKU + product name, batch number (font-mono), expiry date with "X дни до изтичане" (red if expired, amber if < 30 days), available quantity (derived via `batch_quantity_available`), status badge, link to detail
+- Empty-state copy points to `/admin/inventory` (where batches are first seeded via "Добави партида")
 
-UI (`/admin/inventory` → "Изтегляне от пазара / рекол" card):
-- SKU dropdown (required), optional from/to date range (applied to `orders.created_at`, end-of-day inclusive)
-- "Покажи" button runs the fetch and renders a preview table (top 10 rows) + totals + per-status counts
-- "Експорт CSV" button builds the full list with BOM + Bulgarian header labels. Filename: `recall-<sku>-<date>.csv`. Columns: order id, created, status, shipped, delivered, name, email, phone, city, address, postal code, quantity, tracking, courier.
-- Sort: `confirmed` first, `shipped` second, `delivered` third — mirrors the escalating-risk order admin works through. Within a status, most recent first.
+### Batch detail (`/admin/batches/[id]`)
+- Header: batch_number + sku label + status badge
+- "Детайли" card: SKU, batch №, expiry date, available quantity, recall metadata if recalled (recalled_at, recalled_by, recall_reason — all required by DB CHECK)
+- "Засегнати поръчки" card: table with columns поръчка / клиент / контакт / статус / бр. (calls `affected_orders_for_batch` RPC). "Изтегли CSV" button when populated. CSV: order id, status, name, email, phone, city, shipped_at, delivered_at, quantity_from_batch, tracking_number.
+- "Действия" card (active batches only): "Изтегли партидата от пазара" button → opens recall dialog with reason textarea (≥ 20 chars enforced both client-side and DB CHECK). Calls `recallBatch(id, reason)` server action. The DB trigger requires status flip + recalled_at + recalled_by + recall_reason in a single UPDATE; the server action fills all four.
+
+### Batch picker in shipment dialog
+When admin clicks "Генерирай товарителница":
+- Pre-shipment: `suggestBatchesForShipment(orderId)` returns FEFO defaults (per-SKU sums, earliest-expiring active batches with available quantity). Returns `BatchSuggestion[]` with `sku`, `quantity`, `suggestions: [{batch_id, batch_number, expiry_date, quantity}]`.
+- Dialog: per-SKU section with FEFO defaults pre-filled in qty inputs. Admin can adjust per-batch quantities or pick different active batches.
+- Sum-equality validation on submit: per-SKU sum across selected batches must match `order_items.quantity`.
+- Submit calls `confirmShipmentBatches(orderId, allocations)` which validates: order status (must be confirmable), per-SKU sum equality, all selected batches `active` and same SKU, no overcommit vs `batch_quantity_available`. Inserts `order_item_batches` rows in one transaction. The actual courier label generation is a separate step (or follows in the same dialog flow).
 
 ## Email Notifications
 - Admin gets email on new orders (card and COD) if `ADMIN_EMAIL` env var is set
@@ -111,9 +222,12 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 
 | Template | Function | Type | When |
 |---|---|---|---|
-| Order Confirmation | `buildOrderConfirmationEmail()` | Transactional | On order submit — **wired up** |
+| Order Confirmation | `buildOrderConfirmationEmail()` | Transactional | On order submit — **wired** |
 | Shipping Notification | `buildShippingEmail()` | Transactional | When admin marks shipped — template ready, not wired |
 | Delivery Confirmation | `buildDeliveryEmail()` | Transactional | On delivery — **wired via `confirmDeliveryForOrder()` + cron** |
+| Withdrawal Received | `buildWithdrawalReceivedEmail()` | Transactional | After `createWithdrawal` |
+| Withdrawal Approved | `buildWithdrawalApprovedEmail()` | Transactional | After `approveWithdrawal` (branches on return_required) |
+| Withdrawal Rejected | `buildWithdrawalRejectedEmail()` | Transactional | After `rejectWithdrawal` |
 | Review Request | `buildReviewRequestEmail()` | Marketing | 3 days after delivery — **wired via cron** |
 | Cross-sell | `buildCrossSellEmail()` | Marketing | 10 days after delivery — **wired via cron** |
 | Abandoned Cart | `buildAbandonedCartEmail()` | Marketing | Template ready, not wired to cron |
@@ -121,61 +235,53 @@ All templates share a common HTML shell with EGG ORIGIN header, seller address f
 ### Security & Compliance
 - All user data HTML-escaped via `escapeHtml()` before interpolation (prevents XSS/injection)
 - Marketing emails include per-recipient HMAC-signed unsubscribe link (footer + plain text)
-- Unsubscribe URL is HTML-escaped in `emailShell` href
 - Seller physical address in all email footers (CAN-SPAM / GDPR)
-- Hidden preheader text for inbox preview on all templates
-- UTM parameters on all clickable links (`utm_source=email&utm_campaign=<name>&utm_content=<label>`)
-- `sendOrderConfirmationEmail()` in `lib/email-sender.ts` is the single unified sender for both card and COD orders (extracted from stripe.ts, used by both webhook and server actions)
-- `sendDeliveryEmail()` in `lib/email-sender.ts` — delivery confirmation, fire-and-forget with retry via `delivery_email_sent_at` marker. Early returns if already sent, unless called with `{ force: true }` (admin resend path).
-- `notifyAdminNewOrder()` in `lib/email-sender.ts` — admin notification for new orders (both card and COD)
+- Hidden preheader text for inbox preview
+- UTM parameters on all clickable links
+- `sendOrderConfirmationEmail()` in `lib/email-sender.ts` is the unified sender for both card and COD orders
+- `sendDeliveryEmail()` — fire-and-forget with retry via `delivery_email_sent_at` marker; bypassed via `{ force: true }` for admin resends
+- `notifyAdminNewOrder()` — admin notification for new orders
+- Withdrawal senders: `sendWithdrawalReceivedEmail`, `sendWithdrawalApprovedEmail`, `sendWithdrawalRejectedEmail`
 - Transactional emails have NO unsubscribe link — they are mandatory
 
 ### Manual resends (in the "Още действия" dropdown)
 Admin can manually resend the three customer-facing transactional emails from the order detail page. Common triggers: customer says "I didn't get the email", email landed in spam, address was corrected via `updateOrderContact`.
-- Server actions: `resendOrderConfirmationEmail(orderId)`, `resendShippingEmail(orderId)`, `resendDeliveryEmail(orderId)` in `app/actions/admin.ts`. Each validates admin, validates order state, calls the underlying helper, emits an `email_resent` audit event with `{ email_type: 'order_confirmation' | 'shipping' | 'delivery' }`.
-- Trigger: the "Още действия ▾" dropdown in the page header, under a separator below the exception flows. Items are gated by the same state rules the server actions enforce: confirmation visible post-pending, shipping once `tracking_number` is set (not `__generating__`), delivery once `status='delivered'`. The previous always-visible "Имейли" card was removed — its "не е отбелязан като изпратен" copy read as a problem when in fact missing values just meant no successful send had been recorded yet (shipping has no timestamp at all).
-- Feedback: clicking a resend triggers a `window.confirm`, then a transient banner near the page header — green "✓ Имейлът е изпратен повторно" auto-clears in ~4s; red error banner persists with a "Затвори" link until the next attempt clears it. No persistent UI state — the dropdown is fire-and-forget. Past sends are visible in the History card via `email_resent` audit events plus the persisted first-sent timestamps.
-- Timestamp preservation: the helpers keep their `.is(..., null)` guards on the success timestamp update, so the original first-sent time (`order_confirmation_sent_at` / `delivery_email_sent_at`) is preserved across resends. `sendDeliveryEmail`'s early-return is bypassed only via `{ force: true }`, which `resendDeliveryEmail` passes. Shipping has no persisted timestamp.
-- The audit event is the record of the resend — column-diff audit wouldn't fire because the timestamps don't change. `record_order_outcome` allow-list extended with `email_resent` in migration `20260424150000_extend_outcome_types_for_email_resent.sql`.
+- Server actions: `resendOrderConfirmationEmail`, `resendShippingEmail`, `resendDeliveryEmail`. Each validates admin, validates order state, calls the underlying helper, emits an `email_resent` audit event.
+- Items gated by state rules: confirmation visible post-pending, shipping once `tracking_number` is set (not `__generating__`), delivery once `status='delivered'`.
+- Feedback: `window.confirm` → transient banner near header (green ✓ auto-clears in ~4s; red error banner persists with "Затвори" link).
+- Timestamp preservation: helpers keep their `.is(..., null)` guards on the success timestamp update, so the original first-sent time is preserved across resends.
 
 ## Automatic Delivery Confirmation (`lib/delivery-confirmation.ts`)
 - All delivery paths (admin manual, cron polling, future webhooks) converge on `confirmDeliveryForOrder(orderId, deliveredAt, source)`
 - Uses `confirm_delivery` RPC — atomic update WHERE `status = 'shipped'`, returns updated row. Idempotent.
-- `confirmDeliveryByTrackingNumber()` is a **resolver only** — looks up order by tracking number (up to 2 rows for ambiguity detection), delegates to `confirmDeliveryForOrder()`. No state mutation.
+- `confirmDeliveryByTrackingNumber()` is a **resolver only** — looks up order by tracking number, delegates to `confirmDeliveryForOrder()`. No state mutation.
 - Admin `updateOrderStatus("delivered")` is an early-return branch that calls `confirmDeliveryForOrder(orderId, now, "admin")`
 
 ## Delivery Check Cron (`app/api/cron/delivery-checks/route.ts`)
 - Daily at 18:00 UTC (~21:00 EET) via `vercel.json` (`0 18 * * *`) — Vercel Hobby tier limits crons to once daily
-- Auth: `CRON_SECRET` verified with `timingSafeEqual` (same as marketing cron)
+- Auth: `CRON_SECRET` verified with `timingSafeEqual`
 - Queries shipped orders with tracking numbers, cursor-based: `ORDER BY delivery_status_checked_at ASC NULLS FIRST`, max 20 per run
-- Only checks orders shipped > 2 hours ago (no premature polling)
-- Explicit courier routing: `SPEEDY_PARTNERS` / `ECONT_PARTNERS` arrays, unknown values logged and skipped
-- `delivery_status_checked_at` advanced only on **successful** courier API response — API errors leave order near front for retry
+- Only checks orders shipped > 2 hours ago
+- Explicit courier routing: `SPEEDY_PARTNERS` / `ECONT_PARTNERS` arrays
+- `delivery_status_checked_at` advanced only on **successful** courier API response
 - Speedy tracking: `POST /shipment/track`, operation code `-14` = delivered
-- Econt tracking: `POST /ShipmentStatusService.getShipmentStatuses.json`, `deliveryTime` non-null or `shortDeliveryStatusEn === "Delivered"`
-- Missing courier delivery timestamp: falls back to `new Date().toISOString()`, logs `deliveredAtSource: "courier" | "inferred"`
-- Email retry pass: re-attempts delivery email for orders where `delivered_at IS NOT NULL AND delivery_email_sent_at IS NULL`, ordered `delivered_at ASC`, limit 10
+- Econt tracking: `POST /ShipmentStatusService.getShipmentStatuses.json`
+- Email retry pass: re-attempts delivery email for orders where `delivered_at IS NOT NULL AND delivery_email_sent_at IS NULL`
 - Returns `{ checked, delivered, emailRetries, failed }`
 
 ## Marketing Email Cron (`app/api/cron/marketing-emails/route.ts`)
 - Daily cron at 07:00 UTC (~10:00 EET) via `vercel.json`
-- Auth: `CRON_SECRET` verified with `timingSafeEqual` (constant-time)
-- Single Postgres RPC `claim_marketing_emails(p_now, p_limit)` does everything in one DB call:
-  - Finds candidates (1-day date windows on `delivered_at`)
-  - Filters unsubscribed via `NOT EXISTS` with `lower()` for case-insensitive match
-  - Inserts new log rows as `pending` (`ON CONFLICT DO NOTHING`)
-  - Reclaims stale `sending` rows (crashed workers, `claimed_at > 10min`)
-  - Atomically claims rows `pending/failed → sending` via `FOR UPDATE SKIP LOCKED`
+- Auth: `CRON_SECRET` verified with `timingSafeEqual`
+- Single Postgres RPC `claim_marketing_emails(p_now, p_limit)` does everything in one DB call
 - App loops over claimed rows, sends via Resend, updates log: `sent`/`failed`/`skipped`
-- Clears `claimed_at` on finalization (sent, failed, skipped)
-- Max 50 emails per run, sequential sending (respects Resend rate limits)
+- Max 50 emails per run, sequential sending
 - `provider_message_id` stored for Resend dashboard cross-reference
 - Failed rows retry up to 3 attempts (`attempt_count`)
 
 ## Unsubscribe System
 - **Token:** Signed payload (`email|timestamp`) with HMAC-SHA256 via `UNSUBSCRIBE_SECRET` (required, no fallback)
-- **Token verification:** `timingSafeEqual`, 90-day expiry, email extracted from token (not URL param)
-- **Page:** `app/(shop)/unsubscribe/page.tsx` — confirmation page, POSTs only after user clicks "Да, отпиши ме"
+- **Token verification:** `timingSafeEqual`, 90-day expiry
+- **Page:** `app/(shop)/unsubscribe/page.tsx` — confirmation page
 - **API:** `POST /api/unsubscribe` — sole mutation point, rate-limited (10 req/15min per IP), token length capped at 500
 - **DB:** `email_unsubscribes` table keyed by lowercase email, RLS denies all public access
 - **Layout:** `noindex, nofollow` metadata

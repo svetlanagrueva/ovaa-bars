@@ -766,7 +766,10 @@ describe("invoice validation", () => {
     ).rejects.toThrow("Невалиден ДДС номер")
   })
 
-  it("rejects individual invoice without MOL", async () => {
+  it("requires МОЛ for company invoice but not for individual", async () => {
+    // Per the new schema, mol is required only for company invoices.
+    // Individual invoices use the order's first_name + last_name as the
+    // legal name, so an empty mol on individual is allowed.
     await expect(
       createCODOrder({
         cartItems: validCartItems,
@@ -776,15 +779,15 @@ describe("invoice validation", () => {
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
-          type: "individual",
-          companyName: "",
-          eik: "",
+          type: "company",
+          companyName: "Firm",
+          eik: "123456789",
           vatNumber: "",
           mol: "",
           invoiceAddress: "Sofia",
         },
       })
-    ).rejects.toThrow("МОЛ / Име е задължително")
+    ).rejects.toThrow("МОЛ е задължително за фактура на фирма")
   })
 
   it("rejects individual invoice without address", async () => {
@@ -858,7 +861,7 @@ describe("createCODOrder — additional", () => {
     expect(insertCall.confirmed_at).toBeTruthy()
   })
 
-  it("stores invoice data when needsInvoice is true", async () => {
+  it("inserts invoices row when needsInvoice is true", async () => {
     const fakeOrder = { id: "cod-inv", email: "t@t.com", first_name: "T" }
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
 
@@ -879,12 +882,25 @@ describe("createCODOrder — additional", () => {
       },
     })
 
-    const insertCall = mockSupabase.insert.mock.calls[0][0]
-    expect(insertCall.needs_invoice).toBe(true)
-    expect(insertCall.invoice_type).toBe("company")
-    expect(insertCall.invoice_company_name).toBe("Firm")
-    expect(insertCall.invoice_eik).toBe("123456789")
-    expect(insertCall.invoice_mol).toBe("Boss")
+    // Two inserts: first the orders row (no invoice cols anymore), then the
+    // invoices row with type='invoice' carrying the profile.
+    const orderInsert = mockSupabase.insert.mock.calls[0][0]
+    expect(orderInsert.payment_method).toBe("cod")
+    expect(orderInsert).not.toHaveProperty("needs_invoice")
+    expect(orderInsert).not.toHaveProperty("invoice_type")
+    expect(orderInsert).not.toHaveProperty("invoice_company_name")
+
+    // The invoices insert is the next call after order_items insert. Find it.
+    const invoiceInsert = mockSupabase.insert.mock.calls.find((args: unknown[]) => {
+      const arg = args[0] as Record<string, unknown> | undefined
+      return arg?.type === "invoice"
+    })?.[0] as Record<string, unknown> | undefined
+    expect(invoiceInsert).toBeDefined()
+    expect(invoiceInsert?.invoice_type).toBe("company")
+    expect(invoiceInsert?.company_name).toBe("Firm")
+    expect(invoiceInsert?.eik).toBe("123456789")
+    expect(invoiceInsert?.mol).toBe("Boss")
+    expect(invoiceInsert?.address).toBe("Sofia")
   })
 
   it("stores Speedy office data", async () => {

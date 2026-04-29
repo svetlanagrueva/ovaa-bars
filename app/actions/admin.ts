@@ -15,7 +15,14 @@ import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
 import { requireEnv } from "@/lib/env"
 import { stripe } from "@/lib/stripe"
 import { sanitizeError } from "@/lib/logger"
-import { sendOrderConfirmationEmail, sendDeliveryEmail } from "@/lib/email-sender"
+import {
+  sendOrderConfirmationEmail,
+  sendDeliveryEmail,
+  sendWithdrawalReceivedEmail,
+  sendWithdrawalApprovedEmail,
+  sendWithdrawalRejectedEmail,
+} from "@/lib/email-sender"
+import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -77,8 +84,10 @@ export interface DashboardStats {
   month: { orders: number; revenue: number }
   pendingOrders: number
   invoicesAwaiting: number
+  creditNotesAwaiting: number
   awaitingSettlement: number
   inventoryDebtSkus: number
+  withdrawalsPending: number
   recentOrders: Array<{
     id: string
     created_at: string
@@ -129,8 +138,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
+    creditNotesAwaiting: s.credit_notes_awaiting ?? 0,
     awaitingSettlement: s.awaiting_settlement ?? 0,
     inventoryDebtSkus: s.inventory_debt_skus ?? 0,
+    withdrawalsPending: s.withdrawals_pending ?? 0,
     recentOrders: recentOrders || [],
   }
 }
@@ -151,10 +162,16 @@ export interface OrderSummary {
   shipping_fee: number
   cod_fee: number
   discount_amount: number
-  needs_invoice: boolean
+  delivered_at: string | null
+  // Surfaced from joined invoices row of type='invoice' (one per order at most).
+  // Kept on the summary row for quick filtering / list display; the full
+  // OrderDetail.invoices array carries credit_note rows too.
+  invoice: OrderInvoiceSummary | null
+}
+
+export interface OrderInvoiceSummary {
   invoice_number: string | null
   invoice_date: string | null
-  delivered_at: string | null
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -162,6 +179,7 @@ export interface OrderDetail extends OrderSummary {
   postal_code: string
   notes: string
   items: Array<{
+    id: number
     productId: string
     productName: string
     sku: string
@@ -170,13 +188,6 @@ export interface OrderDetail extends OrderSummary {
     cancelledQuantity: number
     lineNo: number
   }>
-  needs_invoice: boolean
-  invoice_type: "individual" | "company" | null
-  invoice_company_name: string | null
-  invoice_eik: string | null
-  invoice_vat_number: string | null
-  invoice_mol: string | null
-  invoice_address: string | null
   econt_office_id: number | null
   econt_office_code: string | null
   econt_office_name: string | null
@@ -189,8 +200,6 @@ export interface OrderDetail extends OrderSummary {
   stripe_receipt_url: string | null
   order_confirmation_sent_at: string | null
   delivery_email_sent_at: string | null
-  invoice_number: string | null
-  invoice_date: string | null
   promo_code: string | null
   discount_amount: number
   shipping_fee: number
@@ -201,7 +210,6 @@ export interface OrderDetail extends OrderSummary {
   cancelled_at: string | null
   admin_notes: Array<{ text: string; created_at: string; author?: string }>
   cancellation_reason: string | null
-  invoice_sent_at: string | null
   paid_at: string | null
   courier_ppp_ref: string | null
   settlement_ref: string | null
@@ -209,9 +217,16 @@ export interface OrderDetail extends OrderSummary {
   cod_confirmed_at: string | null
   cod_confirmed_by: string | null
   refunds: OrderRefund[]
+  // All invoice rows for this order — type='invoice' (at most one) plus any
+  // type='credit_note' rows auto-created on refunds.
+  invoices: Invoice[]
+  // All withdrawal rows for this order. At most one is open at a time
+  // (uq_open_withdrawal_per_order). Closed (completed/rejected) ones remain
+  // for audit history.
+  withdrawals: Withdrawal[]
   // Inventory movements of type return_in / damaged for this order, used by
   // the admin UI to show the kредитно-известие breakdown per refund (linked
-  // via inventory_log.reference_id = order_refunds.id). No FK relationship
+  // via inventory_log.reference_id = refunds.id). No FK relationship
   // exists in the DB (reference_id is polymorphic text), so we fetch
   // separately and match client-side.
   inventoryReturns: OrderInventoryReturn[]
@@ -243,17 +258,52 @@ export interface OrderInventoryReturn {
   created_at: string
 }
 
+export interface RefundItem {
+  id: string
+  refund_id: string
+  order_item_id: number
+  quantity: number
+  amount_cents: number
+  created_at: string
+}
+
 export interface OrderRefund {
   id: string
   order_id: string
   stripe_refund_id: string | null
+  bank_transfer_ref: string | null
   amount_cents: number
   method: "stripe" | "bank_transfer"
   source: "admin_ui" | "stripe_webhook"
   reason: string | null
-  credit_note_ref: string | null
+  affects_invoiced_supply: boolean
+  credit_note_skip_reason: string | null
   recorded_by: string
   refunded_at: string
+  created_at: string
+  updated_at: string
+  // Per-line allocation (NEW). Empty when refund is a custom amount only
+  // (no item allocation). Webhook-originated refunds always have empty
+  // items since the webhook has no item context.
+  items: RefundItem[]
+}
+
+export interface Invoice {
+  id: string
+  order_id: string
+  type: "invoice" | "credit_note"
+  refund_id: string | null
+  references_invoice_id: string | null
+  invoice_type: "individual" | "company" | null
+  company_name: string | null
+  eik: string | null
+  vat_number: string | null
+  mol: string | null
+  address: string | null
+  invoice_number: string | null
+  invoice_date: string | null
+  sent_at: string | null
+  due_at: string | null
   created_at: string
   updated_at: string
 }
@@ -306,15 +356,6 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
     }
   }
 
-  const invoiceFilter = params?.invoiceFilter
-  if (invoiceFilter === "requested") {
-    query = query.eq("needs_invoice", true)
-  } else if (invoiceFilter === "issued") {
-    query = query.not("invoice_number", "is", null)
-  } else if (invoiceFilter === "pending") {
-    query = query.eq("needs_invoice", true).is("invoice_number", null)
-  }
-
   const paymentFilter = params?.paymentFilter
   if (paymentFilter === "awaiting-settlement") {
     query = query.eq("payment_method", "cod").eq("status", "delivered").is("paid_at", null)
@@ -325,6 +366,50 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   return query
 }
 
+// Resolve an invoice filter (`requested` | `issued` | `pending`) to the set of
+// order_ids whose type='invoice' row matches. Returned to the caller so it
+// can attach `.in("id", ...)` to the orders query (PostgREST can't filter a
+// parent table by an embedded resource's column directly without changing
+// join semantics, so we resolve the id list in a separate query).
+//
+// Returns null when no filter is applied (caller should skip the .in()).
+async function resolveInvoiceFilterOrderIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  invoiceFilter: string | undefined,
+): Promise<string[] | null> {
+  if (!invoiceFilter || invoiceFilter === "all") return null
+
+  let invQuery: any = supabase.from("invoices").select("order_id").eq("type", "invoice")
+  if (invoiceFilter === "issued") {
+    invQuery = invQuery.not("invoice_number", "is", null)
+  } else if (invoiceFilter === "pending") {
+    invQuery = invQuery.is("invoice_number", null)
+  }
+  // "requested" → just type='invoice', no further filter
+
+  const { data, error } = await invQuery
+  if (error) {
+    console.error("Failed to resolve invoice filter:", error)
+    return []
+  }
+  return (data ?? []).map((r: { order_id: string }) => r.order_id)
+}
+
+// Map the joined invoices array on an order summary row to the {invoice_number,
+// invoice_date} shape expected on OrderSummary.invoice. The DB invariant is
+// 0..1 invoices row of type='invoice' per order.
+function pickInitialInvoice(
+  invoices: Array<{ type: string; invoice_number: string | null; invoice_date: string | null }> | null | undefined,
+): OrderInvoiceSummary | null {
+  if (!invoices || invoices.length === 0) return null
+  const initial = invoices.find((i) => i.type === "invoice")
+  if (!initial) return null
+  return {
+    invoice_number: initial.invoice_number,
+    invoice_date: initial.invoice_date,
+  }
+}
+
 export async function getOrders(params?: OrderQueryParams & { page?: number }): Promise<{ orders: OrderSummary[]; total: number }> {
   await requireAdmin()
   const supabase = await createClient()
@@ -333,13 +418,24 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   const from = page * ORDERS_PAGE_SIZE
   const to = from + ORDERS_PAGE_SIZE - 1
 
+  const invoiceOrderIds = await resolveInvoiceFilterOrderIds(supabase, params?.invoiceFilter)
+  if (invoiceOrderIds !== null && invoiceOrderIds.length === 0) {
+    return { orders: [], total: 0 }
+  }
+
   let query = supabase
     .from("orders")
-    .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at", { count: "exact" })
+    .select(
+      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+      { count: "exact" },
+    )
     .order("created_at", { ascending: false })
     .range(from, to)
 
   query = applyOrderFilters(query, params)
+  if (invoiceOrderIds !== null) {
+    query = query.in("id", invoiceOrderIds)
+  }
 
   const { data, error, count } = await query
 
@@ -348,12 +444,22 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
     throw new Error("Failed to fetch orders")
   }
 
-  return { orders: data || [], total: count ?? 0 }
+  const orders: OrderSummary[] = (data ?? []).map((row: any) => {
+    const { invoices, ...rest } = row
+    return { ...rest, invoice: pickInitialInvoice(invoices) }
+  })
+
+  return { orders, total: count ?? 0 }
 }
 
 export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSummary[]> {
   await requireAdmin()
   const supabase = await createClient()
+
+  const invoiceOrderIds = await resolveInvoiceFilterOrderIds(supabase, params?.invoiceFilter)
+  if (invoiceOrderIds !== null && invoiceOrderIds.length === 0) {
+    return []
+  }
 
   const results: OrderSummary[] = []
   let from = 0
@@ -362,11 +468,16 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
   while (true) {
     let query = supabase
       .from("orders")
-      .select("id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, needs_invoice, invoice_number, invoice_date, delivered_at")
+      .select(
+        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+      )
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
 
     query = applyOrderFilters(query, params)
+    if (invoiceOrderIds !== null) {
+      query = query.in("id", invoiceOrderIds)
+    }
 
     const { data, error } = await query
     if (error) {
@@ -374,7 +485,11 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
       throw new Error("Failed to fetch orders")
     }
 
-    results.push(...(data || []))
+    const mapped: OrderSummary[] = (data ?? []).map((row: any) => {
+      const { invoices, ...rest } = row
+      return { ...rest, invoice: pickInitialInvoice(invoices) }
+    })
+    results.push(...mapped)
     if (!data || data.length < batchSize) break
     from += batchSize
   }
@@ -383,23 +498,28 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
 }
 
 export interface InvoiceSummary {
-  id: string
-  created_at: string
-  first_name: string
-  last_name: string
-  email: string
-  total_amount: number
-  invoice_number: string
+  id: string                   // invoices.id (NOT orders.id)
+  order_id: string
+  type: "invoice" | "credit_note"
+  invoice_number: string       // not null since list filters on issued
   invoice_date: string
-  invoice_company_name: string | null
-  invoice_eik: string | null
-  needs_invoice: boolean
+  due_at: string | null
+  // Joined customer info from orders
+  customer_first_name: string
+  customer_last_name: string
+  customer_email: string
+  order_total_amount: number
+  // Invoice profile (null for credit_note)
+  invoice_type: "individual" | "company" | null
+  company_name: string | null
+  eik: string | null
 }
 
 interface InvoiceQueryParams {
   search?: string
   dateFrom?: string
   dateTo?: string
+  type?: "invoice" | "credit_note" | "all"
 }
 
 function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
@@ -413,17 +533,46 @@ function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
     query = query.lte("invoice_date", `${dateTo}T23:59:59`)
   }
 
+  const type = params?.type
+  if (type === "invoice" || type === "credit_note") {
+    query = query.eq("type", type)
+  }
+
   const search = params?.search?.trim().toLowerCase()
   if (search) {
     const escaped = escapeIlike(search)
-    if (/^\d+$/.test(search)) {
+    // Invoice-number search; customer-name/email/company-name search needs a
+    // joined-orders ilike which PostgREST doesn't expose easily, so fall back
+    // to invoice_number search only when input is digits, and to company_name
+    // (on invoices itself) otherwise. For richer search the admin UI can add
+    // a separate filter, or we can switch to a Postgres full-text view.
+    if (/^[a-zA-Z0-9-]+$/.test(search)) {
       query = query.ilike("invoice_number", `%${escaped}%`)
     } else {
-      query = query.or(`first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%,invoice_company_name.ilike.%${escaped}%`)
+      query = query.ilike("company_name", `%${escaped}%`)
     }
   }
 
   return query
+}
+
+function mapInvoiceRowToSummary(row: any): InvoiceSummary {
+  const order = row.orders ?? row.order ?? {}
+  return {
+    id: row.id,
+    order_id: row.order_id,
+    type: row.type,
+    invoice_number: row.invoice_number,
+    invoice_date: row.invoice_date,
+    due_at: row.due_at,
+    customer_first_name: order.first_name ?? "",
+    customer_last_name: order.last_name ?? "",
+    customer_email: order.email ?? "",
+    order_total_amount: order.total_amount ?? 0,
+    invoice_type: row.invoice_type,
+    company_name: row.company_name,
+    eik: row.eik,
+  }
 }
 
 export async function getInvoices(params?: InvoiceQueryParams & { page?: number }): Promise<{ invoices: InvoiceSummary[]; total: number }> {
@@ -435,8 +584,11 @@ export async function getInvoices(params?: InvoiceQueryParams & { page?: number 
   const to = from + ORDERS_PAGE_SIZE - 1
 
   let query = supabase
-    .from("orders")
-    .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice", { count: "exact" })
+    .from("invoices")
+    .select(
+      "id, order_id, type, invoice_number, invoice_date, due_at, invoice_type, company_name, eik, orders!inner(first_name, last_name, email, total_amount)",
+      { count: "exact" },
+    )
     .not("invoice_number", "is", null)
     .order("invoice_date", { ascending: false })
     .range(from, to)
@@ -450,7 +602,10 @@ export async function getInvoices(params?: InvoiceQueryParams & { page?: number 
     throw new Error("Failed to fetch invoices")
   }
 
-  return { invoices: (data || []) as InvoiceSummary[], total: count ?? 0 }
+  return {
+    invoices: (data ?? []).map(mapInvoiceRowToSummary),
+    total: count ?? 0,
+  }
 }
 
 export async function getAllInvoices(params?: InvoiceQueryParams): Promise<InvoiceSummary[]> {
@@ -463,8 +618,10 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
 
   while (true) {
     let query = supabase
-      .from("orders")
-      .select("id, created_at, first_name, last_name, email, total_amount, invoice_number, invoice_date, invoice_company_name, invoice_eik, needs_invoice")
+      .from("invoices")
+      .select(
+        "id, order_id, type, invoice_number, invoice_date, due_at, invoice_type, company_name, eik, orders!inner(first_name, last_name, email, total_amount)",
+      )
       .not("invoice_number", "is", null)
       .order("invoice_date", { ascending: false })
       .range(from, from + batchSize - 1)
@@ -477,7 +634,7 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
       throw new Error("Failed to fetch invoices")
     }
 
-    results.push(...((data || []) as InvoiceSummary[]))
+    results.push(...((data ?? []).map(mapInvoiceRowToSummary)))
     if (!data || data.length < batchSize) break
     from += batchSize
   }
@@ -518,12 +675,13 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     "dispute_funds_reinstated",
   ]
 
-  const [orderResult, returnsResult, auditResult] = await Promise.all([
+  const [orderResult, returnsResult, auditResult, invoicesResult, withdrawalsResult] = await Promise.all([
     supabase
       .from("orders")
       .select(`
         *,
         items:order_items(
+          id,
           productId:product_id,
           productName:product_name,
           sku,
@@ -532,25 +690,35 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
           cancelledQuantity:cancelled_quantity,
           lineNo:line_no
         ),
-        refunds:order_refunds(
+        refunds(
           id,
           order_id,
           stripe_refund_id,
+          bank_transfer_ref,
           amount_cents,
           method,
           source,
           reason,
-          credit_note_ref,
+          affects_invoiced_supply,
+          credit_note_skip_reason,
           recorded_by,
           refunded_at,
           created_at,
-          updated_at
+          updated_at,
+          items:refund_items(
+            id,
+            refund_id,
+            order_item_id,
+            quantity,
+            amount_cents,
+            created_at
+          )
         )
       `)
       .eq("id", orderId)
-      .order("refunded_at", { foreignTable: "order_refunds", ascending: false })
+      .order("refunded_at", { foreignTable: "refunds", ascending: false })
       .single(),
-    // inventory_log has no FK to order_refunds (reference_id is polymorphic
+    // inventory_log has no FK to refunds (reference_id is polymorphic
     // text), so PostgREST can't nest it under refunds. Fetch separately and
     // let the client match by reference_id = refund.id.
     supabase
@@ -564,6 +732,18 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       .select("id, event_type, actor, payload, created_at")
       .eq("order_id", orderId)
       .in("event_type", TIMELINE_EVENT_TYPES)
+      .order("created_at", { ascending: true }),
+    // All invoice rows for this order (initial фактура + any кредитни известия).
+    supabase
+      .from("invoices")
+      .select("id, order_id, type, refund_id, references_invoice_id, invoice_type, company_name, eik, vat_number, mol, address, invoice_number, invoice_date, sent_at, due_at, created_at, updated_at")
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true }),
+    // Withdrawals (право на отказ) for this order — open + closed history.
+    supabase
+      .from("withdrawals")
+      .select("*")
+      .eq("order_id", orderId)
       .order("created_at", { ascending: true }),
   ])
 
@@ -587,7 +767,34 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
     console.error(`Failed to fetch audit events for order ${orderId}:`, auditResult.error)
   }
 
-  return { ...orderResult.data, inventoryReturns: returns, auditEvents }
+  const invoices = (invoicesResult.data ?? []) as Invoice[]
+  if (invoicesResult.error) {
+    console.error(`Failed to fetch invoices for order ${orderId}:`, invoicesResult.error)
+  }
+
+  const withdrawals = (withdrawalsResult.data ?? []) as Withdrawal[]
+  if (withdrawalsResult.error) {
+    console.error(`Failed to fetch withdrawals for order ${orderId}:`, withdrawalsResult.error)
+  }
+
+  // Surface the (at most one) initial invoice as the OrderSummary.invoice
+  // shape so list-style consumers see it identically to the orders-list path.
+  const initialInvoice = invoices.find((inv) => inv.type === "invoice") ?? null
+  const invoiceSummary: OrderInvoiceSummary | null = initialInvoice
+    ? {
+        invoice_number: initialInvoice.invoice_number,
+        invoice_date: initialInvoice.invoice_date,
+      }
+    : null
+
+  return {
+    ...orderResult.data,
+    invoice: invoiceSummary,
+    invoices,
+    withdrawals,
+    inventoryReturns: returns,
+    auditEvents,
+  }
 }
 
 // Valid status transitions
@@ -953,26 +1160,40 @@ export async function addAdminNote(orderId: string, note: string) {
   return { success: true }
 }
 
-// Note: invoice_number / invoice_date are deliberately allowed on orders
-// where needs_invoice=false. Profile fields (type/mol/address/company_name/
-// eik/vat) stay tied to needs_invoice — those represent what the customer
-// agreed to share at checkout. The number is admin-controlled (issued in
-// Microinvest, pasted here) and orthogonal to checkout consent. See
-// migration 20260425_relax_invoice_fields_cleared.sql.
-export async function setInvoiceNumber(orderId: string, invoiceNumber: string): Promise<{ success: true }> {
+// Sets the Microinvest-assigned number on an invoices row (either type='invoice'
+// or type='credit_note'). Idempotency guard via .is("invoice_number", null).
+// Optional invoice_date — defaults to now (admin pasted same-day issuance);
+// caller can pass an explicit date for retroactive entries.
+export async function setInvoiceNumber(
+  invoiceId: string,
+  invoiceNumber: string,
+  invoiceDate?: string,
+): Promise<{ success: true }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const trimmed = invoiceNumber.trim()
   if (!trimmed || trimmed.length > 50) throw new Error("Невалиден номер на фактура")
 
+  let dateIso: string
+  if (invoiceDate) {
+    const parsed = new Date(invoiceDate)
+    if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на фактура")
+    if (parsed > new Date()) throw new Error("Датата на фактура не може да бъде в бъдещето")
+    dateIso = /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)
+      ? new Date(invoiceDate + "T23:59:59.000Z").toISOString()
+      : parsed.toISOString()
+  } else {
+    dateIso = new Date().toISOString()
+  }
+
   const supabase = await createClient()
   const { data, error } = await supabase
-    .from("orders")
-    .update({ invoice_number: trimmed, invoice_date: new Date().toISOString() })
-    .eq("id", orderId)
+    .from("invoices")
+    .update({ invoice_number: trimmed, invoice_date: dateIso })
+    .eq("id", invoiceId)
     .is("invoice_number", null)
     .select("id")
 
@@ -982,25 +1203,27 @@ export async function setInvoiceNumber(orderId: string, invoiceNumber: string): 
   }
 
   if (!data || data.length === 0) {
-    throw new Error("Поръчката не е намерена или вече има фактура")
+    throw new Error("Документът не е намерен или вече има номер")
   }
 
   return { success: true }
 }
 
-export async function markInvoiceSent(orderId: string): Promise<{ success: true }> {
+// Marks an invoices row as sent to the customer. Works for both type='invoice'
+// and type='credit_note'. Requires invoice_number to be set first.
+export async function markInvoiceSent(invoiceId: string): Promise<{ success: true }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const supabase = await createClient()
   const { data, error } = await supabase
-    .from("orders")
-    .update({ invoice_sent_at: new Date().toISOString() })
-    .eq("id", orderId)
+    .from("invoices")
+    .update({ sent_at: new Date().toISOString() })
+    .eq("id", invoiceId)
     .not("invoice_number", "is", null)
-    .is("invoice_sent_at", null)
+    .is("sent_at", null)
     .select("id")
 
   if (error) {
@@ -1009,7 +1232,7 @@ export async function markInvoiceSent(orderId: string): Promise<{ success: true 
   }
 
   if (!data || data.length === 0) {
-    throw new Error("Поръчката няма фактура или вече е отбелязана като изпратена")
+    throw new Error("Документът няма номер или вече е отбелязан като изпратен")
   }
 
   return { success: true }
@@ -1536,8 +1759,8 @@ export async function resendDeliveryEmail(
 }
 
 // ─── Refund tracking ─────────────────────────────────────────────────────────
-// Refunds live in the order_refunds child table (one row per refund, many per
-// order). Single-responsibility: recordRefund writes ONLY to order_refunds.
+// Refunds live in the refunds child table (one row per refund, many per
+// order). Single-responsibility: recordRefund writes ONLY to refunds.
 // Stock movements linked to a refund are recorded by a separate server action
 // (recordStockMovement) — the UI orchestrates the "refund → stock outcome"
 // flow as two explicit steps, preserving the three-layer separation:
@@ -1552,12 +1775,23 @@ export async function resendDeliveryEmail(
 //
 // Phase 1 (current): admin issues Stripe refunds in the Stripe dashboard,
 // then records them here with the Stripe refund ID. COD refunds are
-// bank-transfer only, no gateway ID. The webhook creates rows the admin
-// hasn't recorded yet and admin can annotate afterward (reason,
-// credit_note_ref) via updateRefundAnnotation.
+// bank-transfer only — admin pastes the bank's transfer reference. The
+// webhook creates rows the admin hasn't recorded yet, and admin can annotate
+// afterward (reason, bank_transfer_ref, credit_note_skip_reason) via
+// updateRefundAnnotation.
 //
 // Phase 2: the admin UI will call stripe.refunds.create() directly and
 // insert the row synchronously — same table, same shape, no schema change.
+//
+// Credit note auto-creation rule (ЗДДС Чл. 115):
+//   A type='credit_note' row in invoices is auto-inserted when ALL three:
+//     1. an invoices row of type='invoice' exists for the order
+//     2. that invoice has invoice_number set (фактура actually issued)
+//     3. data.affectsInvoicedSupply is true (default; admin can opt out
+//        for goodwill / non-supply-reducing refunds)
+//   When all three true but #2 is false (invoice exists without number),
+//   we BLOCK the refund with a guidance message — admin must complete the
+//   invoice first.
 
 export async function recordRefund(
   orderId: string,
@@ -1566,11 +1800,35 @@ export async function recordRefund(
     refundReason: string
     refundMethod: "stripe" | "bank_transfer"
     refundedAt?: string
-    creditNoteRef?: string
     stripeRefundId?: string
+    bankTransferRef?: string
+    affectsInvoicedSupply?: boolean
+    creditNoteSkipReason?: string
     clientIdempotencyKey: string
+    // Optional withdrawal linkage. When set, the resulting refund row carries
+    // withdrawal_id, the withdrawal's refund_id is updated, and (if conditions
+    // are met) the withdrawal auto-completes:
+    //   Path A: withdrawal.status='goods_received' → completed
+    //   Path B: withdrawal.status='approved' AND return_required=false AND
+    //           completion_note set → completed
+    withdrawalId?: string
+    // Optional per-line allocation. When provided, refund_items rows are
+    // inserted alongside the refund row. Each item:
+    //   - orderItemId must belong to this order
+    //   - quantity > 0
+    //   - amountCents > 0; defaults to order_item.unit_price_cents * quantity
+    //     if omitted (caller supplies the override for diminished-value /
+    //     discount cases)
+    //   - sum(amountCents) ≤ refundAmount (DB trigger enforces; caller can
+    //     pre-validate for friendly errors)
+    // Webhook-originated refunds always pass items=undefined (no item context).
+    items?: Array<{
+      orderItemId: number
+      quantity: number
+      amountCents?: number
+    }>
   },
-): Promise<{ success: true; refundId: string }> {
+): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1594,10 +1852,21 @@ export async function recordRefund(
     throw new Error("Невалиден метод на възстановяване")
   }
 
-  // Validate creditNoteRef
-  const trimmedCreditNote = data.creditNoteRef?.trim() || null
-  if (trimmedCreditNote && trimmedCreditNote.length > 100) {
-    throw new Error("Референцията на кредитното известие е твърде дълга")
+  // Affects-invoiced-supply flag (default true). Drives credit-note auto-creation
+  // and is structured (NOT encoded in reason).
+  const affectsInvoicedSupply = data.affectsInvoicedSupply ?? true
+
+  // Skip reason required when admin opts out of credit note
+  const trimmedSkipReason = data.creditNoteSkipReason?.trim() || null
+  if (!affectsInvoicedSupply) {
+    if (!trimmedSkipReason) {
+      throw new Error("Когато не се изисква кредитно известие, посочете причина")
+    }
+    if (trimmedSkipReason.length > 500) {
+      throw new Error("Причината за пропуск на кредитно известие е твърде дълга")
+    }
+  } else if (trimmedSkipReason) {
+    throw new Error("Причина за пропуск може да се посочи само когато не се създава кредитно известие")
   }
 
   // Validate Stripe refund ID (required for method=stripe)
@@ -1612,6 +1881,49 @@ export async function recordRefund(
   }
   if (data.refundMethod === "bank_transfer" && trimmedStripeRefundId) {
     throw new Error("Банковите преводи нямат Stripe refund ID")
+  }
+
+  // Validate bank_transfer_ref (required for method=bank_transfer)
+  const trimmedBankTransferRef = data.bankTransferRef?.trim() || null
+  if (data.refundMethod === "bank_transfer") {
+    if (!trimmedBankTransferRef) {
+      throw new Error("Референцията на банков превод е задължителна за банково възстановяване")
+    }
+    if (trimmedBankTransferRef.length > 200) {
+      throw new Error("Референцията на банков превод е твърде дълга")
+    }
+  }
+  if (data.refundMethod === "stripe" && trimmedBankTransferRef) {
+    throw new Error("Stripe възстановяванията нямат референция на банков превод")
+  }
+
+  // ── refund_items shape validation (no DB needed) ─────────────────────────
+  // Catch the "obvious" input bugs (empty array, duplicates, non-positive
+  // quantity/amount) before opening any DB connection. The DB-dependent
+  // checks (item belongs to order, qty cap, amount cap) run later, after
+  // we've fetched the order + order_items.
+  if (data.items !== undefined) {
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("Списъкът с артикули е празен")
+    }
+    const seenItemIds = new Set<number>()
+    for (const it of data.items) {
+      if (!Number.isInteger(it.orderItemId) || it.orderItemId <= 0) {
+        throw new Error("Невалиден артикул в поръчката")
+      }
+      if (seenItemIds.has(it.orderItemId)) {
+        throw new Error("Един и същ артикул е посочен повече от веднъж")
+      }
+      seenItemIds.add(it.orderItemId)
+      if (!Number.isInteger(it.quantity) || it.quantity < 1) {
+        throw new Error("Количеството трябва да е положително цяло число")
+      }
+      if (it.amountCents !== undefined) {
+        if (!Number.isInteger(it.amountCents) || it.amountCents < 1) {
+          throw new Error("Сумата по артикул трябва да е положително цяло число")
+        }
+      }
+    }
   }
 
   // Validate refundedAt
@@ -1635,7 +1947,7 @@ export async function recordRefund(
   // Fast-path idempotency: if a refund with this client_idempotency_key
   // exists, this is a retry. Return the existing ID without re-inserting.
   const { data: existingRefunds, error: existingError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .select("id, order_id")
     .eq("client_idempotency_key", data.clientIdempotencyKey)
   if (existingError) {
@@ -1648,13 +1960,20 @@ export async function recordRefund(
     if (existing.order_id !== orderId) {
       throw new Error("Idempotency key принадлежи на друга поръчка")
     }
-    return { success: true, refundId: existing.id }
+    // Lookup any credit_note that may already be tied to this refund
+    const { data: existingCN } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("refund_id", existing.id)
+      .eq("type", "credit_note")
+      .maybeSingle()
+    return { success: true, refundId: existing.id, creditNoteId: existingCN?.id ?? null }
   }
 
   // No existing row — run full validation + insert.
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, needs_invoice, invoice_number, stripe_payment_intent_id")
+    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id")
     .eq("id", orderId)
     .single()
 
@@ -1662,6 +1981,30 @@ export async function recordRefund(
   if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
   if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
     throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
+  }
+
+  // Look up the order's initial invoice (if any) — drives the credit-note guard
+  // and auto-creation. The DB invariant guarantees 0..1 type='invoice' row.
+  const { data: invoiceRow, error: invoiceError } = await supabase
+    .from("invoices")
+    .select("id, invoice_number")
+    .eq("order_id", orderId)
+    .eq("type", "invoice")
+    .maybeSingle()
+  if (invoiceError) {
+    console.error("Failed to look up invoice for refund:", invoiceError)
+    throw new Error("Грешка при проверка на фактурата на поръчката")
+  }
+
+  // Guard (ЗДДС Чл. 115): if the customer requested an invoice but admin
+  // hasn't issued the фактура in Microinvest yet, block refunds that would
+  // require a кредитно известие. Admin must complete the invoice first.
+  const hasInvoiceRow = !!invoiceRow
+  const invoiceNumberSet = !!invoiceRow?.invoice_number
+  if (affectsInvoicedSupply && hasInvoiceRow && !invoiceNumberSet) {
+    throw new Error(
+      "Първо въведете номер и дата на фактурата преди да запишете възстановяване, което я намалява.",
+    )
   }
 
   // For Stripe refunds, verify the pasted refund ID against Stripe before
@@ -1721,7 +2064,7 @@ export async function recordRefund(
 
   // Sum existing refunds for friendly overshoot message (trigger is backstop).
   const { data: sumRows, error: sumError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .select("amount_cents")
     .eq("order_id", orderId)
   if (sumError) {
@@ -1739,36 +2082,120 @@ export async function recordRefund(
     )
   }
 
-  // Validate refundedAt not before delivered_at
+  // Validate refundedAt not before delivered_at. Compare by calendar date
+  // (UTC), not by timestamp — same-day delivery + refund is valid even when
+  // the delivery is timestamped 13:00 and the refund picker submits as
+  // midnight or 23:59. Truncating to YYYY-MM-DD avoids false rejections.
   if (order.delivered_at && data.refundedAt) {
-    const deliveredDate = new Date(order.delivered_at)
-    const refundDate = new Date(data.refundedAt)
-    if (refundDate < deliveredDate) {
+    const deliveredDay = new Date(order.delivered_at).toISOString().slice(0, 10)
+    // data.refundedAt may already be YYYY-MM-DD (date picker) or full ISO.
+    const refundDay = /^\d{4}-\d{2}-\d{2}$/.test(data.refundedAt)
+      ? data.refundedAt
+      : new Date(data.refundedAt).toISOString().slice(0, 10)
+    if (refundDay < deliveredDay) {
       throw new Error("Датата на възстановяване не може да е преди датата на доставка")
     }
   }
 
-  // Conditional credit_note_ref validation: invoice issued → credit note required
-  if (order.needs_invoice && order.invoice_number && !trimmedCreditNote) {
-    throw new Error("За поръчка с издадена фактура е необходима референция на кредитно известие")
+  // Optional withdrawal linkage: when set, validate the withdrawal belongs
+  // to this order and is in a state that can carry a refund (approved or
+  // goods_received; never completed/rejected).
+  const withdrawalIdForLink = data.withdrawalId?.trim() || null
+  if (withdrawalIdForLink) {
+    if (!uuidRegex.test(withdrawalIdForLink)) {
+      throw new Error("Невалиден формат на заявка за връщане")
+    }
+    const { data: wd, error: wdError } = await supabase
+      .from("withdrawals")
+      .select("id, order_id, status, return_required, completion_note")
+      .eq("id", withdrawalIdForLink)
+      .single()
+    if (wdError || !wd) throw new Error("Заявката за връщане не е намерена")
+    if (wd.order_id !== orderId) {
+      throw new Error("Заявката не принадлежи на тази поръчка")
+    }
+    if (!["approved", "goods_received"].includes(wd.status)) {
+      throw new Error("Заявката не е в състояние, което позволява запис на възстановяване")
+    }
   }
-  // If no invoice was issued, silently drop credit_note_ref (not an error).
-  const creditNoteRefForInsert =
-    order.needs_invoice && order.invoice_number ? trimmedCreditNote : null
+
+  // ── refund_items DB-dependent validation (item belongs, qty cap, sum cap) ─
+  // Shape validation already ran at the top of the function. Here we resolve
+  // default amounts and check sums against the order_items + existing
+  // refund_items rows — the DB triggers are the last-line backstop.
+  const itemsInput = data.items
+  let resolvedItems: Array<{ orderItemId: number; quantity: number; amountCents: number }> = []
+  if (itemsInput !== undefined) {
+    // Fetch order_items for this order — used to verify each orderItemId
+    // belongs here, look up unit_price_cents for defaults, and check qty caps.
+    const { data: orderItems, error: itemsError } = await supabase
+      .from("order_items")
+      .select("id, quantity, unit_price_cents")
+      .eq("order_id", orderId)
+    if (itemsError || !orderItems) {
+      console.error("Failed to fetch order_items for refund:", itemsError)
+      throw new Error("Грешка при проверка на артикулите")
+    }
+    const orderItemMap = new Map(orderItems.map((oi: { id: number; quantity: number; unit_price_cents: number }) => [oi.id, oi]))
+
+    // Existing refund_items quantities for the items in this batch — used to
+    // pre-check the qty cap (sum across all refunds + this batch ≤ ordered).
+    const targetIds = itemsInput.map((i) => i.orderItemId)
+    const { data: existingItems, error: existingError } = await supabase
+      .from("refund_items")
+      .select("order_item_id, quantity")
+      .in("order_item_id", targetIds)
+    if (existingError) {
+      console.error("Failed to fetch existing refund_items:", existingError)
+      throw new Error("Грешка при проверка на съществуващи артикулни възстановявания")
+    }
+    const existingByItem = new Map<number, number>()
+    for (const r of existingItems ?? []) {
+      const row = r as { order_item_id: number; quantity: number }
+      existingByItem.set(row.order_item_id, (existingByItem.get(row.order_item_id) ?? 0) + row.quantity)
+    }
+
+    // Resolve each input item: validate ownership, default amount if needed,
+    // pre-check qty cap.
+    let allocatedTotal = 0
+    for (const it of itemsInput) {
+      const oi = orderItemMap.get(it.orderItemId)
+      if (!oi) {
+        throw new Error(`Артикул ${it.orderItemId} не принадлежи на тази поръчка`)
+      }
+      const alreadyRefundedQty = existingByItem.get(it.orderItemId) ?? 0
+      if (alreadyRefundedQty + it.quantity > oi.quantity) {
+        throw new Error(
+          `Количеството за артикул ${it.orderItemId} (${alreadyRefundedQty} вече възстановени + ${it.quantity} ново = ${alreadyRefundedQty + it.quantity}) надвишава поръчаните ${oi.quantity} бройки`,
+        )
+      }
+      const amount = it.amountCents ?? oi.unit_price_cents * it.quantity
+      allocatedTotal += amount
+      resolvedItems.push({ orderItemId: it.orderItemId, quantity: it.quantity, amountCents: amount })
+    }
+    if (allocatedTotal > data.refundAmount) {
+      throw new Error(
+        `Алокираната сума по артикули (${(allocatedTotal / 100).toFixed(2)} лв) надвишава общата сума на възстановяването (${(data.refundAmount / 100).toFixed(2)} лв)`,
+      )
+    }
+  }
 
   const { data: inserted, error: insertError } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .insert({
       order_id: orderId,
       stripe_refund_id: trimmedStripeRefundId,
+      bank_transfer_ref: trimmedBankTransferRef,
       amount_cents: data.refundAmount,
       method: data.refundMethod,
       source: "admin_ui",
       reason: trimmedReason,
-      credit_note_ref: creditNoteRefForInsert,
+      affects_invoiced_supply: affectsInvoicedSupply,
+      credit_note_skip_reason: trimmedSkipReason,
       recorded_by: "admin",
       refunded_at: refundedAtValue,
       client_idempotency_key: data.clientIdempotencyKey,
+      withdrawal_id: withdrawalIdForLink,
     })
     .select("id")
     .single()
@@ -1779,11 +2206,11 @@ export async function recordRefund(
       // stripe_refund_id (webhook recorded this refund already). Fetch by
       // the client key to disambiguate.
       const { data: recovered } = await supabase
-        .from("order_refunds")
+        .from("refunds")
         .select("id, order_id")
         .eq("client_idempotency_key", data.clientIdempotencyKey)
       if (recovered && recovered.length > 0 && recovered[0].order_id === orderId) {
-        return { success: true, refundId: recovered[0].id }
+        return { success: true, refundId: recovered[0].id, creditNoteId: null }
       }
       // Must have been the stripe_refund_id unique — same Stripe refund
       // already in the table (webhook beat us, or dupe paste).
@@ -1793,18 +2220,123 @@ export async function recordRefund(
     throw new Error("Грешка при записване на възстановяване")
   }
 
-  return { success: true, refundId: inserted!.id }
+  const refundId = inserted!.id
+
+  // Insert refund_items rows if items were provided. On any insert failure,
+  // delete the refund row to keep things consistent (no orphan refund without
+  // its allocation). Append-only constraints on refunds DELETE block the
+  // cleanup, but only if any refund_items rows already landed — first-row
+  // failure leaves the refund with no items, so the orphan would persist.
+  // Workaround: best-effort cleanup; if the rollback DELETE fails, log loudly
+  // and rely on admin reconciliation. Pre-launch this is acceptable; a
+  // post-launch hardening would migrate to a Postgres function for atomicity.
+  if (resolvedItems.length > 0) {
+    const itemRows = resolvedItems.map((r) => ({
+      refund_id: refundId,
+      order_item_id: r.orderItemId,
+      quantity: r.quantity,
+      amount_cents: r.amountCents,
+    }))
+    const { error: itemsInsertError } = await supabase.from("refund_items").insert(itemRows)
+    if (itemsInsertError) {
+      console.error(
+        `Failed to insert refund_items for refund ${refundId}; rolling back refund row:`,
+        itemsInsertError,
+      )
+      // The refund row's append-only DELETE trigger will reject this; we
+      // need to bypass it for rollback. Best path: configure a session
+      // bypass via app.allow_refund_delete (not implemented yet), or
+      // accept the orphan. For MVP, attempt the delete; if it fails we
+      // log and surface the original error.
+      const { error: deleteError } = await supabase
+        .from("refunds")
+        .delete()
+        .eq("id", refundId)
+      if (deleteError) {
+        console.error(
+          `CRITICAL: refund ${refundId} cannot be rolled back (refunds is append-only). ` +
+          `Orphaned refund row exists without item allocations. Manual cleanup required.`,
+          deleteError,
+        )
+      }
+      throw new Error("Грешка при записване на артикулните позиции на възстановяването")
+    }
+  }
+
+  // Auto-create credit_note row if all three conditions hold (#1 and #2 are
+  // checked inside autoCreateCreditNoteRow; #3 is the affects flag).
+  let creditNoteId: string | null = null
+  if (affectsInvoicedSupply) {
+    creditNoteId = await autoCreateCreditNoteRow(supabase, {
+      orderId,
+      refundId,
+      refundedAt: refundedAtValue,
+    })
+  }
+
+  // If linked to a withdrawal, update the withdrawal: set refund_id +
+  // resolution_type='refund'. Auto-complete when conditions met:
+  //   Path A: withdrawal.status='goods_received' → completed
+  //   Path B: withdrawal.status='approved' AND return_required=false AND
+  //           completion_note set → completed
+  // Otherwise the withdrawal keeps its current status; the refund is recorded
+  // but completion happens later when admin marks goods received or completes
+  // via no-return path explicitly.
+  if (withdrawalIdForLink) {
+    const { data: wdNow } = await supabase
+      .from("withdrawals")
+      .select("status, return_required, completion_note")
+      .eq("id", withdrawalIdForLink)
+      .single()
+
+    const wdPayload: Record<string, unknown> = {
+      refund_id: refundId,
+      resolution_type: "refund",
+    }
+
+    if (wdNow) {
+      const canCompletePathA = wdNow.status === "goods_received"
+      const canCompletePathB =
+        wdNow.status === "approved" &&
+        wdNow.return_required === false &&
+        typeof wdNow.completion_note === "string" &&
+        wdNow.completion_note.trim() !== ""
+      if (canCompletePathA || canCompletePathB) {
+        wdPayload.status = "completed"
+        wdPayload.completed_at = new Date().toISOString()
+      }
+    }
+
+    const { error: wdUpdateError } = await supabase
+      .from("withdrawals")
+      .update(wdPayload)
+      .eq("id", withdrawalIdForLink)
+    if (wdUpdateError) {
+      // Money has moved; surface the error loudly but don't roll back the
+      // refund. Admin can manually complete the withdrawal from the UI.
+      console.error(
+        `Refund ${refundId} recorded but withdrawal ${withdrawalIdForLink} update failed:`,
+        wdUpdateError,
+      )
+    }
+  }
+
+  return { success: true, refundId, creditNoteId }
 }
 
-// Admin-annotation edits on existing refund rows (reason, credit_note_ref).
-// Typically used to annotate webhook-originated refunds that arrived before
-// the admin had a chance to record intent. Does NOT emit an audit event —
-// annotations are not money movements.
+// Admin-annotation edits on existing refund rows.
+// Mutable fields on refunds: reason, bank_transfer_ref,
+// credit_note_skip_reason. Audit event emitted automatically by the
+// emit_order_refund_annotation_audit trigger.
+//
+// To edit the credit-note number, use setInvoiceNumber(invoiceId, ...) on
+// the linked credit_note row in invoices instead.
 export async function updateRefundAnnotation(
   refundId: string,
   data: {
     reason?: string
-    creditNoteRef?: string
+    bankTransferRef?: string
+    creditNoteSkipReason?: string
   },
 ): Promise<{ success: true }> {
   await requireAdmin()
@@ -1821,12 +2353,20 @@ export async function updateRefundAnnotation(
     updatePayload.reason = trimmed
   }
 
-  if (data.creditNoteRef !== undefined) {
-    const trimmed = data.creditNoteRef.trim()
-    if (trimmed.length > 100) {
-      throw new Error("Референцията на кредитното известие е твърде дълга")
+  if (data.bankTransferRef !== undefined) {
+    const trimmed = data.bankTransferRef.trim()
+    if (trimmed.length > 200) {
+      throw new Error("Референцията на банков превод е твърде дълга")
     }
-    updatePayload.credit_note_ref = trimmed || null
+    updatePayload.bank_transfer_ref = trimmed || null
+  }
+
+  if (data.creditNoteSkipReason !== undefined) {
+    const trimmed = data.creditNoteSkipReason.trim()
+    if (trimmed.length > 500) {
+      throw new Error("Причината за пропуск на кредитно известие е твърде дълга")
+    }
+    updatePayload.credit_note_skip_reason = trimmed || null
   }
 
   if (Object.keys(updatePayload).length === 0) {
@@ -1835,7 +2375,7 @@ export async function updateRefundAnnotation(
 
   const supabase = await createClient()
   const { data: updated, error } = await supabase
-    .from("order_refunds")
+    .from("refunds")
     .update(updatePayload)
     .eq("id", refundId)
     .select("id")
@@ -2129,6 +2669,40 @@ export async function resolveComplaint(
 
 // ─── Complaint queries ───────────────────────────────────────────────────────
 
+interface ComplaintQueryParams {
+  status?: string
+  page?: number
+}
+
+export async function getComplaints(
+  params?: ComplaintQueryParams,
+): Promise<{ complaints: Complaint[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("complaints")
+    .select("*", { count: "exact" })
+    .order("reported_at", { ascending: false })
+    .range(from, to)
+
+  if (params?.status && params.status !== "all") {
+    query = query.eq("status", params.status)
+  }
+
+  const { data, error, count } = await query
+  if (error) {
+    console.error("Failed to fetch complaints:", error)
+    throw new Error("Грешка при зареждане на рекламациите")
+  }
+
+  return { complaints: (data ?? []) as Complaint[], total: count ?? 0 }
+}
+
 export async function getOrderComplaints(orderId: string): Promise<Complaint[]> {
   await requireAdmin()
 
@@ -2149,6 +2723,384 @@ export async function getOrderComplaints(orderId: string): Promise<Complaint[]> 
 
   return (data || []) as Complaint[]
 }
+
+
+// ─── Withdrawals (право на отказ; ЗЗП Чл. 50) ───────────────────────────────
+// Admin-driven intake: customer contacts via email/phone; admin classifies and
+// creates the withdrawal here. State machine + audit triggers live in the DB
+// migration; these server actions are thin wrappers that prepare payloads,
+// run validation, and surface friendly errors.
+
+interface CreateWithdrawalInput {
+  requestedVia: WithdrawalRequestedVia
+  customerEmail: string
+  customerRequestText?: string
+}
+
+export async function createWithdrawal(
+  orderId: string,
+  data: CreateWithdrawalInput,
+): Promise<{ success: true; withdrawalId: string; withdrawalRef: string }> {
+  await requireAdmin()
+
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const requestedVia = data.requestedVia
+  if (!["email", "phone", "admin"].includes(requestedVia)) {
+    throw new Error("Невалиден канал на заявка")
+  }
+
+  const trimmedEmail = data.customerEmail?.trim().toLowerCase() ?? ""
+  if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    throw new Error("Невалиден имейл адрес на клиента")
+  }
+
+  const trimmedText = data.customerRequestText?.trim() || null
+  if (trimmedText && trimmedText.length > 2000) {
+    throw new Error("Текстът на заявката е твърде дълъг")
+  }
+
+  const supabase = await createClient()
+
+  // Fetch order data for eligibility computation. The order must exist;
+  // delivered_at drives the time-based eligibility check.
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, delivered_at, status")
+    .eq("id", orderId)
+    .single()
+
+  if (orderError || !order) {
+    throw new Error("Поръчката не е намерена")
+  }
+
+  // ЗЗП Чл. 50 — the withdrawal right matures only after the customer
+  // physically receives the goods. Pre-delivery cancellation is a different
+  // flow (regular order cancellation): the customer's contract hasn't yet
+  // been fully performed, so there's no completed sale to "withdraw" from.
+  // Hard-block creation for non-delivered orders to keep the register clean
+  // and point admin at the correct flow.
+  if (order.status !== "delivered") {
+    throw new Error(
+      "Право на отказ важи след доставка. За отмяна на потвърдена поръчка използвайте Действия → Отказ.",
+    )
+  }
+
+  // Time-based eligibility: requested_at <= delivered_at + 14 days.
+  // delivered_at is set since status='delivered' (chk_delivered_after_shipped
+  // ensures the timestamp is populated when status flips).
+  let eligibilityTimeBased: boolean | null = null
+  if (order.delivered_at) {
+    const deadline = new Date(order.delivered_at).getTime() + 14 * 24 * 60 * 60 * 1000
+    eligibilityTimeBased = Date.now() <= deadline
+  }
+
+  // Atomic WD-YYYY-NNNN minted server-side from the sequence
+  const { data: refData, error: refError } = await supabase.rpc("next_withdrawal_ref")
+  if (refError || !refData) {
+    console.error("Failed to mint withdrawal_ref:", refError)
+    throw new Error("Грешка при генериране на референция")
+  }
+  const withdrawalRef = String(refData)
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("withdrawals")
+    .insert({
+      order_id: orderId,
+      withdrawal_ref: withdrawalRef,
+      requested_via: requestedVia,
+      customer_email: trimmedEmail,
+      customer_request_text: trimmedText,
+      eligibility_time_based: eligibilityTimeBased,
+      // All Egg Origin SKUs are protein bars (perishable + sealed-food).
+      // The right exists, but Чл. 57 т.4+5 limits practical exercise.
+      eligibility_product_based: "perishable_or_short_shelf_life",
+      eligibility_condition: "pending_inspection",
+    })
+    .select("id, withdrawal_ref")
+    .single()
+
+  if (insertError) {
+    if (insertError.code === "23505") {
+      // uq_open_withdrawal_per_order — admin tried to register a 2nd open
+      // withdrawal on the same order.
+      throw new Error("За тази поръчка вече има отворена заявка за връщане")
+    }
+    console.error("Failed to insert withdrawal:", insertError)
+    throw new Error("Грешка при записване на заявката")
+  }
+
+  // Fire-and-forget customer ack email
+  const orderRecord = order as Record<string, unknown>
+  void sendWithdrawalReceivedEmail(orderRecord, {
+    withdrawalRef: inserted.withdrawal_ref,
+    customerEmail: trimmedEmail,
+  })
+
+  revalidateTag("withdrawals", "max")
+  return { success: true, withdrawalId: inserted.id, withdrawalRef: inserted.withdrawal_ref }
+}
+
+export async function approveWithdrawal(
+  withdrawalId: string,
+  data: { returnRequired: boolean },
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const supabase = await createClient()
+  const { data: updated, error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "approved",
+      approved_at: new Date().toISOString(),
+      approved_by: "admin",
+      return_required: data.returnRequired,
+    })
+    .eq("id", withdrawalId)
+    .eq("status", "requested")
+    .select("id, order_id, customer_email, withdrawal_ref, return_required")
+    .single()
+
+  if (error || !updated) {
+    if (error?.code) console.error("Failed to approve withdrawal:", error)
+    throw new Error("Заявката не може да бъде одобрена (възможно е да не е в статус requested)")
+  }
+
+  // Customer-facing email branches on return_required
+  void sendWithdrawalApprovedEmail({
+    orderId: updated.order_id,
+    customerEmail: updated.customer_email,
+    withdrawalRef: updated.withdrawal_ref,
+    returnRequired: updated.return_required,
+  })
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+export async function rejectWithdrawal(
+  withdrawalId: string,
+  reason: string,
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const trimmed = reason?.trim()
+  if (!trimmed) throw new Error("Причината за отказ е задължителна")
+  if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+  // CHECK chk_no_reject_after_goods enforces this at DB level too.
+  const { data: updated, error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "rejected",
+      rejection_reason: trimmed,
+      rejected_at: new Date().toISOString(),
+      rejected_by: "admin",
+    })
+    .eq("id", withdrawalId)
+    .in("status", ["requested", "approved"])
+    .is("goods_received_at", null)
+    .select("id, order_id, customer_email, withdrawal_ref")
+    .single()
+
+  if (error || !updated) {
+    if (error?.code) console.error("Failed to reject withdrawal:", error)
+    throw new Error("Заявката не може да бъде отхвърлена в текущото състояние")
+  }
+
+  void sendWithdrawalRejectedEmail({
+    orderId: updated.order_id,
+    customerEmail: updated.customer_email,
+    withdrawalRef: updated.withdrawal_ref,
+    rejectionReason: trimmed,
+  })
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+export async function markWithdrawalGoodsReceived(
+  withdrawalId: string,
+  data: {
+    eligibilityCondition: WithdrawalEligibilityCondition
+    resolutionType?: WithdrawalResolutionType
+    returnTrackingNumber?: string
+    returnCourier?: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const allowedConditions: WithdrawalEligibilityCondition[] = [
+    "sealed_sellable", "opened", "damaged", "expired", "other",
+  ]
+  if (!allowedConditions.includes(data.eligibilityCondition)) {
+    throw new Error("Невалидно състояние на върнатата стока")
+  }
+
+  const allowedResolutions: WithdrawalResolutionType[] = ["refund", "replacement", "none"]
+  if (data.resolutionType && !allowedResolutions.includes(data.resolutionType)) {
+    throw new Error("Невалиден тип резолюция")
+  }
+
+  const tracking = data.returnTrackingNumber?.trim() || null
+  if (tracking && tracking.length > 200) throw new Error("Номерът на товарителницата е твърде дълъг")
+  const courier = data.returnCourier?.trim() || null
+  if (courier && courier.length > 100) throw new Error("Името на куриера е твърде дълго")
+
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "goods_received",
+      eligibility_condition: data.eligibilityCondition,
+      resolution_type: data.resolutionType ?? null,
+      return_tracking_number: tracking,
+      return_courier: courier,
+      goods_received_at: new Date().toISOString(),
+    })
+    .eq("id", withdrawalId)
+    .eq("status", "approved")
+
+  if (error) {
+    console.error("Failed to mark goods received:", error)
+    throw new Error("Заявката не може да бъде преместена в 'получени стоки'")
+  }
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+export async function completeWithdrawalNoReturn(
+  withdrawalId: string,
+  data: {
+    resolutionType: WithdrawalResolutionType
+    completionNote: string
+  },
+): Promise<{ success: true }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  if (!["refund", "replacement", "none"].includes(data.resolutionType)) {
+    throw new Error("Невалиден тип резолюция")
+  }
+
+  const trimmedNote = data.completionNote?.trim()
+  if (!trimmedNote) throw new Error("Бележката за завършване е задължителна за path B")
+  if (trimmedNote.length > 1000) throw new Error("Бележката е твърде дълга")
+
+  // For Refund path B, refund must be linked first. Admin uses recordRefund
+  // (which writes refund_id on the withdrawal); this action is for
+  // replacement/none. If admin tries with resolution_type=refund but refund_id
+  // is null, the state-machine trigger raises.
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("withdrawals")
+    .update({
+      status: "completed",
+      resolution_type: data.resolutionType,
+      completion_note: trimmedNote,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", withdrawalId)
+    .eq("status", "approved")
+    .eq("return_required", false)
+
+  if (error) {
+    console.error("Failed to complete withdrawal (no-return path):", error)
+    if (error.message?.includes("refund_id is required")) {
+      throw new Error("За резолюция от тип 'refund' първо запишете възстановяване")
+    }
+    throw new Error("Заявката не може да бъде завършена в текущото състояние")
+  }
+
+  revalidateTag("withdrawals", "max")
+  return { success: true }
+}
+
+interface WithdrawalQueryParams {
+  status?: string
+  page?: number
+}
+
+export async function getWithdrawals(
+  params?: WithdrawalQueryParams,
+): Promise<{ withdrawals: Withdrawal[]; total: number }> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  const page = Math.max(0, Math.floor(Number(params?.page ?? 0)) || 0)
+  const from = page * ORDERS_PAGE_SIZE
+  const to = from + ORDERS_PAGE_SIZE - 1
+
+  let query = supabase
+    .from("withdrawals")
+    .select("*", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range(from, to)
+
+  if (params?.status && params.status !== "all") {
+    query = query.eq("status", params.status)
+  }
+
+  const { data, error, count } = await query
+  if (error) {
+    console.error("Failed to fetch withdrawals:", error)
+    throw new Error("Грешка при зареждане на заявките")
+  }
+
+  return { withdrawals: (data ?? []) as Withdrawal[], total: count ?? 0 }
+}
+
+export interface WithdrawalWithOrderContext extends Withdrawal {
+  order: {
+    status: string
+    payment_method: string
+    paid_at: string | null
+    delivered_at: string | null
+  }
+}
+
+export async function getWithdrawal(withdrawalId: string): Promise<WithdrawalWithOrderContext> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(withdrawalId)) throw new Error("Невалиден формат на заявка")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("withdrawals")
+    .select("*, order:orders(status, payment_method, paid_at, delivered_at)")
+    .eq("id", withdrawalId)
+    .single()
+
+  if (error || !data) {
+    throw new Error("Заявката не е намерена")
+  }
+
+  return data as WithdrawalWithOrderContext
+}
+
+export async function getOrderWithdrawals(orderId: string): Promise<Withdrawal[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("withdrawals")
+    .select("*")
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("Failed to fetch order withdrawals:", error)
+    throw new Error("Грешка при зареждане на заявките за поръчката")
+  }
+
+  return (data ?? []) as Withdrawal[]
+}
+
 
 async function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
   if (!process.env.RESEND_API_KEY) return
@@ -2238,16 +3190,6 @@ async function getLowestPrice30Days(productId: string): Promise<number> {
   const supabase = await createClient()
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-  // Check price history
-  const { data: history } = await supabase
-    .from("product_price_history")
-    .select("price_in_cents")
-    .eq("product_id", productId)
-    .gte("recorded_at", thirtyDaysAgo)
-    .order("price_in_cents", { ascending: true })
-    .limit(1)
-
-  // Check past sale prices
   const { data: pastSales } = await supabase
     .from("product_sales")
     .select("sale_price_in_cents")
@@ -2257,10 +3199,9 @@ async function getLowestPrice30Days(productId: string): Promise<number> {
     .limit(1)
 
   const basePrice = baseProduct.priceInCents
-  const historyMin = history?.[0]?.price_in_cents ?? Infinity
   const saleMin = pastSales?.[0]?.sale_price_in_cents ?? Infinity
 
-  return Math.min(basePrice, historyMin, saleMin)
+  return Math.min(basePrice, saleMin)
 }
 
 export async function createSale(data: {
@@ -2310,12 +3251,6 @@ export async function createSale(data: {
     console.error("Failed to deactivate existing sale:", deactivateError)
     throw new Error("Грешка при деактивиране на текущата промоция")
   }
-
-  // Record current base price in history for future Omnibus calculations
-  await supabase.from("product_price_history").insert({
-    product_id: data.productId,
-    price_in_cents: product.priceInCents,
-  })
 
   const { error } = await supabase.from("product_sales").insert({
     product_id: data.productId,
@@ -2527,6 +3462,121 @@ export interface Complaint {
   created_by: string
 }
 
+// ─── Batch traceability (EU 178/2002 Чл. 18; EU 931/2011) ──────────────────
+export type ProductBatchStatus = "active" | "recalled"
+
+export interface ProductBatch {
+  id: string
+  sku: string
+  batch_number: string
+  expiry_date: string
+  status: ProductBatchStatus
+  recalled_at: string | null
+  recalled_by: string | null
+  recall_reason: string | null
+  notes: string | null
+  created_at: string
+  created_by: string
+}
+
+export interface ProductBatchWithAvailability extends ProductBatch {
+  quantity_available: number
+}
+
+export interface OrderItemBatch {
+  id: string
+  order_item_id: number
+  product_batch_id: string
+  quantity: number
+  confirmed_at: string
+  confirmed_by: string
+}
+
+export interface BatchSuggestion {
+  orderItemId: number
+  sku: string
+  productName: string
+  orderedQuantity: number
+  alreadyAllocated: number
+  remainingToAllocate: number
+  suggestions: Array<{
+    productBatchId: string
+    batchNumber: string
+    expiryDate: string
+    quantityAvailable: number
+    suggestedQuantity: number
+  }>
+  shortfall: number  // positive when active batches can't cover the order
+}
+
+export interface BatchAffectedOrder {
+  order_id: string
+  order_status: string
+  customer_email: string
+  customer_first_name: string
+  customer_last_name: string
+  customer_phone: string
+  customer_city: string
+  shipped_at: string | null
+  delivered_at: string | null
+  quantity_from_batch: number
+  tracking_number: string | null
+}
+
+// ─── Withdrawals (право на отказ; ЗЗП Чл. 50) ───────────────────────────────
+export type WithdrawalStatus =
+  | "requested"
+  | "approved"
+  | "goods_received"
+  | "rejected"
+  | "completed"
+
+export type WithdrawalRequestedVia = "email" | "phone" | "admin"
+
+export type WithdrawalEligibilityProductBased =
+  | "eligible"
+  | "perishable_or_short_shelf_life"
+  | "hygiene_exception"
+  | "unknown"
+
+export type WithdrawalEligibilityCondition =
+  | "pending_inspection"
+  | "sealed_sellable"
+  | "opened"
+  | "damaged"
+  | "expired"
+  | "other"
+
+export type WithdrawalResolutionType = "refund" | "replacement" | "none"
+
+export interface Withdrawal {
+  id: string
+  order_id: string
+  withdrawal_ref: string
+  requested_via: WithdrawalRequestedVia
+  customer_email: string
+  customer_request_text: string | null
+  status: WithdrawalStatus
+  eligibility_time_based: boolean | null
+  eligibility_product_based: WithdrawalEligibilityProductBased | null
+  eligibility_condition: WithdrawalEligibilityCondition | null
+  resolution_type: WithdrawalResolutionType | null
+  rejection_reason: string | null
+  refund_id: string | null
+  return_required: boolean
+  completion_note: string | null
+  return_tracking_number: string | null
+  return_courier: string | null
+  approved_at: string | null
+  approved_by: string | null
+  goods_received_at: string | null
+  rejected_at: string | null
+  rejected_by: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]; log: InventoryLogEntry[] }> {
   await requireAdmin()
   const supabase = await createClient()
@@ -2688,9 +3738,20 @@ export async function recordStockMovement(data: {
     throw new Error("Бележката е твърде дълга")
   }
 
-  // Validate batchId/expiryDate — only for return_in
-  if (data.batchId && data.type !== "return_in") {
-    throw new Error("Номер на партида е допустим само за връщане")
+  // Validate batchId/expiryDate.
+  //   - return_in: batch + expiry allowed (re-stocking with original batch info)
+  //   - wholesale_out: batch_id REQUIRED (EU 931/2011 — commercial consignments
+  //     to other businesses must reference batch/lot). Provides legal traceability
+  //     for B2B sales without requiring full Tier 1 batch tables.
+  //   - others: batch fields not allowed
+  if (data.type === "wholesale_out") {
+    if (!data.batchId?.trim()) {
+      throw new Error(
+        "Номер на партида е задължителен за оптови продажби (EU 931/2011 — изисква партида на търговските пратки)",
+      )
+    }
+  } else if (data.batchId && data.type !== "return_in") {
+    throw new Error("Номер на партида е допустим само за връщане или оптова продажба")
   }
   if (data.expiryDate && data.type !== "return_in") {
     throw new Error("Срок на годност е допустим само за връщане")
@@ -2960,4 +4021,382 @@ export async function getRecallCandidates(
   })
 
   return candidates
+}
+
+
+// ─── Batch traceability (EU 178/2002, EU 931/2011) ──────────────────────────
+// Tier 1 batch tracking: product_batches + order_item_batches populated at
+// ship time. Inventory layer (inventory_log/inventory_current) unchanged.
+//
+// Layer split:
+//   - inventory_log     : SKU-level movements (existing)
+//   - product_batches   : supplier-batch metadata (NEW; sku, batch_number, expiry, status)
+//   - order_item_batches: per-shipment per-line allocation (NEW; tied to order_item)
+//
+// Both new tables are append-mostly: order_item_batches is fully immutable
+// post-insert; product_batches allows only the active → recalled forward
+// transition with metadata atomically populated.
+
+export async function getProductBatches(params?: {
+  sku?: string
+  status?: ProductBatchStatus | "all"
+}): Promise<ProductBatchWithAvailability[]> {
+  await requireAdmin()
+  const supabase = await createClient()
+
+  let query = supabase
+    .from("product_batches")
+    .select("*")
+    .order("expiry_date", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
+
+  if (params?.sku) {
+    query = query.eq("sku", params.sku)
+  }
+  if (params?.status && params.status !== "all") {
+    query = query.eq("status", params.status)
+  }
+
+  const { data, error } = await query
+  if (error) {
+    console.error("Failed to fetch product_batches:", error)
+    throw new Error("Грешка при зареждане на партидите")
+  }
+
+  // Compute available quantity per batch via the helper RPC. Could be done
+  // in a single SQL with a lateral join; per-batch RPC keeps the logic in
+  // one place and the call count is bounded by total batches (small).
+  const batches = (data ?? []) as ProductBatch[]
+  const results: ProductBatchWithAvailability[] = []
+  for (const b of batches) {
+    const { data: qty, error: qtyError } = await supabase.rpc("batch_quantity_available", {
+      p_batch_id: b.id,
+    })
+    if (qtyError) {
+      console.error(`Failed to compute availability for batch ${b.id}:`, qtyError)
+    }
+    results.push({ ...b, quantity_available: typeof qty === "number" ? qty : 0 })
+  }
+  return results
+}
+
+export async function getProductBatch(id: string): Promise<ProductBatchWithAvailability> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(id)) throw new Error("Невалиден формат на партида")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("product_batches")
+    .select("*")
+    .eq("id", id)
+    .single()
+
+  if (error || !data) throw new Error("Партидата не е намерена")
+
+  const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: id })
+  return { ...(data as ProductBatch), quantity_available: typeof qty === "number" ? qty : 0 }
+}
+
+// FEFO suggestion. For each order_item that hasn't been fully allocated
+// yet, list active batches ordered by expiry_date ASC and greedily allocate.
+// If active batches don't cover the order, the result includes a shortfall
+// the admin must resolve (block allocation, receive new stock, recall, etc.).
+export async function suggestBatchesForShipment(orderId: string): Promise<BatchSuggestion[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  // Order items + product names
+  const { data: orderItems, error: itemsError } = await supabase
+    .from("order_items")
+    .select("id, sku, product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (itemsError || !orderItems) {
+    throw new Error("Грешка при зареждане на артикулите по поръчката")
+  }
+
+  // Existing allocations (idempotent — admin reopens dialog after partial save)
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: existingAllocs } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity")
+    .in("order_item_id", itemIds)
+  const allocByItem = new Map<number, number>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { order_item_id: number; quantity: number }
+    allocByItem.set(row.order_item_id, (allocByItem.get(row.order_item_id) ?? 0) + row.quantity)
+  }
+
+  // Active batches per SKU. Fetch once for all distinct SKUs in this order.
+  const skus = Array.from(new Set(orderItems.map((i) => i.sku)))
+  const { data: batches } = await supabase
+    .from("product_batches")
+    .select("id, sku, batch_number, expiry_date, status")
+    .in("sku", skus)
+    .eq("status", "active")
+    .order("expiry_date", { ascending: true })
+  const batchesBySku = new Map<string, Array<{ id: string; sku: string; batch_number: string; expiry_date: string }>>()
+  for (const b of batches ?? []) {
+    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
+    if (!batchesBySku.has(row.sku)) batchesBySku.set(row.sku, [])
+    batchesBySku.get(row.sku)!.push(row)
+  }
+
+  // Compute available qty per relevant batch via RPC
+  const allBatchIds = (batches ?? []).map((b) => (b as { id: string }).id)
+  const availByBatch = new Map<string, number>()
+  for (const bid of allBatchIds) {
+    const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: bid })
+    availByBatch.set(bid, typeof qty === "number" ? qty : 0)
+  }
+
+  // Build suggestions per order_item
+  const suggestions: BatchSuggestion[] = []
+  // Track running drawdown across items in case two items share a SKU/batch.
+  const runningDrawdown = new Map<string, number>()
+
+  for (const item of orderItems) {
+    const oi = item as { id: number; sku: string; product_name: string; quantity: number }
+    const alreadyAllocated = allocByItem.get(oi.id) ?? 0
+    const remaining = oi.quantity - alreadyAllocated
+    const itemSuggestion: BatchSuggestion = {
+      orderItemId: oi.id,
+      sku: oi.sku,
+      productName: oi.product_name,
+      orderedQuantity: oi.quantity,
+      alreadyAllocated,
+      remainingToAllocate: remaining,
+      suggestions: [],
+      shortfall: 0,
+    }
+
+    if (remaining <= 0) {
+      suggestions.push(itemSuggestion)
+      continue
+    }
+
+    let need = remaining
+    for (const b of batchesBySku.get(oi.sku) ?? []) {
+      if (need <= 0) break
+      const available = (availByBatch.get(b.id) ?? 0) - (runningDrawdown.get(b.id) ?? 0)
+      if (available <= 0) continue
+      const take = Math.min(need, available)
+      itemSuggestion.suggestions.push({
+        productBatchId: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        quantityAvailable: available,
+        suggestedQuantity: take,
+      })
+      runningDrawdown.set(b.id, (runningDrawdown.get(b.id) ?? 0) + take)
+      need -= take
+    }
+
+    itemSuggestion.shortfall = Math.max(0, need)
+    suggestions.push(itemSuggestion)
+  }
+
+  return suggestions
+}
+
+// Persist allocations. Strict guards (mirroring DB triggers but with friendly
+// error messages):
+//   - sum per item == ordered quantity (full allocation, not partial)
+//   - all selected batches are active
+//   - SKU consistency (DB trigger is the backstop)
+//   - no allocation for an order whose status doesn't allow shipping
+//
+// Idempotency: if all items already have full allocation, returns success
+// without inserting anything (admin reopened the dialog and re-confirmed).
+export async function confirmShipmentBatches(
+  orderId: string,
+  allocations: Array<{
+    orderItemId: number
+    productBatchId: string
+    quantity: number
+  }>,
+): Promise<{ success: true; inserted: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  if (!Array.isArray(allocations)) {
+    throw new Error("Невалидни алокации")
+  }
+
+  const supabase = await createClient()
+
+  // Order must be in a shippable status (confirmed). Reject otherwise.
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, status")
+    .eq("id", orderId)
+    .single()
+  if (orderError || !order) throw new Error("Поръчката не е намерена")
+  if (order.status !== "confirmed") {
+    throw new Error(`Алокирането на партиди е възможно само за потвърдени поръчки (текущ статус: ${order.status})`)
+  }
+
+  // Order items
+  const { data: orderItems, error: itemsError } = await supabase
+    .from("order_items")
+    .select("id, sku, quantity")
+    .eq("order_id", orderId)
+  if (itemsError || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+  const itemMap = new Map(orderItems.map((i) => [i.id, i as { id: number; sku: string; quantity: number }]))
+
+  // Existing allocations (for idempotency)
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: existingAllocs, error: existingError } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity")
+    .in("order_item_id", itemIds)
+  if (existingError) throw new Error("Грешка при проверка на съществуващи алокации")
+  const existingPairs = new Set(
+    (existingAllocs ?? []).map((a) => `${(a as { order_item_id: number }).order_item_id}-${(a as { product_batch_id: string }).product_batch_id}`),
+  )
+  const existingByItem = new Map<number, number>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { order_item_id: number; quantity: number }
+    existingByItem.set(row.order_item_id, (existingByItem.get(row.order_item_id) ?? 0) + row.quantity)
+  }
+
+  // Validate input shape + filter out duplicates that already exist
+  const toInsert: Array<{ order_item_id: number; product_batch_id: string; quantity: number }> = []
+  const incomingByItem = new Map<number, number>()
+  const seenPairs = new Set<string>()
+  for (const a of allocations) {
+    if (!Number.isInteger(a.orderItemId) || a.orderItemId <= 0) {
+      throw new Error("Невалиден артикул в поръчката")
+    }
+    if (!UUID_REGEX.test(a.productBatchId)) {
+      throw new Error("Невалиден формат на партида")
+    }
+    if (!Number.isInteger(a.quantity) || a.quantity < 1) {
+      throw new Error("Количеството трябва да е положително цяло число")
+    }
+    if (!itemMap.has(a.orderItemId)) {
+      throw new Error(`Артикул ${a.orderItemId} не принадлежи на тази поръчка`)
+    }
+    const pairKey = `${a.orderItemId}-${a.productBatchId}`
+    if (seenPairs.has(pairKey)) {
+      throw new Error("Един и същ артикул-партида е посочен повече от веднъж")
+    }
+    seenPairs.add(pairKey)
+    incomingByItem.set(a.orderItemId, (incomingByItem.get(a.orderItemId) ?? 0) + a.quantity)
+    if (!existingPairs.has(pairKey)) {
+      toInsert.push({
+        order_item_id: a.orderItemId,
+        product_batch_id: a.productBatchId,
+        quantity: a.quantity,
+      })
+    }
+  }
+
+  // Per-item: existing + incoming must equal ordered quantity exactly.
+  // Partial allocations are not allowed at shipment time (DB has no equality
+  // constraint; this is the place to enforce it).
+  for (const [itemId, item] of itemMap) {
+    const totalAllocated = (existingByItem.get(itemId) ?? 0) + (incomingByItem.get(itemId) ?? 0)
+    if (totalAllocated !== item.quantity) {
+      throw new Error(
+        `Алокираното количество за SKU ${item.sku} (${totalAllocated}) трябва да съвпадне с поръчаното (${item.quantity})`,
+      )
+    }
+  }
+
+  if (toInsert.length === 0) {
+    return { success: true, inserted: 0 } // idempotent — already fully allocated
+  }
+
+  // Validate target batches: must exist, must be active, sku must match item.
+  const targetBatchIds = Array.from(new Set(toInsert.map((r) => r.product_batch_id)))
+  const { data: targetBatches, error: batchesError } = await supabase
+    .from("product_batches")
+    .select("id, sku, status, batch_number")
+    .in("id", targetBatchIds)
+  if (batchesError) throw new Error("Грешка при проверка на партидите")
+  const batchMap = new Map((targetBatches ?? []).map((b) => [(b as { id: string }).id, b as { id: string; sku: string; status: string; batch_number: string }]))
+  for (const r of toInsert) {
+    const b = batchMap.get(r.product_batch_id)
+    if (!b) throw new Error(`Партидата ${r.product_batch_id} не е намерена`)
+    if (b.status !== "active") {
+      throw new Error(`Партида ${b.batch_number} не е активна (статус: ${b.status}); не може да се ползва за изпращане`)
+    }
+    const item = itemMap.get(r.order_item_id)!
+    if (b.sku !== item.sku) {
+      throw new Error(`Партида ${b.batch_number} (SKU ${b.sku}) не съвпада със SKU на артикула (${item.sku})`)
+    }
+  }
+
+  // Insert. The DB triggers (sku consistency, immutable) are the backstop.
+  const { error: insertError, count } = await supabase
+    .from("order_item_batches")
+    .insert(toInsert, { count: "exact" })
+  if (insertError) {
+    console.error("Failed to insert order_item_batches:", insertError)
+    throw new Error("Грешка при записване на алокациите на партиди")
+  }
+
+  revalidateTag("product-batches", "max")
+  return { success: true, inserted: count ?? toInsert.length }
+}
+
+// Recall a batch. Forward transition only (active → recalled). DB trigger
+// enforces metadata atomicity; we set everything in the same UPDATE.
+export async function recallBatch(
+  batchId: string,
+  reason: string,
+): Promise<{ success: true; affectedOrdersCount: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(batchId)) throw new Error("Невалиден формат на партида")
+
+  const trimmed = reason?.trim()
+  if (!trimmed || trimmed.length < 20) {
+    throw new Error("Причината за изтегляне трябва да е поне 20 символа")
+  }
+  if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from("product_batches")
+    .update({
+      status: "recalled",
+      recalled_at: now,
+      recalled_by: "admin",
+      recall_reason: trimmed,
+    })
+    .eq("id", batchId)
+    .eq("status", "active")  // idempotency guard
+    .select("id")
+
+  if (error) {
+    console.error("Failed to recall batch:", error)
+    throw new Error("Грешка при изтегляне на партидата")
+  }
+  if (!data || data.length === 0) {
+    throw new Error("Партидата не е намерена или вече е изтеглена")
+  }
+
+  // Count affected orders for the success response (admin sees the worklist size)
+  const { data: affected } = await supabase.rpc("affected_orders_for_batch", { p_batch_id: batchId })
+  const affectedOrdersCount = Array.isArray(affected) ? affected.length : 0
+
+  revalidateTag("product-batches", "max")
+  return { success: true, affectedOrdersCount }
+}
+
+export async function getBatchAffectedOrders(batchId: string): Promise<BatchAffectedOrder[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(batchId)) throw new Error("Невалиден формат на партида")
+
+  const supabase = await createClient()
+  const { data, error } = await supabase.rpc("affected_orders_for_batch", { p_batch_id: batchId })
+  if (error) {
+    console.error("Failed to fetch affected orders:", error)
+    throw new Error("Грешка при зареждане на засегнатите поръчки")
+  }
+  return (data ?? []) as BatchAffectedOrder[]
 }

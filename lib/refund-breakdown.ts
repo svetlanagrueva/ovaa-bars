@@ -19,6 +19,9 @@
 export const VAT_RATE_PERCENT = 20
 
 export interface BreakdownOrderItem {
+  // order_items.id — used by refund_items linkage. Optional because legacy
+  // callers (no items mode) only have SKU.
+  id?: number
   sku: string
   productName: string
   unitPriceCents: number
@@ -30,11 +33,25 @@ export interface BreakdownInventoryReturn {
   type: "return_in" | "damaged"
 }
 
+// Explicit per-line refund allocation — when refund_items rows exist for a
+// refund, they take precedence over inventory_returns as the source of the
+// breakdown. Each row is a single (order_item_id, qty, amount) allocation.
+export interface BreakdownRefundItem {
+  orderItemId: number
+  quantity: number
+  amountCents: number
+}
+
+export type BreakdownLineSource = "refund_items" | "inventory_returns"
+
 export interface BreakdownLine {
   sku: string
   productName: string
   quantity: number
-  type: "return_in" | "damaged"
+  // type is informational; for refund_items source it's not meaningful (the
+  // disposition is tracked separately in inventory_log). For inventory_returns
+  // source it's the disposition from that row.
+  type: "return_in" | "damaged" | "allocated"
   unitPriceCents: number
   lineGrossCents: number
   lineVatCents: number
@@ -43,13 +60,17 @@ export interface BreakdownLine {
 
 export interface RefundBreakdown {
   lines: BreakdownLine[]
-  linesGrossCents: number   // sum of line gross (from physical returns)
+  linesGrossCents: number   // sum of line gross (from physical returns OR refund_items)
   linesVatCents: number
   linesNetCents: number
   refundGrossCents: number  // actual refund.amount_cents
   refundVatCents: number
   refundNetCents: number
   matchesLineSum: boolean   // linesGrossCents === refundGrossCents
+  // Which source produced the lines — drives wording in the formatted text
+  // and lets the UI label the breakdown precisely. "none" when no allocation
+  // is available (lines is empty).
+  source: BreakdownLineSource | "none"
 }
 
 // Compute VAT-inclusive split on a gross amount. Round half-to-even via
@@ -65,29 +86,60 @@ export function splitVatInclusive(grossCents: number): { vatCents: number; netCe
   }
 }
 
+// Compute the breakdown lines. Precedence:
+//   1. refund_items, when present (explicit allocation; carries the actual
+//      amount per line incl. any per-line override admin set)
+//   2. inventory_returns, when no refund_items but physical goods returned
+//   3. none, when neither exists (custom amount refund — shipping / goodwill)
 export function computeRefundBreakdown(
   refundAmountCents: number,
   inventoryReturns: BreakdownInventoryReturn[],
   orderItems: BreakdownOrderItem[],
+  refundItems?: BreakdownRefundItem[],
 ): RefundBreakdown {
   const itemBySku = new Map(orderItems.map((i) => [i.sku, i]))
+  const itemById = new Map(orderItems.filter((i) => i.id != null).map((i) => [i.id!, i]))
 
-  const lines: BreakdownLine[] = []
-  for (const ret of inventoryReturns) {
-    const item = itemBySku.get(ret.sku)
-    if (!item) continue // defensive — inventory return for sku not on this order
-    const lineGrossCents = item.unitPriceCents * ret.quantity
-    const { vatCents, netCents } = splitVatInclusive(lineGrossCents)
-    lines.push({
-      sku: ret.sku,
-      productName: item.productName,
-      quantity: ret.quantity,
-      type: ret.type,
-      unitPriceCents: item.unitPriceCents,
-      lineGrossCents,
-      lineVatCents: vatCents,
-      lineNetCents: netCents,
-    })
+  let lines: BreakdownLine[] = []
+  let source: BreakdownLineSource | "none" = "none"
+
+  if (refundItems && refundItems.length > 0) {
+    source = "refund_items"
+    for (const ri of refundItems) {
+      const item = itemById.get(ri.orderItemId)
+      if (!item) continue // defensive — refund_item for an order_item not in the orderItems list
+      const lineGrossCents = ri.amountCents
+      const { vatCents, netCents } = splitVatInclusive(lineGrossCents)
+      lines.push({
+        sku: item.sku,
+        productName: item.productName,
+        quantity: ri.quantity,
+        type: "allocated",
+        unitPriceCents: item.unitPriceCents,
+        lineGrossCents,
+        lineVatCents: vatCents,
+        lineNetCents: netCents,
+      })
+    }
+  } else if (inventoryReturns.length > 0) {
+    source = "inventory_returns"
+    for (const ret of inventoryReturns) {
+      const item = itemBySku.get(ret.sku)
+      if (!item) continue
+      const lineGrossCents = item.unitPriceCents * ret.quantity
+      const { vatCents, netCents } = splitVatInclusive(lineGrossCents)
+      lines.push({
+        sku: ret.sku,
+        productName: item.productName,
+        quantity: ret.quantity,
+        type: ret.type,
+        unitPriceCents: item.unitPriceCents,
+        lineGrossCents,
+        lineVatCents: vatCents,
+        lineNetCents: netCents,
+      })
+    }
+    if (lines.length === 0) source = "none"
   }
 
   const linesGrossCents = lines.reduce((s, l) => s + l.lineGrossCents, 0)
@@ -105,6 +157,7 @@ export function computeRefundBreakdown(
     refundVatCents,
     refundNetCents,
     matchesLineSum: linesGrossCents === refundAmountCents,
+    source,
   }
 }
 
@@ -141,7 +194,11 @@ export function formatBreakdownForCreditNote(
   parts.push("")
 
   if (breakdown.lines.length > 0) {
-    parts.push("Върнати артикули:")
+    parts.push(
+      breakdown.source === "refund_items"
+        ? "Артикули по възстановяването:"
+        : "Върнати артикули:",
+    )
     breakdown.lines.forEach((line, idx) => {
       const label = line.type === "damaged" ? " [негоден/брак]" : ""
       parts.push(
@@ -150,8 +207,11 @@ export function formatBreakdownForCreditNote(
           ` = ${formatCents(line.lineGrossCents)} лв`,
       )
     })
+    const totalLabel = breakdown.source === "refund_items"
+      ? "Общо по артикули"
+      : "Общо върнати"
     parts.push(
-      `  Общо върнати: ${formatCents(breakdown.linesGrossCents)} лв` +
+      `  ${totalLabel}: ${formatCents(breakdown.linesGrossCents)} лв` +
         ` (в т.ч. ДДС 20%: ${formatCents(breakdown.linesVatCents)} лв,` +
         ` без ДДС: ${formatCents(breakdown.linesNetCents)} лв)`,
     )

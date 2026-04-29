@@ -27,8 +27,9 @@ export default function AdminInvoicesPage() {
   const [dateTo, setDateTo] = useState("")
   const [csvLoading, setCsvLoading] = useState(false)
   const [error, setError] = useState("")
+  const [type, setType] = useState<"all" | "invoice" | "credit_note">("all")
 
-  const filters = { search, dateFrom, dateTo }
+  const filters = { search, dateFrom, dateTo, type }
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true)
@@ -42,7 +43,7 @@ export default function AdminInvoicesPage() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, dateFrom, dateTo, page])
+  }, [search, dateFrom, dateTo, type, page])
 
   useEffect(() => {
     const timeout = setTimeout(fetchInvoices, search ? 300 : 0)
@@ -53,6 +54,7 @@ export default function AdminInvoicesPage() {
     setSearch("")
     setDateFrom("")
     setDateTo("")
+    setType("all")
     setPage(0)
   }
 
@@ -64,16 +66,17 @@ export default function AdminInvoicesPage() {
     try {
       const allInvoices = await getAllInvoices(filters)
 
-      const headers = ["Фактура №", "Дата", "Клиент", "Имейл", "Фирма", "ЕИК", "Сума", "Поръчка"]
+      const headers = ["Тип", "Документ №", "Дата", "Клиент", "Имейл", "Фирма", "ЕИК", "Сума", "Поръчка"]
       const rows = allInvoices.map((inv) => [
+        inv.type === "credit_note" ? "Кредитно известие" : "Фактура",
         inv.invoice_number,
         new Date(inv.invoice_date).toLocaleDateString("bg-BG"),
-        `${inv.first_name} ${inv.last_name}`,
-        inv.email,
-        inv.invoice_company_name || "",
-        inv.invoice_eik || "",
-        (inv.total_amount / 100).toFixed(2),
-        inv.id.slice(0, 8),
+        `${inv.customer_first_name} ${inv.customer_last_name}`,
+        inv.customer_email,
+        inv.company_name || "",
+        inv.eik || "",
+        (inv.order_total_amount / 100).toFixed(2),
+        inv.order_id.slice(0, 8),
       ])
 
       const csvContent = "\uFEFF" + [headers, ...rows]
@@ -118,12 +121,25 @@ export default function AdminInvoicesPage() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="search"
-              placeholder="Номер, име, имейл или фирма..."
+              placeholder="Номер на документ или име на фирма..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(0) }}
               className="pl-9"
             />
           </div>
+        </div>
+        <div>
+          <Label htmlFor="type" className="text-sm text-muted-foreground">Тип</Label>
+          <select
+            id="type"
+            value={type}
+            onChange={(e) => { setType(e.target.value as "all" | "invoice" | "credit_note"); setPage(0) }}
+            className="mt-1 h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">Всички</option>
+            <option value="invoice">Фактури</option>
+            <option value="credit_note">Кредитни известия</option>
+          </select>
         </div>
         <div>
           <Label htmlFor="dateFrom" className="text-sm text-muted-foreground">От дата</Label>
@@ -145,7 +161,7 @@ export default function AdminInvoicesPage() {
             className="mt-1"
           />
         </div>
-        {(search || dateFrom || dateTo) && (
+        {(search || dateFrom || dateTo || type !== "all") && (
           <Button variant="ghost" size="sm" onClick={clearFilters}>
             Изчисти
           </Button>
@@ -161,6 +177,7 @@ export default function AdminInvoicesPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Тип</TableHead>
                 <TableHead>Номер</TableHead>
                 <TableHead>Дата</TableHead>
                 <TableHead>Клиент</TableHead>
@@ -172,6 +189,13 @@ export default function AdminInvoicesPage() {
             <TableBody>
               {invoices.map((inv) => (
                 <TableRow key={inv.id}>
+                  <TableCell className="text-xs">
+                    {inv.type === "credit_note" ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-800">КИ</span>
+                    ) : (
+                      <span className="rounded-full bg-blue-100 px-2 py-1 text-blue-800">Фактура</span>
+                    )}
+                  </TableCell>
                   <TableCell className="font-mono text-sm">#{inv.invoice_number}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {new Date(inv.invoice_date).toLocaleDateString("bg-BG", {
@@ -181,22 +205,22 @@ export default function AdminInvoicesPage() {
                     })}
                   </TableCell>
                   <TableCell>
-                    <div className="text-sm font-medium">{inv.first_name} {inv.last_name}</div>
-                    <div className="text-xs text-muted-foreground">{inv.email}</div>
+                    <div className="text-sm font-medium">{inv.customer_first_name} {inv.customer_last_name}</div>
+                    <div className="text-xs text-muted-foreground">{inv.customer_email}</div>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {inv.invoice_company_name || <span className="text-muted-foreground">—</span>}
-                    {inv.invoice_eik && (
-                      <div className="text-xs text-muted-foreground">ЕИК: {inv.invoice_eik}</div>
+                    {inv.company_name || <span className="text-muted-foreground">—</span>}
+                    {inv.eik && (
+                      <div className="text-xs text-muted-foreground">ЕИК: {inv.eik}</div>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm font-medium">{formatPrice(inv.total_amount)}</TableCell>
+                  <TableCell className="text-sm font-medium">{formatPrice(inv.order_total_amount)}</TableCell>
                   <TableCell>
                     <Link
-                      href={`/admin/orders/${inv.id}`}
+                      href={`/admin/orders/${inv.order_id}`}
                       className="font-mono text-sm text-blue-600 hover:underline"
                     >
-                      #{inv.id.slice(0, 8)}
+                      #{inv.order_id.slice(0, 8)}
                     </Link>
                   </TableCell>
                 </TableRow>

@@ -129,6 +129,69 @@ describe("refund-breakdown", () => {
       )
       expect(result.lines[0].type).toBe("damaged")
     })
+
+    // ── refund_items precedence ────────────────────────────────────────
+    it("uses refund_items when provided, ignoring inventory_returns", () => {
+      const result = computeRefundBreakdown(
+        500,
+        // Inventory returns claim 2 units at 10.00 — should be IGNORED
+        [{ sku: "EGO-DC-12", quantity: 2, type: "return_in" }],
+        [{ ...darkChoc, id: 42 }],
+        // refund_items: 1 unit at 5.00 — takes precedence
+        [{ orderItemId: 42, quantity: 1, amountCents: 500 }],
+      )
+      expect(result.source).toBe("refund_items")
+      expect(result.lines).toHaveLength(1)
+      expect(result.lines[0]).toMatchObject({
+        sku: "EGO-DC-12",
+        quantity: 1,
+        type: "allocated",
+        lineGrossCents: 500,
+      })
+    })
+
+    it("falls back to inventory_returns when refund_items is empty", () => {
+      const result = computeRefundBreakdown(
+        500,
+        [{ sku: "EGO-DC-12", quantity: 1, type: "return_in" }],
+        [darkChoc],
+        [],
+      )
+      expect(result.source).toBe("inventory_returns")
+      expect(result.lines).toHaveLength(1)
+    })
+
+    it("source='none' when neither refund_items nor inventory_returns", () => {
+      const result = computeRefundBreakdown(500, [], [darkChoc])
+      expect(result.source).toBe("none")
+      expect(result.lines).toHaveLength(0)
+    })
+
+    it("respects per-line amount override in refund_items (diminished value)", () => {
+      // Customer returned 1 unit but admin refunded only 4.00 (handling fee)
+      // — the override flows through as the line gross.
+      const result = computeRefundBreakdown(
+        400,
+        [],
+        [{ ...darkChoc, id: 42 }],
+        [{ orderItemId: 42, quantity: 1, amountCents: 400 }],
+      )
+      expect(result.lines[0].lineGrossCents).toBe(400)
+      expect(result.matchesLineSum).toBe(true)
+    })
+
+    it("skips refund_items rows with no matching orderItem (defensive)", () => {
+      const result = computeRefundBreakdown(
+        500,
+        [],
+        [{ ...darkChoc, id: 42 }],
+        [{ orderItemId: 999, quantity: 1, amountCents: 500 }],
+      )
+      // No matching orderItem → no lines, but source still records the
+      // intent ("refund_items"); fallback to inventory_returns kicks in only
+      // when refundItems was explicitly empty.
+      expect(result.lines).toHaveLength(0)
+    })
   })
 
   describe("formatBreakdownForCreditNote", () => {

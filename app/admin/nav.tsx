@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button"
 const links: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: "/admin/dashboard", label: "Табло", exact: true },
   { href: "/admin/orders", label: "Поръчки" },
+  { href: "/admin/returns", label: "Заявки" },
   { href: "/admin/invoices", label: "Фактури" },
   { href: "/admin/sales", label: "Промоции" },
   { href: "/admin/promo-codes", label: "Промо кодове" },
   { href: "/admin/inventory", label: "Склад" },
+  { href: "/admin/batches", label: "Партиди" },
 ]
 
 export function AdminNav() {

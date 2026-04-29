@@ -24,6 +24,7 @@ export function createSupabaseMock() {
     gte: vi.fn(() => mock),
     lte: vi.fn(() => mock),
     single: vi.fn(),
+    maybeSingle: vi.fn(),
     rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
   }
   return mock
@@ -62,9 +63,14 @@ export function mockThenableResult(data: unknown, error: unknown = null, count: 
 export function createUpdateChain(data: unknown = [{ id: "updated" }], error: unknown = null) {
   const chain: Record<string, unknown> = {
     eq: vi.fn(() => chain),
+    neq: vi.fn(() => chain),
+    in: vi.fn(() => chain),
     is: vi.fn(() => chain),
+    not: vi.fn(() => chain),
+    or: vi.fn(() => chain),
     select: vi.fn(() => chain),
     single: vi.fn(() => Promise.resolve({ data: Array.isArray(data) ? data[0] : data, error })),
+    maybeSingle: vi.fn(() => Promise.resolve({ data: Array.isArray(data) ? data[0] : data, error })),
     then(resolve: (v: unknown) => void) {
       resolve({ data, error })
     },
@@ -96,5 +102,6 @@ export function resetSupabaseMock(mock: Record<string, ReturnType<typeof vi.fn>>
   mock.gte = vi.fn(() => mock)
   mock.lte = vi.fn(() => mock)
   mock.single = vi.fn()
+  mock.maybeSingle = vi.fn()
   mock.rpc = vi.fn(() => Promise.resolve({ data: null, error: null }))
 }

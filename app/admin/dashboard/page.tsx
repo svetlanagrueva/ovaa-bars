@@ -66,7 +66,7 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl font-bold mb-6">Табло</h1>
 
       {/* Action items */}
-      {(stats.invoicesAwaiting > 0 || stats.awaitingSettlement > 0 || stats.inventoryDebtSkus > 0) && (
+      {(stats.invoicesAwaiting > 0 || stats.awaitingSettlement > 0 || stats.inventoryDebtSkus > 0 || stats.withdrawalsPending > 0) && (
         <div className="mb-6 space-y-3">
           {stats.inventoryDebtSkus > 0 && (
             <Link href="/admin/inventory" className="block">
@@ -107,6 +107,21 @@ export default function AdminDashboardPage() {
                     <p className="text-sm font-medium text-amber-900">
                       {stats.invoicesAwaiting} {stats.invoicesAwaiting === 1 ? "фактура чака" : "фактури чакат"} издаване
                     </p>
+                  </div>
+                </div>
+              </div>
+            </Link>
+          )}
+          {stats.withdrawalsPending > 0 && (
+            <Link href="/admin/returns" className="block">
+              <div className="rounded-lg border border-blue-300 bg-blue-50 p-4 transition-colors hover:bg-blue-100">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-5 w-5 text-blue-700" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">
+                      {stats.withdrawalsPending} {stats.withdrawalsPending === 1 ? "заявка за връщане в обработка" : "заявки за връщане в обработка"}
+                    </p>
+                    <p className="text-xs text-blue-700">Право на отказ — изисква преглед, одобрение или приключване</p>
                   </div>
                 </div>
               </div>

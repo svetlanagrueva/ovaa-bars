@@ -1,0 +1,16 @@
+-- Fix chk_refund_resolution_has_refund_id scope.
+--
+-- The original constraint fired on every UPDATE — including the
+-- approved → goods_received transition where the admin declares
+-- resolution_type='refund' but the refund hasn't been recorded yet
+-- (refund_id is set later, when admin runs recordRefund).
+--
+-- The state-machine trigger already enforces "refund_id required when
+-- resolution_type='refund'" at the goods_received → completed transition.
+-- The CHECK was meant as a defense-in-depth backstop for that final state,
+-- not a row-level invariant that holds throughout the lifecycle.
+--
+-- Re-scope: only enforce when status='completed'. Intermediate states can
+-- carry resolution_type='refund' without refund_id; trigger ensures the
+-- combination is well-formed at the moment we transition to completed.
+
