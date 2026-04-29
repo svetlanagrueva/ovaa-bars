@@ -87,6 +87,7 @@ function StockBadge({ quantity }: { quantity: number }) {
 export default function AdminInventoryPage() {
   const [current, setCurrent] = useState<InventoryStatus[]>([])
   const [log, setLog] = useState<InventoryLogEntry[]>([])
+  const [logSkuFilter, setLogSkuFilter] = useState<string>("all")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -641,12 +642,42 @@ export default function AdminInventoryPage() {
       {/* Movement log */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Последни движения</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base">Последни движения</CardTitle>
+            {(() => {
+              // SKUs that actually appear in the log — drives the filter
+              // options. We don't fall back to PRODUCTS to avoid surfacing
+              // inactive/unused SKUs in the dropdown.
+              const skusInLog = Array.from(new Set(log.map((e) => e.sku))).sort()
+              if (skusInLog.length === 0) return null
+              return (
+                <select
+                  value={logSkuFilter}
+                  onChange={(e) => setLogSkuFilter(e.target.value)}
+                  className="h-8 rounded-md border border-border bg-background px-3 text-sm"
+                  aria-label="Филтър по SKU"
+                >
+                  <option value="all">Всички SKU</option>
+                  {skusInLog.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              )
+            })()}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
-          {log.length === 0 ? (
-            <p className="p-6 text-sm text-muted-foreground">Няма движения.</p>
-          ) : (
+          {(() => {
+            const filteredLog = logSkuFilter === "all"
+              ? log
+              : log.filter((entry) => entry.sku === logSkuFilter)
+            if (log.length === 0) {
+              return <p className="p-6 text-sm text-muted-foreground">Няма движения.</p>
+            }
+            if (filteredLog.length === 0) {
+              return <p className="p-6 text-sm text-muted-foreground">Няма движения за избрания SKU.</p>
+            }
+            return (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -662,7 +693,7 @@ export default function AdminInventoryPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {log.map((entry) => (
+                {filteredLog.map((entry) => (
                   <TableRow key={entry.id}>
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                       {new Date(entry.created_at).toLocaleString("bg-BG", {
@@ -728,7 +759,8 @@ export default function AdminInventoryPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
+            )
+          })()}
         </CardContent>
       </Card>
     </div>
