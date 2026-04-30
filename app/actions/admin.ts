@@ -3767,15 +3767,31 @@ export async function recordStockMovement(data: {
   // Validate orderId — allowed on return_in (sellable return) and damaged
   // (damaged return). On other movement types, order_id wouldn't have
   // meaningful semantics under the current reference_type rules.
-  if (data.orderId && data.type !== "return_in" && data.type !== "damaged") {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const shortIdRegex = /^[0-9a-f]{8}$/i
+  let resolvedOrderId: string | undefined = data.orderId?.trim() || undefined
+  if (resolvedOrderId && data.type !== "return_in" && data.type !== "damaged") {
     throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (data.orderId && !uuidRegex.test(data.orderId)) {
-    throw new Error("Невалиден формат на поръчка")
+  if (resolvedOrderId && !uuidRegex.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
+    throw new Error("Невалиден формат на поръчка (очаква се UUID или 8-знаков префикс)")
   }
 
   const supabase = await createClient()
+
+  if (resolvedOrderId && shortIdRegex.test(resolvedOrderId)) {
+    const prefix = resolvedOrderId.toLowerCase()
+    const { data: matches, error: lookupErr } = await supabase
+      .from("orders")
+      .select("id")
+      .gte("id", `${prefix}-0000-0000-0000-000000000000`)
+      .lte("id", `${prefix}-ffff-ffff-ffff-ffffffffffff`)
+      .limit(2)
+    if (lookupErr) throw new Error("Грешка при търсене на поръчка")
+    if (!matches || matches.length === 0) throw new Error("Поръчка с този ID не е намерена")
+    if (matches.length > 1) throw new Error("Префиксът съответства на повече от една поръчка — въведете пълния ID")
+    resolvedOrderId = matches[0].id as string
+  }
 
   // Order-scoped return cap: when the movement is tied to a specific
   // customer order return (order_id + reference_type='return' +
@@ -3792,7 +3808,7 @@ export async function recordStockMovement(data: {
   // unrelated to any customer shipment. Adjustments (gain/loss) also
   // bypass — they're per-SKU reconciliation, not per-order returns.
   const isOrderReturn =
-    data.orderId &&
+    resolvedOrderId &&
     data.referenceType === "return" &&
     (data.type === "return_in" || data.type === "damaged")
 
@@ -3800,7 +3816,7 @@ export async function recordStockMovement(data: {
     const { data: orderItems, error: itemsErr } = await supabase
       .from("order_items")
       .select("sku, quantity")
-      .eq("order_id", data.orderId!)
+      .eq("order_id", resolvedOrderId!)
     if (itemsErr) {
       console.error("Failed to load order_items for return-cap validation:", itemsErr)
       throw new Error("Грешка при проверка на артикулите на поръчката")
@@ -3815,7 +3831,7 @@ export async function recordStockMovement(data: {
     const { data: priorReturns, error: priorErr } = await supabase
       .from("inventory_log")
       .select("quantity")
-      .eq("order_id", data.orderId!)
+      .eq("order_id", resolvedOrderId!)
       .eq("sku", data.sku)
       .eq("reference_type", "return")
       .in("type", ["return_in", "damaged"])
@@ -3843,7 +3859,7 @@ export async function recordStockMovement(data: {
     notes: trimmedNotes,
     batch_id: trimmedBatchId,
     expiry_date: data.expiryDate || null,
-    order_id: data.orderId || null,
+    order_id: resolvedOrderId || null,
     created_by: "admin",
     idempotency_key: data.idempotencyKey,
   })

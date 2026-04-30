@@ -390,7 +390,8 @@ export default function AdminInventoryPage() {
                   <>
                     <div className="space-y-1.5">
                       <Label htmlFor="movOrderId">ID на поръчка (незадължително)</Label>
-                      <Input id="movOrderId" value={movOrderId} onChange={(e) => setMovOrderId(e.target.value)} placeholder="UUID на поръчката" />
+                      <Input id="movOrderId" value={movOrderId} onChange={(e) => setMovOrderId(e.target.value)} placeholder="напр. 5c2d7ba0 или пълен UUID" />
+                      <p className="text-xs text-muted-foreground">8-знаков префикс (както е показан в админ панела) или пълен UUID</p>
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="movBatchId">Номер на партида (незадължително)</Label>
