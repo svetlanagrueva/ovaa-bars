@@ -190,7 +190,7 @@ export default function AdminInventoryPage() {
         referenceType: (selectedMovType?.refType ?? "internal") as "order" | "invoice" | "return" | "internal",
         referenceId: movRefId,
         notes: movNotes || undefined,
-        batchId: movType === "return_in" && movBatchId ? movBatchId : undefined,
+        batchId: (movType === "return_in" || movType === "wholesale_out") && movBatchId ? movBatchId : undefined,
         expiryDate: movType === "return_in" && movExpiryDate ? movExpiryDate : undefined,
         orderId: movType === "return_in" && movOrderId ? movOrderId : undefined,
         idempotencyKey: movIdempotencyKey,
@@ -360,7 +360,7 @@ export default function AdminInventoryPage() {
                 </div>
                 {selectedMovType && (
                   <div className="space-y-1.5">
-                    <Label htmlFor="movRef">{selectedMovType.refLabel}</Label>
+                    <Label htmlFor="movRef">{selectedMovType.refLabel} <span className="text-destructive">*</span></Label>
                     <Input id="movRef" value={movRefId} onChange={(e) => setMovRefId(e.target.value)} required placeholder="напр. INV-2026-001" maxLength={200} />
                   </div>
                 )}
@@ -368,6 +368,13 @@ export default function AdminInventoryPage() {
                   <Label htmlFor="movNotes">Бележки {selectedMovType?.notesRequired && <span className="text-destructive">*</span>}</Label>
                   <Input id="movNotes" value={movNotes} onChange={(e) => setMovNotes(e.target.value)} placeholder={selectedMovType?.notesRequired ? "Задължително" : "Незадължително"} maxLength={500} required={selectedMovType?.notesRequired} />
                 </div>
+                {movType === "wholesale_out" && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="movBatchId">Номер на партида <span className="text-destructive">*</span></Label>
+                    <Input id="movBatchId" value={movBatchId} onChange={(e) => setMovBatchId(e.target.value)} maxLength={100} required placeholder="напр. BATCH-2026-001" />
+                    <p className="text-xs text-muted-foreground">EU 931/2011 — изисква партида на търговските пратки</p>
+                  </div>
+                )}
                 {movType === "return_in" && (
                   <>
                     <div className="space-y-1.5">
