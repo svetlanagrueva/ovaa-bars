@@ -180,6 +180,17 @@ export default function AdminInventoryPage() {
 
   async function handleMovement(e: React.FormEvent) {
     e.preventDefault()
+    const qty = parseInt(movQty, 10)
+    if (OUTBOUND_TYPES.has(movType) && Number.isFinite(qty)) {
+      const currentQty = current.find((c) => c.sku === movSku)?.quantity ?? 0
+      if (qty > currentQty) {
+        const after = currentQty - qty
+        const ok = window.confirm(
+          `Внимание: тази операция ще доведе до отрицателна наличност за ${movSku}.\n\nТекуща: ${currentQty} бр.\nКоличество за изваждане: ${qty} бр.\nСлед операцията: ${after} бр. (оперативен дълг)\n\nПродължи?`,
+        )
+        if (!ok) return
+      }
+    }
     setMovLoading(true)
     setMovError("")
     try {
