@@ -7,9 +7,11 @@ import {
   addInventoryBatch,
   recordStockMovement,
   getRecallCandidates,
+  getProductBatches,
   type InventoryStatus,
   type InventoryLogEntry,
   type RecallCandidate,
+  type ProductBatchWithAvailability,
 } from "@/app/actions/admin"
 import { PRODUCTS } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -115,6 +117,8 @@ export default function AdminInventoryPage() {
   const [movExpiryDate, setMovExpiryDate] = useState("")
   const [movOrderId, setMovOrderId] = useState("")
   const [movIdempotencyKey, setMovIdempotencyKey] = useState("")
+  const [movAvailableBatches, setMovAvailableBatches] = useState<ProductBatchWithAvailability[]>([])
+  const [movBatchesLoading, setMovBatchesLoading] = useState(false)
 
   // Recall / batch-traceability export state
   const [recallSku, setRecallSku] = useState("")
@@ -133,6 +137,39 @@ export default function AdminInventoryPage() {
   useEffect(() => {
     if (movDialogOpen) setMovIdempotencyKey(crypto.randomUUID())
   }, [movDialogOpen])
+
+  // Fetch active batches for the selected SKU when the movement type can
+  // attribute to a specific batch. Outbound types (wholesale_out, sample_out,
+  // damaged, adjustment_loss) and adjustment_gain participate in
+  // batch_quantity_available — tagging them keeps the batch ledger in sync
+  // with inventory_current. return_in has its own free-text path because the
+  // returned unit may pre-date the batches table.
+  const BATCH_TAGGABLE_TYPES = new Set([
+    "wholesale_out",
+    "sample_out",
+    "damaged",
+    "adjustment_loss",
+    "adjustment_gain",
+  ])
+  useEffect(() => {
+    let cancelled = false
+    if (!movDialogOpen || !movSku || !BATCH_TAGGABLE_TYPES.has(movType)) {
+      setMovAvailableBatches([])
+      return
+    }
+    setMovBatchesLoading(true)
+    getProductBatches({ sku: movSku, status: "active" })
+      .then((rows) => { if (!cancelled) setMovAvailableBatches(rows) })
+      .catch(() => { if (!cancelled) setMovAvailableBatches([]) })
+      .finally(() => { if (!cancelled) setMovBatchesLoading(false) })
+    return () => { cancelled = true }
+  // BATCH_TAGGABLE_TYPES is a stable Set literal; eslint can't see that.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [movDialogOpen, movSku, movType])
+
+  // Reset batch selection whenever SKU or type changes — a batch is tied to
+  // a specific SKU, and the available list refetches.
+  useEffect(() => { setMovBatchId("") }, [movSku, movType])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -201,7 +238,9 @@ export default function AdminInventoryPage() {
         referenceType: (selectedMovType?.refType ?? "internal") as "order" | "invoice" | "return" | "internal",
         referenceId: movRefId,
         notes: movNotes || undefined,
-        batchId: (movType === "return_in" || movType === "wholesale_out") && movBatchId ? movBatchId : undefined,
+        batchId: movBatchId
+          ? movBatchId
+          : undefined,
         expiryDate: movType === "return_in" && movExpiryDate ? movExpiryDate : undefined,
         orderId: movType === "return_in" && movOrderId ? movOrderId : undefined,
         idempotencyKey: movIdempotencyKey,
@@ -379,11 +418,37 @@ export default function AdminInventoryPage() {
                   <Label htmlFor="movNotes">Бележки {selectedMovType?.notesRequired && <span className="text-destructive">*</span>}</Label>
                   <Input id="movNotes" value={movNotes} onChange={(e) => setMovNotes(e.target.value)} placeholder={selectedMovType?.notesRequired ? "Задължително" : "Незадължително"} maxLength={500} required={selectedMovType?.notesRequired} />
                 </div>
-                {movType === "wholesale_out" && (
+                {movSku && BATCH_TAGGABLE_TYPES.has(movType) && (
                   <div className="space-y-1.5">
-                    <Label htmlFor="movBatchId">Номер на партида <span className="text-destructive">*</span></Label>
-                    <Input id="movBatchId" value={movBatchId} onChange={(e) => setMovBatchId(e.target.value)} maxLength={100} required placeholder="напр. BATCH-2026-001" />
-                    <p className="text-xs text-muted-foreground">EU 931/2011 — изисква партида на търговските пратки</p>
+                    <Label htmlFor="movBatchPick">
+                      Партида
+                      {movType === "wholesale_out" && <span className="text-destructive"> *</span>}
+                      {movType !== "wholesale_out" && <span className="text-muted-foreground text-xs"> (незадължително)</span>}
+                    </Label>
+                    <Select value={movBatchId || "__none__"} onValueChange={(v) => setMovBatchId(v === "__none__" ? "" : v)}>
+                      <SelectTrigger id="movBatchPick">
+                        <SelectValue placeholder={movBatchesLoading ? "Зареждане..." : "Избери партида"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {movType !== "wholesale_out" && (
+                          <SelectItem value="__none__">Без партида</SelectItem>
+                        )}
+                        {movAvailableBatches.length === 0 && !movBatchesLoading && (
+                          <SelectItem value="__empty__" disabled>Няма активни партиди за този SKU</SelectItem>
+                        )}
+                        {movAvailableBatches.map((b) => (
+                          <SelectItem key={b.id} value={b.batch_number}>
+                            {b.batch_number} — {b.quantity_available} бр., изтича {new Date(b.expiry_date).toLocaleDateString("bg-BG")}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {movType === "wholesale_out" && (
+                      <p className="text-xs text-muted-foreground">EU 931/2011 — изисква партида на търговските пратки</p>
+                    )}
+                    {movType !== "wholesale_out" && (
+                      <p className="text-xs text-muted-foreground">Свържи движението с партида, ако знаеш от коя пратка идва — поддържа склад и партиди в синхрон.</p>
+                    )}
                   </div>
                 )}
                 {movType === "return_in" && (
@@ -398,8 +463,11 @@ export default function AdminInventoryPage() {
                       <Input id="movBatchId" value={movBatchId} onChange={(e) => setMovBatchId(e.target.value)} maxLength={100} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="movExpiry">Срок на годност (незадължително)</Label>
+                      <Label htmlFor="movExpiry">Срок на годност</Label>
                       <Input id="movExpiry" type="date" value={movExpiryDate} onChange={(e) => setMovExpiryDate(e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Ако партидата вече съществува в /admin/batches, не е нужно. Ако е нова — въведете срок и тя ще бъде регистрирана автоматично.
+                      </p>
                     </div>
                   </>
                 )}

@@ -3656,6 +3656,29 @@ export async function addInventoryBatch(data: {
     throw new Error("Грешка при добавяне на наличност")
   }
 
+  // Seed product_batches for the Tier 1 traceability layer. Unique on
+  // (sku, batch_number) — repeat batch_in rows for the same supplier label
+  // (top-up of an existing batch) reuse the existing product_batches row.
+  const { error: batchErr } = await supabase
+    .from("product_batches")
+    .upsert(
+      {
+        sku: data.sku,
+        batch_number: data.batchId.trim(),
+        expiry_date: data.expiryDate,
+        status: "active",
+        notes: data.notes?.trim() || null,
+        created_by: "admin",
+      },
+      { onConflict: "sku,batch_number", ignoreDuplicates: true },
+    )
+  if (batchErr) {
+    console.error("Failed to seed product_batches:", batchErr)
+    // inventory_log already committed; surface a soft warning rather than
+    // re-throwing so the admin sees the stock count update. The batches
+    // page will be missing this row until manually reseeded.
+  }
+
   return { success: true }
 }
 
@@ -3743,15 +3766,15 @@ export async function recordStockMovement(data: {
   //   - wholesale_out: batch_id REQUIRED (EU 931/2011 — commercial consignments
   //     to other businesses must reference batch/lot). Provides legal traceability
   //     for B2B sales without requiring full Tier 1 batch tables.
-  //   - others: batch fields not allowed
-  if (data.type === "wholesale_out") {
-    if (!data.batchId?.trim()) {
-      throw new Error(
-        "Номер на партида е задължителен за оптови продажби (EU 931/2011 — изисква партида на търговските пратки)",
-      )
-    }
-  } else if (data.batchId && data.type !== "return_in") {
-    throw new Error("Номер на партида е допустим само за връщане или оптова продажба")
+  //   - sample_out / damaged / adjustment_loss / adjustment_gain: batch_id OPTIONAL.
+  //     When provided, the row participates in batch_quantity_available so the
+  //     two ledgers stay in sync. Untagged rows still affect inventory_current.
+  //   - expiry_date stays return_in-only (the original batch's expiry travels
+  //     with the returned unit; other types reference an existing batch via id).
+  if (data.type === "wholesale_out" && !data.batchId?.trim()) {
+    throw new Error(
+      "Номер на партида е задължителен за оптови продажби (EU 931/2011 — изисква партида на търговските пратки)",
+    )
   }
   if (data.expiryDate && data.type !== "return_in") {
     throw new Error("Срок на годност е допустим само за връщане")
@@ -3871,6 +3894,36 @@ export async function recordStockMovement(data: {
     }
     console.error("Failed to record stock movement:", error)
     throw new Error("Грешка при записване на движение")
+  }
+
+  // Inflows that introduce a labeled unit (return_in, adjustment_gain) should
+  // create a product_batches row when admin supplied both batch_number and
+  // expiry — same pattern as addInventoryBatch. Outflows reference existing
+  // batches via the picker and never need to seed. If expiry is missing we
+  // skip the seed silently (the inventory_log row still records the movement).
+  const isInflowWithBatch =
+    (data.type === "return_in" || data.type === "adjustment_gain") &&
+    trimmedBatchId &&
+    data.expiryDate
+  if (isInflowWithBatch) {
+    const { error: batchErr } = await supabase
+      .from("product_batches")
+      .upsert(
+        {
+          sku: data.sku,
+          batch_number: trimmedBatchId,
+          expiry_date: data.expiryDate,
+          status: "active",
+          created_by: "admin",
+        },
+        { onConflict: "sku,batch_number", ignoreDuplicates: true },
+      )
+    if (batchErr) {
+      console.error("Failed to seed product_batches from inflow movement:", batchErr)
+      // inventory_log already committed; surface a soft warning rather than
+      // re-throwing so the admin sees the stock count update. The batch
+      // page will be missing this row until manually reseeded.
+    }
   }
 
   return { success: true }
