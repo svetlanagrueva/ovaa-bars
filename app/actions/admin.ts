@@ -3679,6 +3679,9 @@ export async function addInventoryBatch(data: {
     // page will be missing this row until manually reseeded.
   }
 
+  revalidateTag("inventory", "max")
+  revalidateTag("product-batches", "max")
+
   return { success: true }
 }
 
@@ -3925,6 +3928,11 @@ export async function recordStockMovement(data: {
       // page will be missing this row until manually reseeded.
     }
   }
+
+  revalidateTag("inventory", "max")
+  // Movements with a batch_id participate in batch_quantity_available, so
+  // bump that tag too (and the inflow path above may have inserted a row).
+  if (trimmedBatchId) revalidateTag("product-batches", "max")
 
   return { success: true }
 }

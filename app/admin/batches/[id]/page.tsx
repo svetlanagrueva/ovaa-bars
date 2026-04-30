@@ -6,12 +6,15 @@ import {
   getProductBatch,
   getBatchAffectedOrders,
   recallBatch,
+  recordStockMovement,
   type ProductBatchWithAvailability,
   type BatchAffectedOrder,
 } from "@/app/actions/admin"
 import { PRODUCTS } from "@/lib/products"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Table,
   TableBody,
@@ -30,6 +33,12 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
   const [recallOpen, setRecallOpen] = useState(false)
   const [recallReason, setRecallReason] = useState("")
   const [recallBusy, setRecallBusy] = useState(false)
+  const [writeoffOpen, setWriteoffOpen] = useState(false)
+  const [writeoffQty, setWriteoffQty] = useState("")
+  const [writeoffNotes, setWriteoffNotes] = useState("")
+  const [writeoffBusy, setWriteoffBusy] = useState(false)
+  const [writeoffError, setWriteoffError] = useState("")
+  const [writeoffSuccess, setWriteoffSuccess] = useState("")
 
   async function refresh() {
     setLoading(true)
@@ -130,6 +139,33 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
           )}
         </CardContent>
       </Card>
+
+      {isRecalled && batch.quantity_available > 0 && (
+        <Card className="mb-4 border-amber-300 bg-amber-50">
+          <CardHeader>
+            <CardTitle className="text-base text-amber-900">⚠ Има {batch.quantity_available} бр. в наличност от изтеглената партида</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-amber-900">
+              Тези бройки все още се отчитат в общия склад и могат да бъдат продадени при чекаут. За да предотвратите случайна продажба, запишете ги като брак.
+            </p>
+            {writeoffSuccess && (
+              <p className="rounded-md border border-green-300 bg-green-50 p-2 text-xs text-green-900">{writeoffSuccess}</p>
+            )}
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setWriteoffQty(String(batch.quantity_available))
+                setWriteoffNotes(`Изтегляне на партида ${batch.batch_number} от пазара`)
+                setWriteoffError("")
+                setWriteoffOpen(true)
+              }}
+            >
+              Запиши {batch.quantity_available} бр. в брак
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="mb-4">
         <CardHeader>
@@ -234,6 +270,62 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
                 }}
               >
                 Изтегли партидата
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {writeoffOpen && batch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !writeoffBusy && setWriteoffOpen(false)}>
+          <div className="mx-4 w-full max-w-md rounded-lg bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-2 text-lg font-semibold">Запиши в брак</h3>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Ще се създаде запис в склада с тип «Брак» за партида <span className="font-mono">{batch.batch_number}</span>. Бройките ще се извадят от наличния склад и няма да могат да се продадат.
+            </p>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="writeoffQty">Количество</Label>
+                <Input id="writeoffQty" type="number" min={1} max={batch.quantity_available} value={writeoffQty} onChange={(e) => setWriteoffQty(e.target.value)} />
+                <p className="text-xs text-muted-foreground">
+                  По подразбиране — всичките {batch.quantity_available} налични бройки. Намалете, ако част вече е физически бракувана.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="writeoffNotes">Бележка <span className="text-destructive">*</span></Label>
+                <Input id="writeoffNotes" value={writeoffNotes} onChange={(e) => setWriteoffNotes(e.target.value)} maxLength={500} />
+              </div>
+            </div>
+            {writeoffError && <p className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-900">{writeoffError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" disabled={writeoffBusy} onClick={() => setWriteoffOpen(false)}>Отказ</Button>
+              <Button
+                variant="destructive"
+                disabled={writeoffBusy || !writeoffQty || parseInt(writeoffQty, 10) < 1 || parseInt(writeoffQty, 10) > batch.quantity_available || !writeoffNotes.trim()}
+                onClick={async () => {
+                  if (!batch) return
+                  setWriteoffBusy(true)
+                  setWriteoffError("")
+                  try {
+                    await recordStockMovement({
+                      sku: batch.sku,
+                      type: "damaged",
+                      quantity: parseInt(writeoffQty, 10),
+                      referenceType: "internal",
+                      referenceId: `recall-${batch.batch_number}`,
+                      notes: writeoffNotes.trim(),
+                      batchId: batch.batch_number,
+                      idempotencyKey: crypto.randomUUID(),
+                    })
+                    setWriteoffOpen(false)
+                    setWriteoffSuccess(`Записани са ${writeoffQty} бр. като брак.`)
+                    await refresh()
+                  } catch (err) {
+                    setWriteoffError(err instanceof Error ? err.message : "Грешка")
+                  } finally { setWriteoffBusy(false) }
+                }}
+              >
+                Запиши в брак
               </Button>
             </div>
           </div>
