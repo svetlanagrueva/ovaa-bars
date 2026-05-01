@@ -44,6 +44,11 @@ interface BillingInfo {
   postalCode: string
 }
 
+// Mirror server regex (app/actions/stripe.ts) so client-side validation
+// surfaces the same Bulgarian message inline before any server roundtrip.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
+
 export default function CheckoutPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
@@ -184,6 +189,44 @@ export default function CheckoutPage() {
     setBillingInfo((prev) => ({ ...prev, [name]: value }))
   }
 
+  // Inline checkout validation. Returns the first failing message or null;
+  // mirrors server validation in app/actions/stripe.ts so we surface the
+  // same Bulgarian copy without the native browser tooltip.
+  function validateCheckout(): string | null {
+    if (!acceptedTerms) return "Моля, приемете условията за ползване и политиката за поверителност."
+    if (deliveryMethod === "econt-office" && !selectedEcontOffice) return "Моля, изберете офис на Еконт"
+    if (deliveryMethod === "speedy-office" && !selectedSpeedyOffice) return "Моля, изберете офис на Speedy"
+
+    if (!customerInfo.firstName.trim()) return "Моля, въведете име."
+    if (!customerInfo.lastName.trim()) return "Моля, въведете фамилия."
+    if (!customerInfo.email.trim()) return "Моля, въведете имейл адрес."
+    if (!EMAIL_REGEX.test(customerInfo.email)) return "Моля, въведете валиден имейл адрес."
+    if (!customerInfo.phone.trim()) return "Моля, въведете телефонен номер."
+    if (!PHONE_REGEX.test(customerInfo.phone)) return "Моля, въведете валиден телефонен номер."
+
+    if (deliveryMethod === "speedy-address") {
+      if (!customerInfo.city.trim()) return "Моля, въведете град."
+      if (!customerInfo.address.trim()) return "Моля, въведете адрес за доставка."
+      if (!customerInfo.postalCode.trim()) return "Моля, въведете пощенски код за доставка на адрес."
+    }
+
+    if (wantsInvoice) {
+      if (billingType === "company") {
+        if (!billingInfo.company.trim()) return "Моля, въведете име на фирмата за фактурата."
+        if (!billingInfo.eik.trim()) return "Моля, въведете ЕИК / Булстат за фактурата."
+        if (!billingInfo.firstName.trim()) return "Моля, въведете име на МОЛ."
+        if (!billingInfo.lastName.trim()) return "Моля, въведете фамилия на МОЛ."
+      } else {
+        if (!billingInfo.firstName.trim()) return "Моля, въведете име за фактурата."
+        if (!billingInfo.lastName.trim()) return "Моля, въведете фамилия за фактурата."
+      }
+      if (!billingInfo.address.trim()) return "Моля, въведете адрес за фактурата."
+      if (!billingInfo.city.trim()) return "Моля, въведете град за фактурата."
+    }
+
+    return null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (submittingRef.current) return
@@ -192,22 +235,9 @@ export default function CheckoutPage() {
     setError(null)
 
     try {
-      if (!acceptedTerms) {
-        setError("Моля, приемете условията за ползване и политиката за поверителност.")
-        setIsLoading(false)
-        submittingRef.current = false
-        return
-      }
-
-      if (deliveryMethod === "econt-office" && !selectedEcontOffice) {
-        setError("Моля, изберете офис на Еконт")
-        setIsLoading(false)
-        submittingRef.current = false
-        return
-      }
-
-      if (deliveryMethod === "speedy-office" && !selectedSpeedyOffice) {
-        setError("Моля, изберете офис на Speedy")
+      const validationError = validateCheckout()
+      if (validationError) {
+        setError(validationError)
         setIsLoading(false)
         submittingRef.current = false
         return
@@ -329,8 +359,11 @@ export default function CheckoutPage() {
         "Invalid email format": "Моля, въведете валиден имейл адрес.",
         "First name is required": "Моля, въведете име.",
         "Last name is required": "Моля, въведете фамилия.",
+        "Email is required": "Моля, въведете имейл адрес.",
+        "Phone is required": "Моля, въведете телефонен номер.",
         "City is required": "Моля, въведете град.",
         "Address is required for address delivery": "Моля, въведете адрес за доставка.",
+        "Postal code is required for address delivery": "Моля, въведете пощенски код за доставка на адрес.",
       }
       setError(friendlyMessages[message] || "Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
@@ -386,7 +419,6 @@ export default function CheckoutPage() {
                         name="firstName"
                         value={customerInfo.firstName}
                         onChange={handleInputChange}
-                        required
                       />
                     </div>
                     <div className="space-y-2">
@@ -396,7 +428,6 @@ export default function CheckoutPage() {
                         name="lastName"
                         value={customerInfo.lastName}
                         onChange={handleInputChange}
-                        required
                       />
                     </div>
                   </div>
@@ -405,10 +436,11 @@ export default function CheckoutPage() {
                     <Input
                       id="email"
                       name="email"
-                      type="email"
+                      type="text"
+                      inputMode="email"
+                      autoComplete="email"
                       value={customerInfo.email}
                       onChange={handleInputChange}
-                      required
                     />
                   </div>
                   <div className="space-y-2">
@@ -417,14 +449,10 @@ export default function CheckoutPage() {
                       id="phone"
                       name="phone"
                       type="tel"
-                      pattern="\+?[0-9\s\-()]*[0-9][0-9\s\-()]*"
-                      minLength={6}
                       maxLength={20}
-                      title="Въведете валиден телефонен номер (напр. +359888123456)"
                       placeholder="+359"
                       value={customerInfo.phone}
                       onChange={handleInputChange}
-                      required
                     />
                   </div>
                 </CardContent>
@@ -492,7 +520,6 @@ export default function CheckoutPage() {
                           name="city"
                           value={customerInfo.city}
                           onChange={handleInputChange}
-                          required
                         />
                       </div>
                     )}
@@ -505,11 +532,10 @@ export default function CheckoutPage() {
                             name="address"
                             value={customerInfo.address}
                             onChange={handleInputChange}
-                            required={deliveryMethod === "speedy-address"}
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="postalCode">Пощенски код</Label>
+                          <Label htmlFor="postalCode">Пощенски код *</Label>
                           <Input
                             id="postalCode"
                             name="postalCode"
@@ -627,7 +653,6 @@ export default function CheckoutPage() {
                               name="company"
                               value={billingInfo.company}
                               onChange={handleBillingChange}
-                              required={wantsInvoice && billingType === "company"}
                             />
                           </div>
                           <div className="grid gap-4 sm:grid-cols-2">
@@ -638,7 +663,6 @@ export default function CheckoutPage() {
                                 name="eik"
                                 value={billingInfo.eik}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -660,7 +684,6 @@ export default function CheckoutPage() {
                                 name="firstName"
                                 value={billingInfo.firstName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -670,7 +693,6 @@ export default function CheckoutPage() {
                                 name="lastName"
                                 value={billingInfo.lastName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                           </div>
@@ -687,7 +709,6 @@ export default function CheckoutPage() {
                                 name="firstName"
                                 value={billingInfo.firstName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "individual"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -697,7 +718,6 @@ export default function CheckoutPage() {
                                 name="lastName"
                                 value={billingInfo.lastName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "individual"}
                               />
                             </div>
                           </div>
@@ -713,7 +733,6 @@ export default function CheckoutPage() {
                           name="address"
                           value={billingInfo.address}
                           onChange={handleBillingChange}
-                          required={wantsInvoice}
                         />
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -724,8 +743,7 @@ export default function CheckoutPage() {
                             name="city"
                             value={billingInfo.city}
                             onChange={handleBillingChange}
-                            required={wantsInvoice}
-                          />
+                            />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="billingPostalCode">Пощенски код</Label>
@@ -759,10 +777,9 @@ export default function CheckoutPage() {
                       checked={acceptedTerms}
                       onCheckedChange={(checked) => setAcceptedTerms(checked === true)}
                       className="mt-0.5"
-                      required
                     />
                     <label htmlFor="acceptedTerms" className="cursor-pointer text-sm font-medium leading-snug text-foreground">
-                      Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>
+                      Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>*
                     </label>
                   </div>
                   <p className="pl-9 text-xs leading-relaxed text-muted-foreground">
