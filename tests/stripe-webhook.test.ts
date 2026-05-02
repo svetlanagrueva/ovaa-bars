@@ -46,7 +46,7 @@ vi.mock("@/lib/email-sender", () => ({
 
 // Credit-note auto-creation: assert it's called with the right shape; the
 // helper itself is unit-tested elsewhere.
-const mockAutoCreateCreditNote = vi.fn(() => Promise.resolve())
+const mockAutoCreateCreditNote = vi.fn((..._args: unknown[]) => Promise.resolve())
 vi.mock("@/lib/credit-note", () => ({
   autoCreateCreditNoteRow: (...args: unknown[]) => mockAutoCreateCreditNote(...args),
 }))
