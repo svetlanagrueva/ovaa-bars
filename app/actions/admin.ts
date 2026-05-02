@@ -165,11 +165,25 @@ export interface OrderSummary {
   shipped_at: string | null
   delivered_at: string | null
   paid_at: string | null
+  // Sum of refunds.amount_cents across all refunds for the order. Surfaces
+  // a "this one already had a refund" signal in the awaiting-settlement
+  // worklist so admin doesn't approve courier settlement on auto-pilot.
+  refunds_total: number
   // Surfaced from joined invoices row of type='invoice' (one per order at most).
   // Kept on the summary row for quick filtering / list display; the full
   // OrderDetail.invoices array carries credit_note rows too.
   invoice: OrderInvoiceSummary | null
+  // Aggregate document state across all invoices rows (initial + credit_notes).
+  // Computed server-side; worst-state-wins ordering so the orders list shows
+  // a single accurate badge per row even when multiple docs are attached.
+  invoiceState: InvoiceAggregateState
 }
+
+export type InvoiceAggregateState =
+  | "none"          // no invoices row at all
+  | "pending_issue" // at least one row has invoice_number IS NULL
+  | "pending_send"  // all rows have invoice_number, at least one has sent_at IS NULL
+  | "complete"      // all rows have both invoice_number AND sent_at
 
 export interface OrderInvoiceSummary {
   invoice_number: string | null
@@ -368,11 +382,22 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   return query
 }
 
-// Resolve an invoice filter (`requested` | `issued` | `pending`) to the set of
-// order_ids whose type='invoice' row matches. Returned to the caller so it
-// can attach `.in("id", ...)` to the orders query (PostgREST can't filter a
-// parent table by an embedded resource's column directly without changing
-// join semantics, so we resolve the id list in a separate query).
+// Resolve an invoice filter to the set of order_ids whose aggregate document
+// state matches. The aggregate considers BOTH initial invoices and credit_notes
+// for the order — a single badge per order that surfaces the worst pending
+// state across all docs (Shopify-style worst-state-wins).
+//
+// Filter values:
+//   - all           → no filter
+//   - requested     → any invoice row exists (legacy compatibility)
+//   - pending_issue → at least one row has invoice_number IS NULL
+//   - pending_send  → all rows have invoice_number set, at least one has
+//                     sent_at IS NULL (issue done, send still owed)
+//   - complete      → every row has both invoice_number AND sent_at
+//
+// Implementation: fetch all (order_id, invoice_number, sent_at) tuples once,
+// aggregate per order_id in JS, then filter to matching ids. One roundtrip,
+// scales fine at our row counts.
 //
 // Returns null when no filter is applied (caller should skip the .in()).
 async function resolveInvoiceFilterOrderIds(
@@ -381,20 +406,45 @@ async function resolveInvoiceFilterOrderIds(
 ): Promise<string[] | null> {
   if (!invoiceFilter || invoiceFilter === "all") return null
 
-  let invQuery: any = supabase.from("invoices").select("order_id").eq("type", "invoice")
-  if (invoiceFilter === "issued") {
-    invQuery = invQuery.not("invoice_number", "is", null)
-  } else if (invoiceFilter === "pending") {
-    invQuery = invQuery.is("invoice_number", null)
-  }
-  // "requested" → just type='invoice', no further filter
-
-  const { data, error } = await invQuery
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("order_id, invoice_number, sent_at")
   if (error) {
     console.error("Failed to resolve invoice filter:", error)
     return []
   }
-  return (data ?? []).map((r: { order_id: string }) => r.order_id)
+
+  type Row = { order_id: string; invoice_number: string | null; sent_at: string | null }
+  const byOrder = new Map<string, Row[]>()
+  for (const r of (data ?? []) as Row[]) {
+    const list = byOrder.get(r.order_id) ?? []
+    list.push(r)
+    byOrder.set(r.order_id, list)
+  }
+
+  const matches: string[] = []
+  for (const [orderId, rows] of byOrder.entries()) {
+    const state = computeInvoiceState(rows)
+    // "requested" = "За обработка" = any pending work (issue OR send),
+    // intentionally excluding `complete` so finished orders don't pollute
+    // the work queue.
+    if (invoiceFilter === "requested" && (state === "pending_issue" || state === "pending_send")) matches.push(orderId)
+    else if (invoiceFilter === "pending_issue" && state === "pending_issue") matches.push(orderId)
+    else if (invoiceFilter === "pending_send" && state === "pending_send") matches.push(orderId)
+    else if (invoiceFilter === "complete" && state === "complete") matches.push(orderId)
+  }
+  return matches
+}
+
+// Worst-state-wins aggregation. Caller passes all invoice rows for one order
+// (initial + any credit_notes). Empty rows → "none".
+function computeInvoiceState(
+  rows: Array<{ invoice_number: string | null; sent_at: string | null }>,
+): InvoiceAggregateState {
+  if (rows.length === 0) return "none"
+  if (rows.some((r) => !r.invoice_number)) return "pending_issue"
+  if (rows.some((r) => !r.sent_at)) return "pending_send"
+  return "complete"
 }
 
 // Map the joined invoices array on an order summary row to the {invoice_number,
@@ -428,7 +478,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   let query = supabase
     .from("orders")
     .select(
-      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date)",
+      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
@@ -448,7 +498,19 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
 
   const orders: OrderSummary[] = (data ?? []).map((row: any) => {
     const { invoices, ...rest } = row
-    return { ...rest, invoice: pickInitialInvoice(invoices) }
+    const refundRows = ((rest as { refunds?: Array<{ amount_cents: number }> }).refunds ?? [])
+    const refundsTotal = refundRows.reduce(
+      (s: number, r: { amount_cents: number }) => s + (r.amount_cents ?? 0),
+      0,
+    )
+    return {
+      ...rest,
+      invoice: pickInitialInvoice(invoices),
+      invoiceState: computeInvoiceState(
+        ((invoices ?? []) as Array<{ invoice_number: string | null; sent_at: string | null }>),
+      ),
+      refunds_total: refundsTotal,
+    }
   })
 
   return { orders, total: count ?? 0 }
@@ -471,7 +533,7 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
     let query = supabase
       .from("orders")
       .select(
-        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date)",
+        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
       )
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
@@ -489,7 +551,19 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
 
     const mapped: OrderSummary[] = (data ?? []).map((row: any) => {
       const { invoices, ...rest } = row
-      return { ...rest, invoice: pickInitialInvoice(invoices) }
+      const refundRows = ((rest as { refunds?: Array<{ amount_cents: number }> }).refunds ?? [])
+    const refundsTotal = refundRows.reduce(
+      (s: number, r: { amount_cents: number }) => s + (r.amount_cents ?? 0),
+      0,
+    )
+    return {
+      ...rest,
+      invoice: pickInitialInvoice(invoices),
+      invoiceState: computeInvoiceState(
+        ((invoices ?? []) as Array<{ invoice_number: string | null; sent_at: string | null }>),
+      ),
+      refunds_total: refundsTotal,
+    }
     })
     results.push(...mapped)
     if (!data || data.length < batchSize) break
@@ -789,9 +863,12 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       }
     : null
 
+  const refundRows = (orderResult.data.refunds ?? []) as Array<{ amount_cents: number }>
   return {
     ...orderResult.data,
     invoice: invoiceSummary,
+    invoiceState: computeInvoiceState(invoices),
+    refunds_total: refundRows.reduce((s, r) => s + (r.amount_cents ?? 0), 0),
     invoices,
     withdrawals,
     inventoryReturns: returns,
@@ -1975,12 +2052,20 @@ export async function recordRefund(
   // No existing row — run full validation + insert.
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id")
+    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id, payment_method, status")
     .eq("id", orderId)
     .single()
 
   if (fetchError || !order) throw new Error("Поръчката не е намерена")
-  if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
+  // COD delivered before courier-settlement: customer paid the courier on
+  // delivery, so a refund is genuinely owed even though paid_at is still null.
+  // Refund will go out via bank_transfer to customer's IBAN; courier-side
+  // settlement happens later and is independent.
+  const isCodDeliveredAwaitingSettlement =
+    order.payment_method === "cod" && order.status === "delivered"
+  if (!order.paid_at && !isCodDeliveredAwaitingSettlement) {
+    throw new Error("Не може да се възстанови сума за неплатена поръчка")
+  }
   if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
     throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
   }

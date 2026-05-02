@@ -326,7 +326,14 @@ export default function AdminOrderDetailPage({
             "More actions" pattern. Items are gated by order state — only
             show what's actionable on the current order. */}
         {(() => {
-          const canRefund = !!order.paid_at
+          // Refund allowed when funds are with us (paid_at set) OR for COD
+          // orders where the courier already collected from the customer
+          // (status=delivered) but hasn't yet settled with us — the customer
+          // is owed regardless of when courier remits, refund goes out via
+          // bank transfer to their IBAN.
+          const canRefund =
+            !!order.paid_at ||
+            (order.payment_method === "cod" && order.status === "delivered")
           const canOutcome = order.status === "shipped" || order.status === "delivered"
           // Email gating mirrors the underlying server actions' state checks.
           const canEmailConfirm = order.status !== "pending" && order.status !== "cancelled" && order.status !== "expired"
@@ -1877,6 +1884,15 @@ export default function AdminOrderDetailPage({
                 <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
                   Очаква се плащане от куриер
                 </div>
+                {order.refunds.length > 0 && (() => {
+                  const refundsTotal = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
+                  return (
+                    <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                      ⚠ За тази поръчка вече е възстановена сума <strong>{formatPrice(refundsTotal)}</strong> към клиента.
+                      Куриерът ще преведе пълната ППП сума ({formatPrice(order.total_amount)} минус комисия) — нетната позиция ще бъде получената сума минус {formatPrice(refundsTotal)}.
+                    </div>
+                  )
+                })()}
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">Дата на плащане *</label>
@@ -1992,7 +2008,11 @@ export default function AdminOrderDetailPage({
               {(() => {
             const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
             const remainingCents = order.total_amount - alreadyRefunded
-            if (!order.paid_at) return null
+            // Mirror the dropdown's canRefund predicate: COD-delivered before
+            // settlement also unlocks the form (refund via bank transfer).
+            const isCodDeliveredAwaitingSettlement =
+              order.payment_method === "cod" && order.status === "delivered"
+            if (!order.paid_at && !isCodDeliveredAwaitingSettlement) return null
 
             const resetFlow = () => {
               setRefundAmount("")
