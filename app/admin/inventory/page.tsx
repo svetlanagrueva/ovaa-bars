@@ -1,15 +1,15 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { Plus, ArrowDownUp, Download } from "lucide-react"
+import { Plus, ArrowDownUp } from "lucide-react"
 import {
   getInventoryStatus,
   addInventoryBatch,
   recordStockMovement,
-  getRecallCandidates,
+  getProductBatches,
   type InventoryStatus,
   type InventoryLogEntry,
-  type RecallCandidate,
+  type ProductBatchWithAvailability,
 } from "@/app/actions/admin"
 import { PRODUCTS } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -115,14 +115,8 @@ export default function AdminInventoryPage() {
   const [movExpiryDate, setMovExpiryDate] = useState("")
   const [movOrderId, setMovOrderId] = useState("")
   const [movIdempotencyKey, setMovIdempotencyKey] = useState("")
-
-  // Recall / batch-traceability export state
-  const [recallSku, setRecallSku] = useState("")
-  const [recallFrom, setRecallFrom] = useState("")
-  const [recallTo, setRecallTo] = useState("")
-  const [recallLoading, setRecallLoading] = useState(false)
-  const [recallError, setRecallError] = useState("")
-  const [recallResult, setRecallResult] = useState<RecallCandidate[] | null>(null)
+  const [movAvailableBatches, setMovAvailableBatches] = useState<ProductBatchWithAvailability[]>([])
+  const [movBatchesLoading, setMovBatchesLoading] = useState(false)
 
   // Regenerate idempotency keys on dialog open so each distinct submission
   // intent gets its own key. Double-clicks within a single dialog session
@@ -133,6 +127,39 @@ export default function AdminInventoryPage() {
   useEffect(() => {
     if (movDialogOpen) setMovIdempotencyKey(crypto.randomUUID())
   }, [movDialogOpen])
+
+  // Fetch active batches for the selected SKU when the movement type can
+  // attribute to a specific batch. Outbound types (wholesale_out, sample_out,
+  // damaged, adjustment_loss) and adjustment_gain participate in
+  // batch_quantity_available — tagging them keeps the batch ledger in sync
+  // with inventory_current. return_in has its own free-text path because the
+  // returned unit may pre-date the batches table.
+  const BATCH_TAGGABLE_TYPES = new Set([
+    "wholesale_out",
+    "sample_out",
+    "damaged",
+    "adjustment_loss",
+    "adjustment_gain",
+  ])
+  useEffect(() => {
+    let cancelled = false
+    if (!movDialogOpen || !movSku || !BATCH_TAGGABLE_TYPES.has(movType)) {
+      setMovAvailableBatches([])
+      return
+    }
+    setMovBatchesLoading(true)
+    getProductBatches({ sku: movSku, status: "active" })
+      .then((rows) => { if (!cancelled) setMovAvailableBatches(rows) })
+      .catch(() => { if (!cancelled) setMovAvailableBatches([]) })
+      .finally(() => { if (!cancelled) setMovBatchesLoading(false) })
+    return () => { cancelled = true }
+  // BATCH_TAGGABLE_TYPES is a stable Set literal; eslint can't see that.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [movDialogOpen, movSku, movType])
+
+  // Reset batch selection whenever SKU or type changes — a batch is tied to
+  // a specific SKU, and the available list refetches.
+  useEffect(() => { setMovBatchId("") }, [movSku, movType])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -180,6 +207,17 @@ export default function AdminInventoryPage() {
 
   async function handleMovement(e: React.FormEvent) {
     e.preventDefault()
+    const qty = parseInt(movQty, 10)
+    if (OUTBOUND_TYPES.has(movType) && Number.isFinite(qty)) {
+      const currentQty = current.find((c) => c.sku === movSku)?.quantity ?? 0
+      if (qty > currentQty) {
+        const after = currentQty - qty
+        const ok = window.confirm(
+          `Внимание: тази операция ще доведе до отрицателна наличност за ${movSku}.\n\nТекуща: ${currentQty} бр.\nКоличество за изваждане: ${qty} бр.\nСлед операцията: ${after} бр. (оперативен дълг)\n\nПродължи?`,
+        )
+        if (!ok) return
+      }
+    }
     setMovLoading(true)
     setMovError("")
     try {
@@ -190,7 +228,9 @@ export default function AdminInventoryPage() {
         referenceType: (selectedMovType?.refType ?? "internal") as "order" | "invoice" | "return" | "internal",
         referenceId: movRefId,
         notes: movNotes || undefined,
-        batchId: movType === "return_in" && movBatchId ? movBatchId : undefined,
+        batchId: movBatchId
+          ? movBatchId
+          : undefined,
         expiryDate: movType === "return_in" && movExpiryDate ? movExpiryDate : undefined,
         orderId: movType === "return_in" && movOrderId ? movOrderId : undefined,
         idempotencyKey: movIdempotencyKey,
@@ -212,82 +252,6 @@ export default function AdminInventoryPage() {
     }
   }
 
-  // Two-step recall flow: "Покажи" fetches + displays preview counts;
-  // "CSV" re-uses the same results to build the download. Running the
-  // query twice (once for preview, once for CSV) would be wasteful and
-  // could return different rows if orders changed between clicks.
-  async function handleRecallSearch(e: React.FormEvent) {
-    e.preventDefault()
-    setRecallLoading(true)
-    setRecallError("")
-    setRecallResult(null)
-    try {
-      const results = await getRecallCandidates(
-        recallSku,
-        recallFrom || undefined,
-        recallTo || undefined,
-      )
-      setRecallResult(results)
-    } catch (err) {
-      setRecallError(err instanceof Error ? err.message : "Грешка при търсенето")
-    } finally {
-      setRecallLoading(false)
-    }
-  }
-
-  function handleRecallDownload() {
-    if (!recallResult || recallResult.length === 0) return
-    const productName = PRODUCTS.find((p) => p.sku === recallSku)?.name ?? recallSku
-    const headers = [
-      "ID",
-      "Създадена",
-      "Статус",
-      "Изпратена",
-      "Доставена",
-      "Име",
-      "Имейл",
-      "Телефон",
-      "Град",
-      "Адрес",
-      "Пощ. код",
-      "Брой",
-      "Товарителница",
-      "Куриер",
-    ]
-    const statusLabel: Record<RecallCandidate["status"], string> = {
-      confirmed: "Потвърдена",
-      shipped: "Изпратена",
-      delivered: "Доставена",
-    }
-    const rows = recallResult.map((r) => [
-      r.shortId,
-      new Date(r.createdAt).toLocaleDateString("bg-BG"),
-      statusLabel[r.status],
-      r.shippedAt ? new Date(r.shippedAt).toLocaleDateString("bg-BG") : "",
-      r.deliveredAt ? new Date(r.deliveredAt).toLocaleDateString("bg-BG") : "",
-      `${r.firstName} ${r.lastName}`,
-      r.email,
-      r.phone,
-      r.city,
-      r.address ?? "",
-      r.postalCode ?? "",
-      String(r.quantity),
-      r.trackingNumber ?? "",
-      r.logisticsPartner ?? "",
-    ])
-    const csvContent = "\uFEFF" + [headers, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n")
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    const dateStamp = new Date().toISOString().slice(0, 10)
-    a.download = `recall-${recallSku}-${dateStamp}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-    // Keep the results visible so admin can re-export or cross-check.
-  }
 
   if (loading) {
     return (
@@ -360,7 +324,7 @@ export default function AdminInventoryPage() {
                 </div>
                 {selectedMovType && (
                   <div className="space-y-1.5">
-                    <Label htmlFor="movRef">{selectedMovType.refLabel}</Label>
+                    <Label htmlFor="movRef">{selectedMovType.refLabel} <span className="text-destructive">*</span></Label>
                     <Input id="movRef" value={movRefId} onChange={(e) => setMovRefId(e.target.value)} required placeholder="напр. INV-2026-001" maxLength={200} />
                   </div>
                 )}
@@ -368,19 +332,56 @@ export default function AdminInventoryPage() {
                   <Label htmlFor="movNotes">Бележки {selectedMovType?.notesRequired && <span className="text-destructive">*</span>}</Label>
                   <Input id="movNotes" value={movNotes} onChange={(e) => setMovNotes(e.target.value)} placeholder={selectedMovType?.notesRequired ? "Задължително" : "Незадължително"} maxLength={500} required={selectedMovType?.notesRequired} />
                 </div>
+                {movSku && BATCH_TAGGABLE_TYPES.has(movType) && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="movBatchPick">
+                      Партида
+                      {movType === "wholesale_out" && <span className="text-destructive"> *</span>}
+                      {movType !== "wholesale_out" && <span className="text-muted-foreground text-xs"> (незадължително)</span>}
+                    </Label>
+                    <Select value={movBatchId || "__none__"} onValueChange={(v) => setMovBatchId(v === "__none__" ? "" : v)}>
+                      <SelectTrigger id="movBatchPick">
+                        <SelectValue placeholder={movBatchesLoading ? "Зареждане..." : "Избери партида"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {movType !== "wholesale_out" && (
+                          <SelectItem value="__none__">Без партида</SelectItem>
+                        )}
+                        {movAvailableBatches.length === 0 && !movBatchesLoading && (
+                          <SelectItem value="__empty__" disabled>Няма активни партиди за този SKU</SelectItem>
+                        )}
+                        {movAvailableBatches.map((b) => (
+                          <SelectItem key={b.id} value={b.batch_number}>
+                            {b.batch_number} — {b.quantity_available} бр., изтича {new Date(b.expiry_date).toLocaleDateString("bg-BG")}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {movType === "wholesale_out" && (
+                      <p className="text-xs text-muted-foreground">EU 931/2011 — изисква партида на търговските пратки</p>
+                    )}
+                    {movType !== "wholesale_out" && (
+                      <p className="text-xs text-muted-foreground">Свържи движението с партида, ако знаеш от коя пратка идва — поддържа склад и партиди в синхрон.</p>
+                    )}
+                  </div>
+                )}
                 {movType === "return_in" && (
                   <>
                     <div className="space-y-1.5">
                       <Label htmlFor="movOrderId">ID на поръчка (незадължително)</Label>
-                      <Input id="movOrderId" value={movOrderId} onChange={(e) => setMovOrderId(e.target.value)} placeholder="UUID на поръчката" />
+                      <Input id="movOrderId" value={movOrderId} onChange={(e) => setMovOrderId(e.target.value)} placeholder="напр. 5c2d7ba0 или пълен UUID" />
+                      <p className="text-xs text-muted-foreground">8-знаков префикс (както е показан в админ панела) или пълен UUID</p>
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="movBatchId">Номер на партида (незадължително)</Label>
                       <Input id="movBatchId" value={movBatchId} onChange={(e) => setMovBatchId(e.target.value)} maxLength={100} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="movExpiry">Срок на годност (незадължително)</Label>
+                      <Label htmlFor="movExpiry">Срок на годност</Label>
                       <Input id="movExpiry" type="date" value={movExpiryDate} onChange={(e) => setMovExpiryDate(e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Ако партидата вече съществува в /admin/batches, не е нужно. Ако е нова — въведете срок и тя ще бъде регистрирана автоматично.
+                      </p>
                     </div>
                   </>
                 )}
@@ -505,139 +506,6 @@ export default function AdminInventoryPage() {
           ))}
         </div>
       )}
-
-      {/* Recall / batch traceability export. Food-safety workflow: given
-          a SKU, produce a contactable list of customers whose orders
-          contain that SKU. Over-approximates by SKU (not batch) since we
-          don't track which batch shipped to which order — admin does
-          phone-level triage on the list. */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle className="text-base">Изтегляне от пазара / рекол</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="mb-4 text-xs text-muted-foreground">
-            При сигнал за проблем с партида: избери продукт и опционално времеви интервал, за да получиш списък с всички поръчки (потвърдени, изпратени, доставени) съдържащи този SKU. Експортът се използва за контакт с клиенти по телефон и имейл.
-          </p>
-          <form onSubmit={handleRecallSearch} className="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto] sm:items-end">
-            <div className="space-y-1.5">
-              <Label>Продукт</Label>
-              <Select value={recallSku} onValueChange={setRecallSku} required>
-                <SelectTrigger>
-                  <SelectValue placeholder="Избери продукт" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRODUCTS.map((p) => (
-                    <SelectItem key={p.sku} value={p.sku}>{p.name} ({p.sku})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="recallFrom">От дата</Label>
-              <Input
-                id="recallFrom"
-                type="date"
-                value={recallFrom}
-                onChange={(e) => setRecallFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="recallTo">До дата</Label>
-              <Input
-                id="recallTo"
-                type="date"
-                value={recallTo}
-                onChange={(e) => setRecallTo(e.target.value)}
-              />
-            </div>
-            <Button type="submit" disabled={recallLoading || !recallSku}>
-              {recallLoading ? "Търсене..." : "Покажи"}
-            </Button>
-          </form>
-
-          {recallError && (
-            <p className="mt-3 text-sm text-destructive">{recallError}</p>
-          )}
-
-          {recallResult !== null && (
-            <div className="mt-4 rounded-md border border-border/60 bg-secondary/30 p-3">
-              {recallResult.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Няма поръчки за този SKU в избрания интервал.
-                </p>
-              ) : (
-                <>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm">
-                      Намерени <span className="font-medium">{recallResult.length}</span> поръчки,{" "}
-                      общо <span className="font-medium">
-                        {recallResult.reduce((s, r) => s + r.quantity, 0)}
-                      </span> бр.
-                      {" · "}
-                      <span className="text-muted-foreground text-xs">
-                        {(["confirmed", "shipped", "delivered"] as const).map((st) => {
-                          const n = recallResult.filter((r) => r.status === st).length
-                          if (n === 0) return null
-                          const lbl = st === "confirmed" ? "потвърдени" : st === "shipped" ? "изпратени" : "доставени"
-                          return <span key={st} className="ml-2">{n} {lbl}</span>
-                        })}
-                      </span>
-                    </div>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={handleRecallDownload}>
-                      <Download className="h-4 w-4" />
-                      Експорт CSV
-                    </Button>
-                  </div>
-                  {recallResult.length > 10 && (
-                    <p className="text-xs text-muted-foreground mb-2">
-                      Показват се първите 10 реда. Пълният списък е в CSV файла.
-                    </p>
-                  )}
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="text-[11px]">ID</TableHead>
-                          <TableHead className="text-[11px]">Статус</TableHead>
-                          <TableHead className="text-[11px]">Създадена</TableHead>
-                          <TableHead className="text-[11px]">Клиент</TableHead>
-                          <TableHead className="text-[11px]">Телефон</TableHead>
-                          <TableHead className="text-[11px] text-right">Бр.</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {recallResult.slice(0, 10).map((r) => (
-                          <TableRow key={r.orderId}>
-                            <TableCell className="text-xs font-mono">
-                              <a href={`/admin/orders/${r.orderId}`} className="text-blue-600 hover:underline">
-                                #{r.shortId}
-                              </a>
-                            </TableCell>
-                            <TableCell className="text-xs">
-                              <Badge variant="outline" className="text-[10px]">
-                                {r.status === "confirmed" ? "Потвърдена" : r.status === "shipped" ? "Изпратена" : "Доставена"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {new Date(r.createdAt).toLocaleDateString("bg-BG")}
-                            </TableCell>
-                            <TableCell className="text-xs">
-                              {r.firstName} {r.lastName}
-                            </TableCell>
-                            <TableCell className="text-xs font-mono">{r.phone}</TableCell>
-                            <TableCell className="text-xs text-right font-medium">{r.quantity}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       {/* Movement log */}
       <Card>

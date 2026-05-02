@@ -117,7 +117,21 @@ function AdminOrdersPage() {
     try {
       const allOrders = await getAllOrders(filters)
 
-      const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Продукти", "Промо отстъпка", "Доставка такса", "НП такса", "Общо", "Плащане", "Доставка", "Статус", "Фактура №", "Фактура дата"]
+      const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Продукти", "Промо отстъпка", "Доставка такса", "НП такса", "Общо", "Метод", "Плащане статус", "Платена на", "Доставка", "Товарителница", "Изпратена на", "Доставена на", "Статус", "Фактура статус", "Фактура №", "Фактура дата"]
+      const paymentStatusLabel = (o: OrderSummary): string => {
+        if (o.status === "cancelled" || o.status === "expired") return ""
+        if (o.paid_at) return o.payment_method === "cod" ? "Уредена" : "Платена"
+        if (o.payment_method === "cod") {
+          return o.status === "delivered" ? "Чака от куриер" : "Очаква доставка"
+        }
+        return "Чака плащане"
+      }
+      const invoiceStateLabel: Record<OrderSummary["invoiceState"], string> = {
+        none: "",
+        pending_issue: "Чака издаване",
+        pending_send: "Чака изпращане",
+        complete: "Завършена",
+      }
       const rows = allOrders.map((o) => {
         const productRevenue = o.total_amount - (o.shipping_fee || 0) - (o.cod_fee || 0) + (o.discount_amount || 0)
         return [
@@ -133,8 +147,14 @@ function AdminOrdersPage() {
           ((o.cod_fee || 0) / 100).toFixed(2),
           (o.total_amount / 100).toFixed(2),
           o.payment_method === "card" ? "Карта" : "Наложен платеж",
+          paymentStatusLabel(o),
+          o.paid_at ? new Date(o.paid_at).toLocaleDateString("bg-BG") : "",
           o.logistics_partner || "",
+          o.tracking_number || "",
+          o.shipped_at ? new Date(o.shipped_at).toLocaleDateString("bg-BG") : "",
+          o.delivered_at ? new Date(o.delivered_at).toLocaleDateString("bg-BG") : "",
           STATUS_BADGE_LABELS[o.status] || o.status,
+          invoiceStateLabel[o.invoiceState],
           o.invoice?.invoice_number || "",
           o.invoice?.invoice_date ? new Date(o.invoice.invoice_date).toLocaleDateString("bg-BG") : "",
         ]
@@ -221,9 +241,10 @@ function AdminOrdersPage() {
             className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
           >
             <option value="all">Всички</option>
-            <option value="requested">Поискана</option>
-            <option value="issued">Издадена</option>
-            <option value="pending">Чака издаване</option>
+            <option value="requested">За обработка</option>
+            <option value="pending_issue">Чака издаване</option>
+            <option value="pending_send">Чака изпращане</option>
+            <option value="complete">Завършени</option>
           </select>
         </div>
         <div>
@@ -236,7 +257,7 @@ function AdminOrdersPage() {
           >
             <option value="all">Всички</option>
             <option value="awaiting-settlement">Чака плащане от куриер</option>
-            <option value="settled">Получено от куриер</option>
+            <option value="settled">Уредено с куриер</option>
           </select>
         </div>
         {(search || dateFrom || dateTo || invoiceFilter !== "all" || paymentFilter !== "all") && (
@@ -258,10 +279,10 @@ function AdminOrdersPage() {
                 <TableHead>Поръчка</TableHead>
                 <TableHead>Дата</TableHead>
                 <TableHead>Клиент</TableHead>
-                <TableHead>Град</TableHead>
                 <TableHead>Сума</TableHead>
+                <TableHead>Метод</TableHead>
                 <TableHead>Плащане</TableHead>
-                <TableHead>Доставка</TableHead>
+                <TableHead>Куриер</TableHead>
                 <TableHead>Фактура</TableHead>
                 <TableHead>Статус</TableHead>
               </TableRow>
@@ -290,34 +311,151 @@ function AdminOrdersPage() {
                     <div className="text-sm font-medium">{order.first_name} {order.last_name}</div>
                     <div className="text-xs text-muted-foreground">{order.email}</div>
                   </TableCell>
-                  <TableCell className="text-sm">{order.city}</TableCell>
                   <TableCell className="text-sm font-medium">{formatPrice(order.total_amount)}</TableCell>
                   <TableCell className="text-sm">{PAYMENT_LABELS[order.payment_method] || order.payment_method}</TableCell>
-                  <TableCell className="text-sm">{order.logistics_partner?.replace("-", " ") || "—"}</TableCell>
                   <TableCell className="text-sm">
-                    {order.invoice?.invoice_number ? (
-                      <span className="font-mono text-xs">#{order.invoice.invoice_number}</span>
-                    ) : order.invoice ? (
-                      (() => {
-                        const isPaid = order.payment_method === "card" || order.status === "delivered"
-                        if (!isPaid) return <Badge variant="outline" className="text-xs">Поискана</Badge>
-                        const taxDate = order.payment_method === "cod" && order.delivered_at
-                          ? new Date(order.delivered_at)
-                          : new Date(order.created_at)
-                        const deadline = new Date(taxDate.getTime() + 5 * 24 * 60 * 60 * 1000)
-                        const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-                        return (
+                    {(() => {
+                      // Priority: terminal states → settled → COD pre-settle → card pending.
+                      // Checking paid_at first avoids "settled COD" rows still matching
+                      // the "delivered+null paid_at" branch.
+                      let inner: React.ReactNode = null
+                      if (order.status === "cancelled" || order.status === "expired") {
+                        inner = <span className="text-muted-foreground">—</span>
+                      } else if (order.paid_at) {
+                        inner = (
+                          <>
+                            <Badge variant="default" className="text-xs">
+                              {order.payment_method === "cod" ? "Уредена" : "Платена"}
+                            </Badge>
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit" })}
+                            </span>
+                          </>
+                        )
+                      } else if (order.payment_method === "cod") {
+                        if (order.status === "delivered") {
+                          const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null
+                          const daysAgo = deliveredDate
+                            ? Math.floor((Date.now() - deliveredDate.getTime()) / (1000 * 60 * 60 * 24))
+                            : null
+                          const overdue = daysAgo !== null && daysAgo >= 30
+                          const stale = daysAgo !== null && daysAgo >= 14 && !overdue
+                          inner = (
+                            <>
+                              <Badge
+                                variant={overdue ? "destructive" : "outline"}
+                                className={`text-xs ${stale ? "border-amber-400 text-amber-700" : ""}`}
+                              >
+                                Чака от куриер
+                              </Badge>
+                              {daysAgo !== null && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  {daysAgo === 0 ? "доставена днес" : `доставена преди ${daysAgo}д`}
+                                </span>
+                              )}
+                            </>
+                          )
+                        } else {
+                          inner = <Badge variant="outline" className="text-xs">Очаква доставка</Badge>
+                        }
+                      } else {
+                        // card with no paid_at
+                        inner = <Badge variant="outline" className="text-xs">Чака плащане</Badge>
+                      }
+                      return (
+                        <div className="flex flex-col gap-0.5">
+                          {inner}
+                          {order.refunds_total > 0 && (
+                            <span className="text-[10px] text-red-700">
+                              възст. {formatPrice(order.refunds_total)}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {(() => {
+                      const partner = order.logistics_partner?.replace("-", " ") || null
+                      let badge: React.ReactNode = null
+                      let sub: React.ReactNode = null
+                      if (order.status === "cancelled" || order.status === "expired") {
+                        badge = <span className="text-muted-foreground">—</span>
+                      } else if (!order.tracking_number) {
+                        if (order.status === "confirmed") {
+                          badge = <Badge variant="outline" className="text-xs">Чака етикет</Badge>
+                        }
+                      } else if (order.status === "delivered") {
+                        badge = <Badge variant="default" className="text-xs">Доставена</Badge>
+                        if (order.delivered_at) {
+                          sub = `${new Date(order.delivered_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit" })}`
+                        }
+                      } else if (order.status === "shipped") {
+                        const shippedDate = order.shipped_at ? new Date(order.shipped_at) : null
+                        const daysAgo = shippedDate
+                          ? Math.floor((Date.now() - shippedDate.getTime()) / (1000 * 60 * 60 * 24))
+                          : null
+                        const overdue = daysAgo !== null && daysAgo >= 5
+                        const slow = daysAgo !== null && daysAgo >= 3 && !overdue
+                        badge = (
                           <Badge
-                            variant={daysLeft <= 0 ? "destructive" : "outline"}
-                            className={`text-xs ${daysLeft > 0 && daysLeft <= 2 ? "border-amber-400 text-amber-700" : ""}`}
+                            variant={overdue ? "destructive" : "secondary"}
+                            className={`text-xs ${slow ? "border-amber-400 text-amber-700" : ""}`}
                           >
-                            {daysLeft <= 0 ? "Просрочена!" : `${daysLeft}д`}
+                            {overdue ? "Закъсняла" : "Изпратена"}
                           </Badge>
                         )
-                      })()
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                        if (daysAgo !== null) {
+                          sub = daysAgo === 0 ? "днес" : `преди ${daysAgo}д`
+                        }
+                      }
+                      return (
+                        <div className="flex flex-col gap-0.5">
+                          {partner && <div className="text-xs text-muted-foreground">{partner}</div>}
+                          {badge}
+                          {sub && <span className="text-[10px] text-muted-foreground">{sub}</span>}
+                        </div>
+                      )
+                    })()}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {(() => {
+                      // Worst-state-wins across initial invoice + credit_notes.
+                      // "complete" → show the initial invoice number plain.
+                      // "pending_send" → outline badge.
+                      // "pending_issue" → countdown badge against the 5-day ЗДДС
+                      //   deadline (tax event = card.created_at, COD.delivered_at).
+                      // "none" → dash.
+                      if (order.invoiceState === "none") {
+                        return <span className="text-muted-foreground">—</span>
+                      }
+                      if (order.invoiceState === "complete") {
+                        return order.invoice?.invoice_number ? (
+                          <span className="font-mono text-xs">#{order.invoice.invoice_number}</span>
+                        ) : (
+                          <Badge variant="default" className="text-xs">Завършена</Badge>
+                        )
+                      }
+                      if (order.invoiceState === "pending_send") {
+                        return <Badge variant="outline" className="text-xs">Чака изпращане</Badge>
+                      }
+                      // pending_issue — keep the 5-day deadline countdown
+                      const isPaid = order.payment_method === "card" || order.status === "delivered"
+                      if (!isPaid) return <Badge variant="outline" className="text-xs">За обработка</Badge>
+                      const taxDate = order.payment_method === "cod" && order.delivered_at
+                        ? new Date(order.delivered_at)
+                        : new Date(order.created_at)
+                      const deadline = new Date(taxDate.getTime() + 5 * 24 * 60 * 60 * 1000)
+                      const daysLeft = Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                      return (
+                        <Badge
+                          variant={daysLeft <= 0 ? "destructive" : "outline"}
+                          className={`text-xs ${daysLeft > 0 && daysLeft <= 2 ? "border-amber-400 text-amber-700" : ""}`}
+                        >
+                          {daysLeft <= 0 ? "Просрочена!" : `${daysLeft}д`}
+                        </Badge>
+                      )
+                    })()}
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>

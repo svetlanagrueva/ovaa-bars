@@ -162,12 +162,28 @@ export interface OrderSummary {
   shipping_fee: number
   cod_fee: number
   discount_amount: number
+  shipped_at: string | null
   delivered_at: string | null
+  paid_at: string | null
+  // Sum of refunds.amount_cents across all refunds for the order. Surfaces
+  // a "this one already had a refund" signal in the awaiting-settlement
+  // worklist so admin doesn't approve courier settlement on auto-pilot.
+  refunds_total: number
   // Surfaced from joined invoices row of type='invoice' (one per order at most).
   // Kept on the summary row for quick filtering / list display; the full
   // OrderDetail.invoices array carries credit_note rows too.
   invoice: OrderInvoiceSummary | null
+  // Aggregate document state across all invoices rows (initial + credit_notes).
+  // Computed server-side; worst-state-wins ordering so the orders list shows
+  // a single accurate badge per row even when multiple docs are attached.
+  invoiceState: InvoiceAggregateState
 }
+
+export type InvoiceAggregateState =
+  | "none"          // no invoices row at all
+  | "pending_issue" // at least one row has invoice_number IS NULL
+  | "pending_send"  // all rows have invoice_number, at least one has sent_at IS NULL
+  | "complete"      // all rows have both invoice_number AND sent_at
 
 export interface OrderInvoiceSummary {
   invoice_number: string | null
@@ -366,11 +382,22 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   return query
 }
 
-// Resolve an invoice filter (`requested` | `issued` | `pending`) to the set of
-// order_ids whose type='invoice' row matches. Returned to the caller so it
-// can attach `.in("id", ...)` to the orders query (PostgREST can't filter a
-// parent table by an embedded resource's column directly without changing
-// join semantics, so we resolve the id list in a separate query).
+// Resolve an invoice filter to the set of order_ids whose aggregate document
+// state matches. The aggregate considers BOTH initial invoices and credit_notes
+// for the order — a single badge per order that surfaces the worst pending
+// state across all docs (Shopify-style worst-state-wins).
+//
+// Filter values:
+//   - all           → no filter
+//   - requested     → any invoice row exists (legacy compatibility)
+//   - pending_issue → at least one row has invoice_number IS NULL
+//   - pending_send  → all rows have invoice_number set, at least one has
+//                     sent_at IS NULL (issue done, send still owed)
+//   - complete      → every row has both invoice_number AND sent_at
+//
+// Implementation: fetch all (order_id, invoice_number, sent_at) tuples once,
+// aggregate per order_id in JS, then filter to matching ids. One roundtrip,
+// scales fine at our row counts.
 //
 // Returns null when no filter is applied (caller should skip the .in()).
 async function resolveInvoiceFilterOrderIds(
@@ -379,20 +406,45 @@ async function resolveInvoiceFilterOrderIds(
 ): Promise<string[] | null> {
   if (!invoiceFilter || invoiceFilter === "all") return null
 
-  let invQuery: any = supabase.from("invoices").select("order_id").eq("type", "invoice")
-  if (invoiceFilter === "issued") {
-    invQuery = invQuery.not("invoice_number", "is", null)
-  } else if (invoiceFilter === "pending") {
-    invQuery = invQuery.is("invoice_number", null)
-  }
-  // "requested" → just type='invoice', no further filter
-
-  const { data, error } = await invQuery
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("order_id, invoice_number, sent_at")
   if (error) {
     console.error("Failed to resolve invoice filter:", error)
     return []
   }
-  return (data ?? []).map((r: { order_id: string }) => r.order_id)
+
+  type Row = { order_id: string; invoice_number: string | null; sent_at: string | null }
+  const byOrder = new Map<string, Row[]>()
+  for (const r of (data ?? []) as Row[]) {
+    const list = byOrder.get(r.order_id) ?? []
+    list.push(r)
+    byOrder.set(r.order_id, list)
+  }
+
+  const matches: string[] = []
+  for (const [orderId, rows] of byOrder.entries()) {
+    const state = computeInvoiceState(rows)
+    // "requested" = "За обработка" = any pending work (issue OR send),
+    // intentionally excluding `complete` so finished orders don't pollute
+    // the work queue.
+    if (invoiceFilter === "requested" && (state === "pending_issue" || state === "pending_send")) matches.push(orderId)
+    else if (invoiceFilter === "pending_issue" && state === "pending_issue") matches.push(orderId)
+    else if (invoiceFilter === "pending_send" && state === "pending_send") matches.push(orderId)
+    else if (invoiceFilter === "complete" && state === "complete") matches.push(orderId)
+  }
+  return matches
+}
+
+// Worst-state-wins aggregation. Caller passes all invoice rows for one order
+// (initial + any credit_notes). Empty rows → "none".
+function computeInvoiceState(
+  rows: Array<{ invoice_number: string | null; sent_at: string | null }>,
+): InvoiceAggregateState {
+  if (rows.length === 0) return "none"
+  if (rows.some((r) => !r.invoice_number)) return "pending_issue"
+  if (rows.some((r) => !r.sent_at)) return "pending_send"
+  return "complete"
 }
 
 // Map the joined invoices array on an order summary row to the {invoice_number,
@@ -426,7 +478,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   let query = supabase
     .from("orders")
     .select(
-      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
@@ -446,7 +498,19 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
 
   const orders: OrderSummary[] = (data ?? []).map((row: any) => {
     const { invoices, ...rest } = row
-    return { ...rest, invoice: pickInitialInvoice(invoices) }
+    const refundRows = ((rest as { refunds?: Array<{ amount_cents: number }> }).refunds ?? [])
+    const refundsTotal = refundRows.reduce(
+      (s: number, r: { amount_cents: number }) => s + (r.amount_cents ?? 0),
+      0,
+    )
+    return {
+      ...rest,
+      invoice: pickInitialInvoice(invoices),
+      invoiceState: computeInvoiceState(
+        ((invoices ?? []) as Array<{ invoice_number: string | null; sent_at: string | null }>),
+      ),
+      refunds_total: refundsTotal,
+    }
   })
 
   return { orders, total: count ?? 0 }
@@ -469,7 +533,7 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
     let query = supabase
       .from("orders")
       .select(
-        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
       )
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
@@ -487,7 +551,19 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
 
     const mapped: OrderSummary[] = (data ?? []).map((row: any) => {
       const { invoices, ...rest } = row
-      return { ...rest, invoice: pickInitialInvoice(invoices) }
+      const refundRows = ((rest as { refunds?: Array<{ amount_cents: number }> }).refunds ?? [])
+    const refundsTotal = refundRows.reduce(
+      (s: number, r: { amount_cents: number }) => s + (r.amount_cents ?? 0),
+      0,
+    )
+    return {
+      ...rest,
+      invoice: pickInitialInvoice(invoices),
+      invoiceState: computeInvoiceState(
+        ((invoices ?? []) as Array<{ invoice_number: string | null; sent_at: string | null }>),
+      ),
+      refunds_total: refundsTotal,
+    }
     })
     results.push(...mapped)
     if (!data || data.length < batchSize) break
@@ -787,9 +863,12 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
       }
     : null
 
+  const refundRows = (orderResult.data.refunds ?? []) as Array<{ amount_cents: number }>
   return {
     ...orderResult.data,
     invoice: invoiceSummary,
+    invoiceState: computeInvoiceState(invoices),
+    refunds_total: refundRows.reduce((s, r) => s + (r.amount_cents ?? 0), 0),
     invoices,
     withdrawals,
     inventoryReturns: returns,
@@ -1973,12 +2052,20 @@ export async function recordRefund(
   // No existing row — run full validation + insert.
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id")
+    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id, payment_method, status")
     .eq("id", orderId)
     .single()
 
   if (fetchError || !order) throw new Error("Поръчката не е намерена")
-  if (!order.paid_at) throw new Error("Не може да се възстанови сума за неплатена поръчка")
+  // COD delivered before courier-settlement: customer paid the courier on
+  // delivery, so a refund is genuinely owed even though paid_at is still null.
+  // Refund will go out via bank_transfer to customer's IBAN; courier-side
+  // settlement happens later and is independent.
+  const isCodDeliveredAwaitingSettlement =
+    order.payment_method === "cod" && order.status === "delivered"
+  if (!order.paid_at && !isCodDeliveredAwaitingSettlement) {
+    throw new Error("Не може да се възстанови сума за неплатена поръчка")
+  }
   if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
     throw new Error("Поръчката няма Stripe платеж — използвайте банков превод")
   }
@@ -3656,6 +3743,32 @@ export async function addInventoryBatch(data: {
     throw new Error("Грешка при добавяне на наличност")
   }
 
+  // Seed product_batches for the Tier 1 traceability layer. Unique on
+  // (sku, batch_number) — repeat batch_in rows for the same supplier label
+  // (top-up of an existing batch) reuse the existing product_batches row.
+  const { error: batchErr } = await supabase
+    .from("product_batches")
+    .upsert(
+      {
+        sku: data.sku,
+        batch_number: data.batchId.trim(),
+        expiry_date: data.expiryDate,
+        status: "active",
+        notes: data.notes?.trim() || null,
+        created_by: "admin",
+      },
+      { onConflict: "sku,batch_number", ignoreDuplicates: true },
+    )
+  if (batchErr) {
+    console.error("Failed to seed product_batches:", batchErr)
+    // inventory_log already committed; surface a soft warning rather than
+    // re-throwing so the admin sees the stock count update. The batches
+    // page will be missing this row until manually reseeded.
+  }
+
+  revalidateTag("inventory", "max")
+  revalidateTag("product-batches", "max")
+
   return { success: true }
 }
 
@@ -3743,15 +3856,15 @@ export async function recordStockMovement(data: {
   //   - wholesale_out: batch_id REQUIRED (EU 931/2011 — commercial consignments
   //     to other businesses must reference batch/lot). Provides legal traceability
   //     for B2B sales without requiring full Tier 1 batch tables.
-  //   - others: batch fields not allowed
-  if (data.type === "wholesale_out") {
-    if (!data.batchId?.trim()) {
-      throw new Error(
-        "Номер на партида е задължителен за оптови продажби (EU 931/2011 — изисква партида на търговските пратки)",
-      )
-    }
-  } else if (data.batchId && data.type !== "return_in") {
-    throw new Error("Номер на партида е допустим само за връщане или оптова продажба")
+  //   - sample_out / damaged / adjustment_loss / adjustment_gain: batch_id OPTIONAL.
+  //     When provided, the row participates in batch_quantity_available so the
+  //     two ledgers stay in sync. Untagged rows still affect inventory_current.
+  //   - expiry_date stays return_in-only (the original batch's expiry travels
+  //     with the returned unit; other types reference an existing batch via id).
+  if (data.type === "wholesale_out" && !data.batchId?.trim()) {
+    throw new Error(
+      "Номер на партида е задължителен за оптови продажби (EU 931/2011 — изисква партида на търговските пратки)",
+    )
   }
   if (data.expiryDate && data.type !== "return_in") {
     throw new Error("Срок на годност е допустим само за връщане")
@@ -3767,15 +3880,31 @@ export async function recordStockMovement(data: {
   // Validate orderId — allowed on return_in (sellable return) and damaged
   // (damaged return). On other movement types, order_id wouldn't have
   // meaningful semantics under the current reference_type rules.
-  if (data.orderId && data.type !== "return_in" && data.type !== "damaged") {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const shortIdRegex = /^[0-9a-f]{8}$/i
+  let resolvedOrderId: string | undefined = data.orderId?.trim() || undefined
+  if (resolvedOrderId && data.type !== "return_in" && data.type !== "damaged") {
     throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (data.orderId && !uuidRegex.test(data.orderId)) {
-    throw new Error("Невалиден формат на поръчка")
+  if (resolvedOrderId && !uuidRegex.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
+    throw new Error("Невалиден формат на поръчка (очаква се UUID или 8-знаков префикс)")
   }
 
   const supabase = await createClient()
+
+  if (resolvedOrderId && shortIdRegex.test(resolvedOrderId)) {
+    const prefix = resolvedOrderId.toLowerCase()
+    const { data: matches, error: lookupErr } = await supabase
+      .from("orders")
+      .select("id")
+      .gte("id", `${prefix}-0000-0000-0000-000000000000`)
+      .lte("id", `${prefix}-ffff-ffff-ffff-ffffffffffff`)
+      .limit(2)
+    if (lookupErr) throw new Error("Грешка при търсене на поръчка")
+    if (!matches || matches.length === 0) throw new Error("Поръчка с този ID не е намерена")
+    if (matches.length > 1) throw new Error("Префиксът съответства на повече от една поръчка — въведете пълния ID")
+    resolvedOrderId = matches[0].id as string
+  }
 
   // Order-scoped return cap: when the movement is tied to a specific
   // customer order return (order_id + reference_type='return' +
@@ -3792,7 +3921,7 @@ export async function recordStockMovement(data: {
   // unrelated to any customer shipment. Adjustments (gain/loss) also
   // bypass — they're per-SKU reconciliation, not per-order returns.
   const isOrderReturn =
-    data.orderId &&
+    resolvedOrderId &&
     data.referenceType === "return" &&
     (data.type === "return_in" || data.type === "damaged")
 
@@ -3800,7 +3929,7 @@ export async function recordStockMovement(data: {
     const { data: orderItems, error: itemsErr } = await supabase
       .from("order_items")
       .select("sku, quantity")
-      .eq("order_id", data.orderId!)
+      .eq("order_id", resolvedOrderId!)
     if (itemsErr) {
       console.error("Failed to load order_items for return-cap validation:", itemsErr)
       throw new Error("Грешка при проверка на артикулите на поръчката")
@@ -3815,7 +3944,7 @@ export async function recordStockMovement(data: {
     const { data: priorReturns, error: priorErr } = await supabase
       .from("inventory_log")
       .select("quantity")
-      .eq("order_id", data.orderId!)
+      .eq("order_id", resolvedOrderId!)
       .eq("sku", data.sku)
       .eq("reference_type", "return")
       .in("type", ["return_in", "damaged"])
@@ -3843,7 +3972,7 @@ export async function recordStockMovement(data: {
     notes: trimmedNotes,
     batch_id: trimmedBatchId,
     expiry_date: data.expiryDate || null,
-    order_id: data.orderId || null,
+    order_id: resolvedOrderId || null,
     created_by: "admin",
     idempotency_key: data.idempotencyKey,
   })
@@ -3856,6 +3985,41 @@ export async function recordStockMovement(data: {
     console.error("Failed to record stock movement:", error)
     throw new Error("Грешка при записване на движение")
   }
+
+  // Inflows that introduce a labeled unit (return_in, adjustment_gain) should
+  // create a product_batches row when admin supplied both batch_number and
+  // expiry — same pattern as addInventoryBatch. Outflows reference existing
+  // batches via the picker and never need to seed. If expiry is missing we
+  // skip the seed silently (the inventory_log row still records the movement).
+  const isInflowWithBatch =
+    (data.type === "return_in" || data.type === "adjustment_gain") &&
+    trimmedBatchId &&
+    data.expiryDate
+  if (isInflowWithBatch) {
+    const { error: batchErr } = await supabase
+      .from("product_batches")
+      .upsert(
+        {
+          sku: data.sku,
+          batch_number: trimmedBatchId,
+          expiry_date: data.expiryDate,
+          status: "active",
+          created_by: "admin",
+        },
+        { onConflict: "sku,batch_number", ignoreDuplicates: true },
+      )
+    if (batchErr) {
+      console.error("Failed to seed product_batches from inflow movement:", batchErr)
+      // inventory_log already committed; surface a soft warning rather than
+      // re-throwing so the admin sees the stock count update. The batch
+      // page will be missing this row until manually reseeded.
+    }
+  }
+
+  revalidateTag("inventory", "max")
+  // Movements with a batch_id participate in batch_quantity_available, so
+  // bump that tag too (and the inflow path above may have inserted a row).
+  if (trimmedBatchId) revalidateTag("product-batches", "max")
 
   return { success: true }
 }
