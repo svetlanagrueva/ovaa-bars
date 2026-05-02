@@ -34,7 +34,9 @@ export function createSupabaseMock() {
     not: vi.fn(() => mock),
     ilike: vi.fn(() => mock),
     or: vi.fn(() => mock),
+    gt: vi.fn(() => mock),
     gte: vi.fn(() => mock),
+    lt: vi.fn(() => mock),
     lte: vi.fn(() => mock),
     single: vi.fn(),
     maybeSingle: vi.fn(),
@@ -56,7 +58,9 @@ export function mockThenableResult(data: unknown, error: unknown = null, count: 
     in: vi.fn(() => obj),
     ilike: vi.fn(() => obj),
     or: vi.fn(() => obj),
+    gt: vi.fn(() => obj),
     gte: vi.fn(() => obj),
+    lt: vi.fn(() => obj),
     lte: vi.fn(() => obj),
     select: vi.fn(() => obj),
     range: vi.fn(() => obj),
@@ -112,7 +116,9 @@ export function resetSupabaseMock(mock: Record<string, ReturnType<typeof vi.fn>>
   mock.not = vi.fn(() => mock)
   mock.ilike = vi.fn(() => mock)
   mock.or = vi.fn(() => mock)
+  mock.gt = vi.fn(() => mock)
   mock.gte = vi.fn(() => mock)
+  mock.lt = vi.fn(() => mock)
   mock.lte = vi.fn(() => mock)
   mock.single = vi.fn()
   mock.maybeSingle = vi.fn()
