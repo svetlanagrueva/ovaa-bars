@@ -9,7 +9,7 @@
 - `cancelled_at` timestamptz — set when admin cancels
 - `cancellation_reason` text — optional, set on cancellation
 - `admin_notes` jsonb NOT NULL DEFAULT '[]' — append-only array of `{text, created_at, author}` note entries, shown in dedicated "Вътрешни бележки" card (not in timeline)
-- `paid_at` timestamptz — Card: set on webhook/success page confirmation; COD: set when admin records courier settlement
+- `seller_settled_at` timestamptz — Card: set on webhook/success page confirmation; COD: set when admin records courier settlement
 - `courier_ppp_ref` text — COD only: courier's ППП (postal money transfer) document reference
 - `settlement_ref` text — COD only: courier's bank transfer reference (batch payout, multiple orders may share)
 - `settlement_amount` integer — COD only: actual amount received in cents after courier commission
@@ -108,7 +108,7 @@
 ## Order Audit Events Table
 - `order_audit_events` — append-only unified event log for orders. `(id bigserial, order_id uuid fk, event_type text, actor text default 'admin', payload jsonb default '{}', created_at timestamptz)`. **Immutable**: `BEFORE UPDATE`/`BEFORE DELETE` triggers reject mutations; correct by appending.
 - Populated by multiple paths:
-  - `emit_order_audit_events` trigger on orders AFTER UPDATE — diffs OLD vs NEW for whitelisted columns (`status`, `paid_at`, `shipped_at`, `delivered_at`, `cancelled_at`, `tracking_number`, `cod_confirmed_at`, and the contact group: `first_name`, `last_name`, `phone`, `email`, `address`, `postal_code`, `city`, `notes`) and emits typed events (`status_changed`, `paid_at_recorded`, `shipped_at_recorded`, `delivered_at_recorded`, `cancelled`, `tracking_number_set`, `cod_confirmed`, `contact_info_changed`). Migration `20260428072545` dropped the `invoice_number_set` and `invoice_marked_sent` branches — those events now come from `emit_invoice_audit_events` on the invoices table. The `status_changed` branch is suppressed when `current_setting('app.allow_status_override', true) = 'true'` — the RPC already wrote a richer `status_force_override` event with the reason. The `contact_info_changed` branch emits ONE event per UPDATE with a `jsonb_strip_nulls`'d payload of only the fields that changed.
+  - `emit_order_audit_events` trigger on orders AFTER UPDATE — diffs OLD vs NEW for whitelisted columns (`status`, `seller_settled_at`, `shipped_at`, `delivered_at`, `cancelled_at`, `tracking_number`, `cod_confirmed_at`, and the contact group: `first_name`, `last_name`, `phone`, `email`, `address`, `postal_code`, `city`, `notes`) and emits typed events (`status_changed`, `seller_settled_at_recorded`, `shipped_at_recorded`, `delivered_at_recorded`, `cancelled`, `tracking_number_set`, `cod_confirmed`, `contact_info_changed`). Migration `20260428072545` dropped the `invoice_number_set` and `invoice_marked_sent` branches — those events now come from `emit_invoice_audit_events` on the invoices table. The `status_changed` branch is suppressed when `current_setting('app.allow_status_override', true) = 'true'` — the RPC already wrote a richer `status_force_override` event with the reason. The `contact_info_changed` branch emits ONE event per UPDATE with a `jsonb_strip_nulls`'d payload of only the fields that changed.
   - `emit_invoice_audit_events` trigger on invoices AFTER UPDATE — emits `invoice_number_set` / `credit_note_number_set` and `invoice_marked_sent` / `credit_note_marked_sent` based on `type`.
   - `emit_refund_audit` trigger on refunds AFTER INSERT — emits a `refunded` event with the new payload (includes `affects_invoiced_supply`, `bank_transfer_ref`, `withdrawal_id`).
   - `emit_refund_annotation_audit` trigger on refunds AFTER UPDATE — emits `refund_annotation_edited` with before/after `{old, new}` pairs for `reason` / `bank_transfer_ref` / `credit_note_skip_reason` changes. Early-returns on no-op UPDATEs.
@@ -175,7 +175,7 @@ Valid values in `orders.status`: `pending`, `confirmed`, `shipped`, `delivered`,
 - `chk_shipped_after_confirmed` — `shipped_at IS NULL OR (confirmed_at IS NOT NULL AND shipped_at >= confirmed_at)`. Strict: both timestamps are set by the app, no cross-clock drift.
 - `chk_delivered_after_shipped` — `delivered_at IS NULL OR (shipped_at IS NOT NULL AND delivered_at >= shipped_at - interval '1 hour')`. 1h tolerance absorbs courier clock drift.
 
-**Deliberately not encoded:** `paid_at >= confirmed_at` and refund-vs-payment chronology — too strict for legitimate edge cases. Those relationships live in business-logic validation in the refund / settlement server actions.
+**Deliberately not encoded:** `seller_settled_at >= confirmed_at` and refund-vs-payment chronology — too strict for legitimate edge cases. Those relationships live in business-logic validation in the refund / settlement server actions.
 
 ## Status state machine (enforced by `trg_enforce_order_status_transition`)
 BEFORE UPDATE trigger on orders; fires only when `OLD.status IS DISTINCT FROM NEW.status`. Legal transitions:

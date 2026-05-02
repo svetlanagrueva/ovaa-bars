@@ -103,7 +103,7 @@ Migration `20260429071812_withdrawals_table.sql`. **Decisions**:
 - Email case sensitivity: all unsubscribe checks use `lower()` in SQL, API stores lowercase
 - Marketing email concurrency: `FOR UPDATE SKIP LOCKED` in Postgres, `claimed_at` for stale detection (not `created_at`)
 - `getBaseUrl()` shared via `lib/constants.ts` — single source of truth for absolute URLs
-- `recordCodSettlement` idempotency: `.is("paid_at", null)` prevents double-recording; validates order is COD + delivered/shipped; `paidAt` date cannot be before delivery or in future
+- `recordCodSettlement` idempotency: `.is("seller_settled_at", null)` prevents double-recording; validates order is COD + delivered/shipped; `settledAt` date cannot be before delivery or in future
 - `markInvoiceSent` idempotency: `.is("sent_at", null)` + `.not("invoice_number", "is", null)` guards on the invoices row
 - `addAdminNote` append-only: calls the `add_admin_note` RPC which does atomic `jsonb ||` append; max 2000 chars per note. Row-level serialization prevents concurrent-note loss.
 - `refunds` append-only: financial fields immutable; only `reason`, `bank_transfer_ref`, `credit_note_skip_reason`, `updated_at` mutable

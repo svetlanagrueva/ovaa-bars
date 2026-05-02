@@ -343,13 +343,13 @@ export default function AdminWithdrawalDetailPage({ params }: { params: Promise<
                 <option value="none">Без резолюция</option>
               </select>
             </div>
-            {goodsResolution === "refund" && !w.order.paid_at && (
+            {goodsResolution === "refund" && !w.order.seller_settled_at && (
               <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                 <strong>Внимание:</strong> поръчката още не е маркирана като платена
                 {w.order.payment_method === "cod"
                   ? " (наложен платеж — плащането се записва след получено плащане от куриера)"
                   : ""}.
-                Запис на възстановяване няма да е възможен, докато <strong>paid_at</strong> не бъде попълнен.
+                Запис на възстановяване няма да е възможен, докато <strong>seller_settled_at</strong> не бъде попълнен.
                 Можете да продължите, но завършването на заявката ще изисква първо да маркирате плащането.
               </p>
             )}

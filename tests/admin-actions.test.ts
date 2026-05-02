@@ -1700,13 +1700,13 @@ describe("admin actions", () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
-      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("Unauthorized")
+      await expect(recordCodSettlement(validOrderId, { settledAt: "2026-04-20" })).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
-      await expect(recordCodSettlement("bad-id", { paidAt: "2026-04-20" })).rejects.toThrow("Invalid order ID")
+      await expect(recordCodSettlement("bad-id", { settledAt: "2026-04-20" })).rejects.toThrow("Invalid order ID")
     })
 
     it("rejects non-COD orders", async () => {
@@ -1716,7 +1716,7 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("наложен платеж")
+      await expect(recordCodSettlement(validOrderId, { settledAt: "2026-04-20" })).rejects.toThrow("наложен платеж")
     })
 
     it("rejects settlement for non-delivered orders", async () => {
@@ -1726,14 +1726,14 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("доставени поръчки")
+      await expect(recordCodSettlement(validOrderId, { settledAt: "2026-04-20" })).rejects.toThrow("доставени поръчки")
     })
 
     it("rejects ППП ref over 100 chars", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", courierPppRef: "x".repeat(101) })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", courierPppRef: "x".repeat(101) })
       ).rejects.toThrow("ППП референцията е твърде дълга")
     })
 
@@ -1741,7 +1741,7 @@ describe("admin actions", () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementRef: "x".repeat(101) })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", settlementRef: "x".repeat(101) })
       ).rejects.toThrow("Референцията на превода е твърде дълга")
     })
 
@@ -1754,7 +1754,7 @@ describe("admin actions", () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 0 })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", settlementAmount: 0 })
       ).rejects.toThrow("положително число")
 
       mockSupabase.single.mockResolvedValueOnce({
@@ -1763,7 +1763,7 @@ describe("admin actions", () => {
       })
 
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: -100 })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", settlementAmount: -100 })
       ).rejects.toThrow("положително число")
     })
 
@@ -1776,7 +1776,7 @@ describe("admin actions", () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
 
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 49.50 })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", settlementAmount: 49.50 })
       ).rejects.toThrow("положително число")
     })
 
@@ -1788,7 +1788,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       const result = await recordCodSettlement(validOrderId, {
-        paidAt: "2026-04-20",
+        settledAt: "2026-04-20",
         courierPppRef: "PPP-12345",
         settlementRef: "BT-2026-04-001",
         settlementAmount: 4850,
@@ -1797,7 +1797,7 @@ describe("admin actions", () => {
       expect(result).toEqual({ success: true })
       expect(mockSupabase.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          paid_at: expect.any(String),
+          seller_settled_at: expect.any(String),
           courier_ppp_ref: "PPP-12345",
           settlement_ref: "BT-2026-04-001",
           settlement_amount: 4850,
@@ -1805,19 +1805,19 @@ describe("admin actions", () => {
       )
     })
 
-    it("records settlement with only paid_at when no optional fields provided", async () => {
+    it("records settlement with only seller_settled_at when no optional fields provided", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, payment_method: "cod", status: "delivered" },
         error: null,
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      const result = await recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })
+      const result = await recordCodSettlement(validOrderId, { settledAt: "2026-04-20" })
 
       expect(result).toEqual({ success: true })
       expect(mockSupabase.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          paid_at: expect.any(String),
+          seller_settled_at: expect.any(String),
         })
       )
       // Should NOT include optional fields when not provided
@@ -1834,17 +1834,17 @@ describe("admin actions", () => {
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await expect(recordCodSettlement(validOrderId, { paidAt: "2026-04-20" })).rejects.toThrow("Поръчката не е намерена")
+      await expect(recordCodSettlement(validOrderId, { settledAt: "2026-04-20" })).rejects.toThrow("Поръчката не е намерена")
     })
 
-    it("requires paid_at — rejects when missing", async () => {
+    it("requires seller_settled_at — rejects when missing", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validUUID, { paidAt: "" } as any)
+        recordCodSettlement(validUUID, { settledAt: "" } as any)
       ).rejects.toThrow("Датата на плащане е задължителна")
     })
 
-    it("rejects future paid_at date", async () => {
+    it("rejects future seller_settled_at date", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, payment_method: "cod", status: "delivered" },
         error: null,
@@ -1852,31 +1852,31 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2099-01-01" })
+        recordCodSettlement(validOrderId, { settledAt: "2099-01-01" })
       ).rejects.toThrow("не може да е в бъдещето")
     })
 
-    it("rejects invalid paid_at date", async () => {
+    it("rejects invalid seller_settled_at date", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "not-a-date" })
+        recordCodSettlement(validOrderId, { settledAt: "not-a-date" })
       ).rejects.toThrow("Невалидна дата на плащане")
     })
 
-    it("uses provided paid_at date at end of day UTC", async () => {
+    it("uses provided seller_settled_at date at end of day UTC", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, payment_method: "cod", status: "delivered" },
         error: null,
       })
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
-      await recordCodSettlement(validOrderId, { paidAt: "2026-04-10" })
+      await recordCodSettlement(validOrderId, { settledAt: "2026-04-10" })
 
       const updateArg = (mockSupabase.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
-      expect(updateArg.paid_at).toBe("2026-04-10T23:59:59.000Z")
+      expect(updateArg.seller_settled_at).toBe("2026-04-10T23:59:59.000Z")
     })
 
-    it("rejects paid_at before delivery date", async () => {
+    it("rejects seller_settled_at before delivery date", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: { id: validOrderId, payment_method: "cod", status: "delivered", delivered_at: "2026-04-15T10:00:00.000Z" },
         error: null,
@@ -1884,7 +1884,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-14" })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-14" })
       ).rejects.toThrow("преди доставката")
     })
 
@@ -1893,7 +1893,7 @@ describe("admin actions", () => {
         data: { id: validOrderId, payment_method: "cod", status: "delivered" },
         error: null,
       })
-      // Update returns empty array — paid_at IS NULL guard didn't match (already paid)
+      // Update returns empty array — seller_settled_at IS NULL guard didn't match (already paid)
       const updateChain = {
         eq: vi.fn(() => updateChain),
         is: vi.fn(() => updateChain),
@@ -1906,7 +1906,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 5000 })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", settlementAmount: 5000 })
       ).rejects.toThrow("Плащането вече е записано")
     })
 
@@ -1927,7 +1927,7 @@ describe("admin actions", () => {
 
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validOrderId, { paidAt: "2026-04-20", settlementAmount: 5000 })
+        recordCodSettlement(validOrderId, { settledAt: "2026-04-20", settlementAmount: 5000 })
       ).rejects.toThrow("Грешка при записване на плащане")
     })
   })
@@ -2802,10 +2802,11 @@ describe("admin actions", () => {
     } = {}) {
       const defaultOrder = {
         id: validOrderId,
-        paid_at: "2026-04-01T00:00:00Z",
+        seller_settled_at: "2026-04-01T00:00:00Z",
         delivered_at: null,
         total_amount: 5000,
         stripe_payment_intent_id: "pi_test",
+        payment_method: "card",
       }
       const invoiceLookup = options.invoiceLookup ?? null
 
@@ -2976,7 +2977,7 @@ describe("admin actions", () => {
 
     it("rejects when order not paid", async () => {
       setupRecordRefundMocks({
-        order: { id: validOrderId, paid_at: null, total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        order: { id: validOrderId, seller_settled_at: null, total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null, payment_method: "card" },
       })
 
       const { recordRefund } = await import("@/app/actions/admin")
@@ -2993,7 +2994,7 @@ describe("admin actions", () => {
 
     it("rejects Stripe refund when order has no Stripe PaymentIntent", async () => {
       setupRecordRefundMocks({
-        order: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        order: { id: validOrderId, seller_settled_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null, payment_method: "card" },
       })
 
       const { recordRefund } = await import("@/app/actions/admin")
@@ -3010,7 +3011,7 @@ describe("admin actions", () => {
 
     it("rejects refund amount exceeding remaining balance", async () => {
       setupRecordRefundMocks({
-        order: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        order: { id: validOrderId, seller_settled_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null, payment_method: "card" },
         existingRefunds: [],
       })
 
@@ -3028,7 +3029,7 @@ describe("admin actions", () => {
 
     it("rejects when sum of existing + new refund exceeds total", async () => {
       setupRecordRefundMocks({
-        order: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null },
+        order: { id: validOrderId, seller_settled_at: "2026-04-01T00:00:00Z", total_amount: 5000, needs_invoice: false, stripe_payment_intent_id: null, payment_method: "card" },
         existingRefunds: [{ amount_cents: 3000 }, { amount_cents: 1500 }],
       })
 
@@ -3050,9 +3051,10 @@ describe("admin actions", () => {
       setupRecordRefundMocks({
         order: {
           id: validOrderId,
-          paid_at: "2026-04-01T00:00:00Z",
+          seller_settled_at: "2026-04-01T00:00:00Z",
           total_amount: 5000,
           stripe_payment_intent_id: "pi_test",
+          payment_method: "card",
         },
         invoiceLookup: { id: "inv-id-xyz", invoice_number: null },
         existingRefunds: [],
@@ -3184,10 +3186,11 @@ describe("admin actions", () => {
       const recoveredRows = [{ id: "recovered-id", order_id: validOrderId }]
       const defaultOrder = {
         id: validOrderId,
-        paid_at: "2026-04-01T00:00:00Z",
+        seller_settled_at: "2026-04-01T00:00:00Z",
         delivered_at: null,
         total_amount: 5000,
         stripe_payment_intent_id: "pi_test",
+        payment_method: "card",
       }
       mockSupabase.single.mockResolvedValueOnce({ data: defaultOrder, error: null })
       mockSupabase.single.mockResolvedValueOnce({
@@ -3227,10 +3230,11 @@ describe("admin actions", () => {
       // index fired. Surface the Stripe-specific error.
       const defaultOrder = {
         id: validOrderId,
-        paid_at: "2026-04-01T00:00:00Z",
+        seller_settled_at: "2026-04-01T00:00:00Z",
         delivered_at: null,
         total_amount: 5000,
         stripe_payment_intent_id: "pi_test",
+        payment_method: "card",
       }
       mockSupabase.single.mockResolvedValueOnce({ data: defaultOrder, error: null })
       mockSupabase.single.mockResolvedValueOnce({
@@ -3506,7 +3510,7 @@ describe("admin actions", () => {
         ]
         mockSupabase.single
           .mockResolvedValueOnce({
-            data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", delivered_at: null, total_amount: 5000, stripe_payment_intent_id: "pi_test" },
+            data: { id: validOrderId, seller_settled_at: "2026-04-01T00:00:00Z", delivered_at: null, total_amount: 5000, stripe_payment_intent_id: "pi_test", payment_method: "card" },
             error: null,
           })
         mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any
@@ -3543,7 +3547,7 @@ describe("admin actions", () => {
         ]
         mockSupabase.single
           .mockResolvedValueOnce({
-            data: { id: validOrderId, paid_at: "2026-04-01T00:00:00Z", delivered_at: null, total_amount: 5000, stripe_payment_intent_id: "pi_test" },
+            data: { id: validOrderId, seller_settled_at: "2026-04-01T00:00:00Z", delivered_at: null, total_amount: 5000, stripe_payment_intent_id: "pi_test", payment_method: "card" },
             error: null,
           })
         mockSupabase.maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null }) as any

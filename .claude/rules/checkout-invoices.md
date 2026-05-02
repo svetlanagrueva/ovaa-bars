@@ -53,17 +53,17 @@ If any of the three conditions fails (no invoice row, invoice not yet issued, or
 - `confirmOrder` on success page handles both card and COD (returns early for already-confirmed COD)
 
 ## Payment Lifecycle & Settlement
-- `paid_at` tracks when the seller actually received money
-- Card: `paid_at` set automatically on Stripe webhook (`checkout.session.completed`) and success page fallback
+- `seller_settled_at` tracks when the seller actually received money
+- Card: `seller_settled_at` set automatically on Stripe webhook (`checkout.session.completed`) and success page fallback
 - Card: `stripe_receipt_url` fetched from PaymentIntent → Charge, included in confirmation email as "Разписка за картово плащане (Stripe)"
 - Card: `stripe_payment_intent_id` stored for Stripe payout reconciliation
 - `order_confirmation_sent_at` set after confirmation email is successfully sent
-- COD: `paid_at` set manually by admin when courier settlement is recorded
+- COD: `seller_settled_at` set manually by admin when courier settlement is recorded
 - COD settlement fields: `courier_ppp_ref` (ППП document), `settlement_ref` (bank transfer ref), `settlement_amount` (actual amount after courier commission)
-- Receivable tracking: `delivered_at IS NOT NULL AND paid_at IS NULL` = open receivable from courier
-- Server action: `recordCodSettlement(orderId, { courierPppRef, settlementRef, settlementAmount, paidAt })`
-  - Validates: order must be COD, status must be delivered or shipped, `paidAt` cannot be before delivery or in future
-  - Idempotency: `.is("paid_at", null)` prevents double-recording
+- Receivable tracking: `delivered_at IS NOT NULL AND seller_settled_at IS NULL` = open receivable from courier
+- Server action: `recordCodSettlement(orderId, { courierPppRef, settlementRef, settlementAmount, settledAt })`
+  - Validates: order must be COD, status must be delivered or shipped, `settledAt` cannot be before delivery or in future
+  - Idempotency: `.is("seller_settled_at", null)` prevents double-recording
   - Date picker value stored at 23:59:59 UTC; defaults to `new Date()` if omitted
 - Neither card (Stripe) nor COD (ППП) requires a касов бон — both are non-cash per Наредба Н-18 Чл. 3
 - COD courier APIs are explicitly configured for ППП (see `technical-decisions.md` → Courier API section)

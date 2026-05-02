@@ -829,7 +829,7 @@ export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult>
   const updatePayload: Record<string, unknown> = { status: "confirmed", confirmed_at: now }
   // Card payments are paid at confirmation; COD is paid later when courier settles
   if (existingOrder.payment_method === "card") {
-    updatePayload.paid_at = now
+    updatePayload.seller_settled_at = now
     if (paymentIntentId) updatePayload.stripe_payment_intent_id = paymentIntentId
     if (receiptUrl) updatePayload.stripe_receipt_url = receiptUrl
   }
