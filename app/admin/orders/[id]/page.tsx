@@ -1,10 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState, use } from "react"
+import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, suggestBatchesForShipment, confirmShipmentBatches, type OrderDetail, type OrderRefund, type OrderInventoryReturn, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchSuggestion } from "@/app/actions/admin"
-import { computeRefundBreakdown, formatBreakdownForCreditNote } from "@/lib/refund-breakdown"
-import { copyToClipboard } from "@/lib/clipboard"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, suggestBatchesForShipment, confirmShipmentBatches, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchSuggestion } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
@@ -936,9 +934,7 @@ export default function AdminOrderDetailPage({
                 key={r.id}
                 refund={r}
                 creditNoteInvoice={order.invoices.find((inv) => inv.type === "credit_note" && inv.refund_id === r.id)}
-                orderId={order.id}
                 orderItems={order.items}
-                inventoryReturns={order.inventoryReturns.filter(ret => ret.reference_id === r.id)}
                 onSaved={async () => {
                   const refreshed = await getOrder(id)
                   setOrder(refreshed)
@@ -1888,8 +1884,8 @@ export default function AdminOrderDetailPage({
                   const refundsTotal = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
                   return (
                     <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-                      ⚠ За тази поръчка вече е възстановена сума <strong>{formatPrice(refundsTotal)}</strong> към клиента.
-                      Куриерът ще преведе пълната ППП сума ({formatPrice(order.total_amount)} минус комисия) — нетната позиция ще бъде получената сума минус {formatPrice(refundsTotal)}.
+                      ⚠ По тази поръчка вече е възстановена сума <strong>{formatPrice(refundsTotal)}</strong> към клиента.
+                      Куриерът ще преведе ППП сумата (минус комисионата). Реално ще получите изплатената от куриера сума минус {formatPrice(refundsTotal)}.
                     </div>
                   )
                 })()}
@@ -3242,16 +3238,12 @@ export default function AdminOrderDetailPage({
 function RefundRow({
   refund,
   creditNoteInvoice,
-  orderId,
   orderItems,
-  inventoryReturns,
   onSaved,
 }: {
   refund: OrderRefund
   creditNoteInvoice: Invoice | undefined
-  orderId: string
   orderItems: OrderDetail["items"]
-  inventoryReturns: OrderInventoryReturn[]
   onSaved: () => Promise<void> | void
 }) {
   const [editing, setEditing] = useState(false)
@@ -3260,53 +3252,6 @@ function RefundRow({
   const [skipReason, setSkipReason] = useState(refund.credit_note_skip_reason ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle")
-
-  const breakdown = useMemo(
-    () =>
-      computeRefundBreakdown(
-        refund.amount_cents,
-        inventoryReturns.map((r) => ({ sku: r.sku, quantity: r.quantity, type: r.type })),
-        orderItems.map((i) => ({
-          id: i.id,
-          sku: i.sku,
-          productName: i.productName,
-          unitPriceCents: i.priceInCents,
-        })),
-        // refund_items takes precedence — explicit allocation captures admin
-        // intent for shipping/goodwill/discount cases that have no inventory return.
-        refund.items.map((it) => ({
-          orderItemId: it.order_item_id,
-          quantity: it.quantity,
-          amountCents: it.amount_cents,
-        })),
-      ),
-    [refund.amount_cents, refund.items, inventoryReturns, orderItems],
-  )
-
-  const copyText = useMemo(
-    () =>
-      formatBreakdownForCreditNote(breakdown, {
-        orderId,
-        refundedAt: refund.refunded_at,
-        method: refund.method,
-      }),
-    [breakdown, orderId, refund.refunded_at, refund.method],
-  )
-
-  const handleCopy = async () => {
-    // copyToClipboard tries the async clipboard API first (HTTPS /
-    // localhost), then falls back to document.execCommand('copy') via a
-    // hidden textarea for HTTP dev contexts and older browsers.
-    const ok = await copyToClipboard(copyText)
-    if (ok) {
-      setCopied("ok")
-    } else {
-      setCopied("failed")
-      console.error("Clipboard write failed — both async API and execCommand fallback unavailable")
-    }
-    setTimeout(() => setCopied("idle"), 2000)
-  }
 
   return (
     <div className="rounded-md border border-border p-3 text-sm">
@@ -3392,79 +3337,6 @@ function RefundRow({
         </div>
       )}
 
-      {/* Credit-note breakdown (VAT 20% inclusive) — visible when not editing.
-          Helper for the admin when issuing кредитно известие in Microinvest. */}
-      {!editing && (
-        <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Данни за кредитно известие (ДДС 20%)
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              className={`h-6 text-[11px] ${copied === "failed" ? "border-red-400 text-red-700" : ""}`}
-              onClick={handleCopy}
-            >
-              {copied === "ok" ? "Копирано ✓" : copied === "failed" ? "Не успя" : "Копирай"}
-            </Button>
-          </div>
-          {breakdown.lines.length > 0 ? (
-            <div className="mt-2 space-y-1 text-xs">
-              {breakdown.lines.map((line) => (
-                <div key={line.sku} className="grid grid-cols-[1fr_auto] gap-x-3">
-                  <div className="min-w-0">
-                    <div className="truncate">
-                      {line.productName}
-                      {line.type === "damaged" && (
-                        <span className="ml-2 text-muted-foreground">[брак]</span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {line.quantity} бр. × {formatPrice(line.unitPriceCents)} ·{" "}
-                      <span className="font-mono">{line.sku}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div>{formatPrice(line.lineGrossCents)}</div>
-                    <div className="text-[10px] text-muted-foreground">
-                      ДДС {formatPrice(line.lineVatCents)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <div className="mt-1 grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/60 pt-1 text-[11px]">
-                <span className="text-muted-foreground">Общо върнати:</span>
-                <span className="text-right">
-                  {formatPrice(breakdown.linesGrossCents)}{" "}
-                  <span className="text-muted-foreground">
-                    (нето {formatPrice(breakdown.linesNetCents)} + ДДС {formatPrice(breakdown.linesVatCents)})
-                  </span>
-                </span>
-              </div>
-            </div>
-          ) : (
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Няма физически върнати артикули (възстановяване без връщане на стока).
-            </p>
-          )}
-          <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/60 pt-1 text-xs">
-            <span className="font-medium">Сума по възстановяване:</span>
-            <span className="text-right font-medium">
-              {formatPrice(breakdown.refundGrossCents)}{" "}
-              <span className="text-[10px] font-normal text-muted-foreground">
-                (нето {formatPrice(breakdown.refundNetCents)} + ДДС {formatPrice(breakdown.refundVatCents)})
-              </span>
-            </span>
-          </div>
-          {breakdown.lines.length > 0 && !breakdown.matchesLineSum && (
-            <p className="mt-2 text-[11px] text-amber-800">
-              Разлика с върнатите артикули: {formatPrice(breakdown.refundGrossCents - breakdown.linesGrossCents)}{" "}
-              (възможна такса обработка, доставка или частична отстъпка).
-            </p>
-          )}
-        </div>
-      )}
 
       {editing && (
         <div className="mt-3 space-y-2">

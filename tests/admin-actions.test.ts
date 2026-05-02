@@ -206,10 +206,18 @@ describe("admin actions", () => {
 
       expect(result.total).toBe(2)
       expect(result.orders).toHaveLength(2)
-      expect(result.orders[0]).toEqual({ id: "order-1", invoice: null })
+      expect(result.orders[0]).toEqual({
+        id: "order-1",
+        invoice: null,
+        invoiceState: "none",
+        refunds_total: 0,
+      })
       expect(result.orders[1]).toEqual({
         id: "order-2",
         invoice: { invoice_number: "F-1", invoice_date: "2026-04-01" },
+        // Fake invoice has invoice_number set but no sent_at → pending_send.
+        invoiceState: "pending_send",
+        refunds_total: 0,
       })
       expect(mockSupabase.from).toHaveBeenCalledWith("orders")
     })
@@ -293,6 +301,8 @@ describe("admin actions", () => {
       expect(result).toEqual({
         ...fakeOrder,
         invoice: null,
+        invoiceState: "none",
+        refunds_total: 0,
         invoices: [],
         withdrawals: [],
         inventoryReturns: [],
@@ -714,7 +724,12 @@ describe("admin actions", () => {
       const result = await getAllOrders()
 
       expect(result).toHaveLength(5)
-      expect(result[0]).toEqual({ id: "order-0", invoice: null })
+      expect(result[0]).toEqual({
+        id: "order-0",
+        invoice: null,
+        invoiceState: "none",
+        refunds_total: 0,
+      })
     })
 
     it("paginates through multiple batches", async () => {
@@ -2489,23 +2504,29 @@ describe("admin actions", () => {
       ).rejects.toThrow("Бележката е задължителна")
     })
 
-    it("rejects batchId for non-return_in/wholesale_out types", async () => {
-      // damaged accepts batchId only via reference_type='return' (separate
-      // path); other internal damage doesn't take a batch_id either.
+    it("accepts optional batchId on outflow types so the batch ledger stays in sync", async () => {
+      // sample_out / damaged-internal / adjustment_loss / adjustment_gain
+      // all accept an optional batch_id — the row participates in
+      // batch_quantity_available so admin can keep inventory_current and the
+      // batches view consistent. Untagged rows still affect inventory_current.
+      mockSupabase.insert.mockReturnValueOnce(mockThenableResult(null, null) as never)
       const { recordStockMovement } = await import("@/app/actions/admin")
 
-      await expect(
-        recordStockMovement({
-          idempotencyKey: TEST_IDEMPOTENCY_KEY,
-          sku: "EGO-DC-12",
-          type: "sample_out",
-          quantity: 1,
-          referenceType: "internal",
-          referenceId: "SAMPLE-2026-001",
-          notes: "Влогер sample",
-          batchId: "BATCH-001",
-        }),
-      ).rejects.toThrow("Номер на партида е допустим само за връщане или оптова продажба")
+      const result = await recordStockMovement({
+        idempotencyKey: TEST_IDEMPOTENCY_KEY,
+        sku: "EGO-DC-12",
+        type: "sample_out",
+        quantity: 1,
+        referenceType: "internal",
+        referenceId: "SAMPLE-2026-001",
+        notes: "Влогер sample",
+        batchId: "BATCH-001",
+      })
+
+      expect(result).toEqual({ success: true })
+      expect(mockSupabase.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ batch_id: "BATCH-001", type: "sample_out" }),
+      )
     })
 
     it("rejects wholesale_out without batchId (EU 931/2011)", async () => {
