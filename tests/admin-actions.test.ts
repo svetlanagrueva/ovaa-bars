@@ -219,7 +219,6 @@ describe("admin actions", () => {
         invoiceState: "pending_send",
         refunds_total: 0,
       })
-      expect(mockSupabase.from).toHaveBeenCalledWith("orders")
     })
 
     it("returns empty array when no orders exist", async () => {
@@ -3998,7 +3997,9 @@ describe("admin actions", () => {
       const { getRecallCandidates } = await import("@/app/actions/admin")
       const result = await getRecallCandidates(validSku)
 
-      // Query targets order_items, filters by sku, joins status via !inner.
+      // Call-pattern assertions are load-bearing here, not plumbing: the
+      // mock chain returns its rows regardless of filter args, so without
+      // these checks a missing sku/status filter would silently pass.
       expect(mockSupabase.from).toHaveBeenCalledWith("order_items")
       expect(mockSupabase.eq).toHaveBeenCalledWith("sku", validSku)
       expect(chain.in).toHaveBeenCalledWith("orders.status", ["confirmed", "shipped", "delivered"])

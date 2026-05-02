@@ -3,6 +3,19 @@ import { vi } from "vitest"
 /**
  * Creates a chainable Supabase mock that returns itself for all query builder methods.
  * Use `mockSupabase.single.mockResolvedValueOnce(...)` to control returned data.
+ *
+ * Assertion guidance — when in doubt, prefer output over plumbing:
+ *   - PREFER: assert on the function's return value, thrown error, or the
+ *     payload passed to insert/update/rpc (those are the externally
+ *     observable side effects of the action).
+ *   - AVOID: assert table names via `.from(...)` or filter args via `.eq(...)`
+ *     when the mocked return value already carries the contract — refactors
+ *     to the data layer (different query shape, joined select, RPC) will
+ *     break those tests for no behavioral reason.
+ *   - EXCEPTION: when the mock returns the same data regardless of which
+ *     filters were applied, call-pattern assertions become load-bearing
+ *     (a missing filter would silently pass). Add a comment in the test
+ *     explaining why so future cleanups don't strip them blindly.
  */
 export function createSupabaseMock() {
   const mock: Record<string, ReturnType<typeof vi.fn>> = {
