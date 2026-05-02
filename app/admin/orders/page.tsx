@@ -249,7 +249,7 @@ function AdminOrdersPage() {
           >
             <option value="all">Всички</option>
             <option value="awaiting-settlement">Чака плащане от куриер</option>
-            <option value="settled">Получено от куриер</option>
+            <option value="settled">Уредено с куриер</option>
           </select>
         </div>
         {(search || dateFrom || dateTo || invoiceFilter !== "all" || paymentFilter !== "all") && (
@@ -343,7 +343,7 @@ function AdminOrdersPage() {
                               </Badge>
                               {daysAgo !== null && (
                                 <span className="text-[10px] text-muted-foreground">
-                                  {daysAgo === 0 ? "днес" : `преди ${daysAgo}д`}
+                                  {daysAgo === 0 ? "доставена днес" : `доставена преди ${daysAgo}д`}
                                 </span>
                               )}
                             </div>
