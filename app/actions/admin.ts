@@ -162,7 +162,9 @@ export interface OrderSummary {
   shipping_fee: number
   cod_fee: number
   discount_amount: number
+  shipped_at: string | null
   delivered_at: string | null
+  paid_at: string | null
   // Surfaced from joined invoices row of type='invoice' (one per order at most).
   // Kept on the summary row for quick filtering / list display; the full
   // OrderDetail.invoices array carries credit_note rows too.
@@ -426,7 +428,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   let query = supabase
     .from("orders")
     .select(
-      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date)",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
@@ -469,7 +471,7 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
     let query = supabase
       .from("orders")
       .select(
-        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, delivered_at, invoices(type, invoice_number, invoice_date)",
+        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date)",
       )
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
