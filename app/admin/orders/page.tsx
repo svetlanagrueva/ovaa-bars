@@ -120,7 +120,7 @@ function AdminOrdersPage() {
       const headers = ["ID", "Дата", "Име", "Имейл", "Телефон", "Град", "Продукти", "Промо отстъпка", "Доставка такса", "НП такса", "Общо", "Метод", "Плащане статус", "Платена на", "Доставка", "Товарителница", "Изпратена на", "Доставена на", "Статус", "Фактура статус", "Фактура №", "Фактура дата"]
       const paymentStatusLabel = (o: OrderSummary): string => {
         if (o.status === "cancelled" || o.status === "expired") return ""
-        if (o.paid_at) return o.payment_method === "cod" ? "Уредена" : "Платена"
+        if (o.seller_settled_at) return o.payment_method === "cod" ? "Уредена" : "Платена"
         if (o.payment_method === "cod") {
           return o.status === "delivered" ? "Чака от куриер" : "Очаква доставка"
         }
@@ -148,7 +148,7 @@ function AdminOrdersPage() {
           (o.total_amount / 100).toFixed(2),
           o.payment_method === "card" ? "Карта" : "Наложен платеж",
           paymentStatusLabel(o),
-          o.paid_at ? new Date(o.paid_at).toLocaleDateString("bg-BG") : "",
+          o.seller_settled_at ? new Date(o.seller_settled_at).toLocaleDateString("bg-BG") : "",
           o.logistics_partner || "",
           o.tracking_number || "",
           o.shipped_at ? new Date(o.shipped_at).toLocaleDateString("bg-BG") : "",
@@ -316,19 +316,19 @@ function AdminOrdersPage() {
                   <TableCell className="text-sm">
                     {(() => {
                       // Priority: terminal states → settled → COD pre-settle → card pending.
-                      // Checking paid_at first avoids "settled COD" rows still matching
-                      // the "delivered+null paid_at" branch.
+                      // Checking seller_settled_at first avoids "settled COD" rows still matching
+                      // the "delivered+null seller_settled_at" branch.
                       let inner: React.ReactNode = null
                       if (order.status === "cancelled" || order.status === "expired") {
                         inner = <span className="text-muted-foreground">—</span>
-                      } else if (order.paid_at) {
+                      } else if (order.seller_settled_at) {
                         inner = (
                           <>
                             <Badge variant="default" className="text-xs">
                               {order.payment_method === "cod" ? "Уредена" : "Платена"}
                             </Badge>
                             <span className="text-[10px] text-muted-foreground">
-                              {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit" })}
+                              {new Date(order.seller_settled_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit" })}
                             </span>
                           </>
                         )
@@ -359,7 +359,7 @@ function AdminOrdersPage() {
                           inner = <Badge variant="outline" className="text-xs">Очаква доставка</Badge>
                         }
                       } else {
-                        // card with no paid_at
+                        // card with no seller_settled_at
                         inner = <Badge variant="outline" className="text-xs">Чака плащане</Badge>
                       }
                       return (

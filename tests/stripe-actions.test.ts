@@ -307,7 +307,7 @@ describe("confirmOrder", () => {
     expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith("cs_test_abc")
   })
 
-  it("sets paid_at, receipt URL, and payment_intent_id when confirming card payment", async () => {
+  it("sets seller_settled_at, receipt URL, and payment_intent_id when confirming card payment", async () => {
     const pendingOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       status: "pending",
@@ -332,7 +332,7 @@ describe("confirmOrder", () => {
       expect.objectContaining({
         status: "confirmed",
         confirmed_at: expect.any(String),
-        paid_at: expect.any(String),
+        seller_settled_at: expect.any(String),
         stripe_payment_intent_id: "pi_test_123",
         stripe_receipt_url: "https://pay.stripe.com/receipts/test",
       })
@@ -362,11 +362,11 @@ describe("confirmOrder", () => {
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
     expect(result.status).toBe("confirmed")
-    // Order should still be confirmed with paid_at, just without receipt URL
+    // Order should still be confirmed with seller_settled_at, just without receipt URL
     expect(mockSupabase.update).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "confirmed",
-        paid_at: expect.any(String),
+        seller_settled_at: expect.any(String),
         stripe_payment_intent_id: "pi_test_fail",
       })
     )
@@ -375,7 +375,7 @@ describe("confirmOrder", () => {
     expect(updateArg).not.toHaveProperty("stripe_receipt_url")
   })
 
-  it("does not set paid_at for COD orders in confirmOrder", async () => {
+  it("does not set seller_settled_at for COD orders in confirmOrder", async () => {
     // COD orders come through as already confirmed, but test the branch
     const pendingCodOrder = {
       id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -388,7 +388,7 @@ describe("confirmOrder", () => {
     await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
     const updateArg = mockSupabase.update.mock.calls[0][0]
-    expect(updateArg).not.toHaveProperty("paid_at")
+    expect(updateArg).not.toHaveProperty("seller_settled_at")
     expect(updateArg.status).toBe("confirmed")
   })
 

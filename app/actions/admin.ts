@@ -12,6 +12,7 @@ import { headers } from "next/headers"
 import { createShipment as createSpeedyShipment } from "@/lib/speedy"
 import { createShipment as createEcontShipment } from "@/lib/econt"
 import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
+import { hasCustomerPaid } from "@/lib/orders"
 import { requireEnv } from "@/lib/env"
 import { stripe } from "@/lib/stripe"
 import { sanitizeError } from "@/lib/logger"
@@ -164,7 +165,7 @@ export interface OrderSummary {
   discount_amount: number
   shipped_at: string | null
   delivered_at: string | null
-  paid_at: string | null
+  seller_settled_at: string | null
   // Sum of refunds.amount_cents across all refunds for the order. Surfaces
   // a "this one already had a refund" signal in the awaiting-settlement
   // worklist so admin doesn't approve courier settlement on auto-pilot.
@@ -226,7 +227,7 @@ export interface OrderDetail extends OrderSummary {
   cancelled_at: string | null
   admin_notes: Array<{ text: string; created_at: string; author?: string }>
   cancellation_reason: string | null
-  paid_at: string | null
+  seller_settled_at: string | null
   courier_ppp_ref: string | null
   settlement_ref: string | null
   settlement_amount: number | null
@@ -247,7 +248,7 @@ export interface OrderDetail extends OrderSummary {
   // separately and match client-side.
   inventoryReturns: OrderInventoryReturn[]
   // Domain events from order_audit_events that aren't already represented
-  // by column-derived rows in the timeline (status changes, paid_at,
+  // by column-derived rows in the timeline (status changes, seller_settled_at,
   // shipped_at, etc. are already captured via their respective columns —
   // surfacing both would double-count). The fetch in getOrder filters to
   // an allowlist of event_types: order_items_changed, contact_info_changed,
@@ -374,9 +375,9 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
 
   const paymentFilter = params?.paymentFilter
   if (paymentFilter === "awaiting-settlement") {
-    query = query.eq("payment_method", "cod").eq("status", "delivered").is("paid_at", null)
+    query = query.eq("payment_method", "cod").eq("status", "delivered").is("seller_settled_at", null)
   } else if (paymentFilter === "settled") {
-    query = query.eq("payment_method", "cod").not("paid_at", "is", null)
+    query = query.eq("payment_method", "cod").not("seller_settled_at", "is", null)
   }
 
   return query
@@ -478,7 +479,7 @@ export async function getOrders(params?: OrderQueryParams & { page?: number }): 
   let query = supabase
     .from("orders")
     .select(
-      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
+      "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, seller_settled_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
@@ -533,7 +534,7 @@ export async function getAllOrders(params?: OrderQueryParams): Promise<OrderSumm
     let query = supabase
       .from("orders")
       .select(
-        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, paid_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
+        "id, created_at, first_name, last_name, email, phone, city, status, payment_method, total_amount, shipping_fee, cod_fee, discount_amount, logistics_partner, tracking_number, shipped_at, delivered_at, seller_settled_at, invoices(type, invoice_number, invoice_date, sent_at), refunds(amount_cents)",
       )
       .order("created_at", { ascending: false })
       .range(from, from + batchSize - 1)
@@ -730,7 +731,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
 
   // Allowlist of audit event types to surface in the timeline. Events
   // already covered by column-derived rows in the UI (status_changed,
-  // paid_at_recorded, shipped_at_recorded, etc.) are intentionally
+  // seller_settled_at_recorded, shipped_at_recorded, etc.) are intentionally
   // excluded to avoid double-counting in the timeline.
   const TIMELINE_EVENT_TYPES = [
     "order_items_changed",
@@ -1323,7 +1324,7 @@ export async function recordCodSettlement(
     courierPppRef?: string
     settlementRef?: string
     settlementAmount?: number
-    paidAt: string
+    settledAt: string
   },
 ): Promise<{ success: true }> {
   await requireAdmin()
@@ -1345,10 +1346,10 @@ export async function recordCodSettlement(
   // Date is required: the admin must affirm WHEN the courier transferred the
   // money, not accept an implicit "today" that could silently be wrong (e.g.
   // settlement actually arrived 2 weeks ago but admin only recorded it today).
-  if (!data.paidAt || !data.paidAt.trim()) {
+  if (!data.settledAt || !data.settledAt.trim()) {
     throw new Error("Датата на плащане е задължителна")
   }
-  const parsed = new Date(data.paidAt)
+  const parsed = new Date(data.settledAt)
   if (isNaN(parsed.getTime())) throw new Error("Невалидна дата на плащане")
   if (parsed > new Date()) throw new Error("Датата на плащане не може да е в бъдещето")
 
@@ -1369,15 +1370,15 @@ export async function recordCodSettlement(
 
   // Date picker gives YYYY-MM-DD — set to 23:59:59 UTC so it sorts after
   // other events (creation, delivery) that happened earlier that day.
-  const paidDate = new Date(data.paidAt)
-  paidDate.setUTCHours(23, 59, 59, 0)
-  if (order.delivered_at && paidDate < new Date(order.delivered_at)) {
+  const settledDate = new Date(data.settledAt)
+  settledDate.setUTCHours(23, 59, 59, 0)
+  if (order.delivered_at && settledDate < new Date(order.delivered_at)) {
     throw new Error("Датата на плащане не може да е преди доставката")
   }
-  const paidAtValue = paidDate.toISOString()
+  const settledAtValue = settledDate.toISOString()
 
   const updateData: Record<string, unknown> = {
-    paid_at: paidAtValue,
+    seller_settled_at: settledAtValue,
   }
   if (data.courierPppRef) updateData.courier_ppp_ref = data.courierPppRef.trim()
   if (data.settlementRef) updateData.settlement_ref = data.settlementRef.trim()
@@ -1387,7 +1388,7 @@ export async function recordCodSettlement(
     .from("orders")
     .update(updateData)
     .eq("id", orderId)
-    .is("paid_at", null)
+    .is("seller_settled_at", null)
     .select("id")
 
   if (error) {
@@ -2052,18 +2053,16 @@ export async function recordRefund(
   // No existing row — run full validation + insert.
   const { data: order, error: fetchError } = await supabase
     .from("orders")
-    .select("id, paid_at, delivered_at, total_amount, stripe_payment_intent_id, payment_method, status")
+    .select("id, seller_settled_at, delivered_at, total_amount, stripe_payment_intent_id, payment_method, status")
     .eq("id", orderId)
     .single()
 
   if (fetchError || !order) throw new Error("Поръчката не е намерена")
-  // COD delivered before courier-settlement: customer paid the courier on
-  // delivery, so a refund is genuinely owed even though paid_at is still null.
-  // Refund will go out via bank_transfer to customer's IBAN; courier-side
-  // settlement happens later and is independent.
-  const isCodDeliveredAwaitingSettlement =
-    order.payment_method === "cod" && order.status === "delivered"
-  if (!order.paid_at && !isCodDeliveredAwaitingSettlement) {
+  // Refund flow follows customer-payment, not seller-settlement. For COD
+  // this means an order is refundable as soon as it's delivered (customer
+  // paid courier) — courier-side settlement remains independent and can
+  // happen weeks later. See lib/orders.ts:hasCustomerPaid.
+  if (!hasCustomerPaid(order)) {
     throw new Error("Не може да се възстанови сума за неплатена поръчка")
   }
   if (data.refundMethod === "stripe" && !order.stripe_payment_intent_id) {
@@ -3146,7 +3145,7 @@ export interface WithdrawalWithOrderContext extends Withdrawal {
   order: {
     status: string
     payment_method: string
-    paid_at: string | null
+    seller_settled_at: string | null
     delivered_at: string | null
   }
 }
@@ -3158,7 +3157,7 @@ export async function getWithdrawal(withdrawalId: string): Promise<WithdrawalWit
   const supabase = await createClient()
   const { data, error } = await supabase
     .from("withdrawals")
-    .select("*, order:orders(status, payment_method, paid_at, delivered_at)")
+    .select("*, order:orders(status, payment_method, seller_settled_at, delivered_at)")
     .eq("id", withdrawalId)
     .single()
 

@@ -38,7 +38,7 @@
 - Customer info, order details, product breakdown with stored fees
 - Price breakdown uses stored `shipping_fee` and `cod_fee` (not recalculated from constants)
 - **Exception flows behind "Още действия" dropdown** (top-right of the page header). Three actions live here as Radix Dialog modals:
-  - `Запиши възстановяване` (gated on `order.paid_at`) — opens the refund form
+  - `Запиши възстановяване` (gated on `hasCustomerPaid(order)` from `lib/orders.ts`: card → `seller_settled_at IS NOT NULL`; COD → `delivered_at IS NOT NULL`, since the customer pays the courier on delivery and a refund is owed regardless of when courier remits) — opens the refund form
   - `Регистрирай рекламация` (always available; shows count of open complaints as a badge)
   - `Регистрирай отказ (Чл. 50 ЗЗП)` (gated on `order.status='delivered'`; hard block on non-delivered with friendly Bulgarian message — withdrawal right kicks in only after receipt of goods)
   - `Следдоставно събитие` (gated on `status ∈ {shipped, delivered}`)
@@ -77,7 +77,7 @@ When admin opens "Генерирай товарителница" on a COD order 
 Form in Действия card for delivered unpaid COD orders (date picker, amount, ППП ref, bank ref); green status card shown after settlement recorded. Date picker `min` set to delivery date, `max` set to today; server validates date is not before delivery or in the future; date stored at 23:59:59 UTC.
 
 ### Card payment section
-Shows paid_at confirmation date (set automatically by webhook).
+Shows the seller-settled (`seller_settled_at`) date — set automatically by the Stripe webhook on capture.
 
 ### Admin notes
 Append-only JSONB array of `{text, created_at, author}` entries; reverse-chronological list. `addAdminNote` calls the `add_admin_note` RPC (atomic `jsonb ||` append). Author defaults to `'admin'` pre-launch.

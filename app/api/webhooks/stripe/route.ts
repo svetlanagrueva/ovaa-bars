@@ -307,7 +307,7 @@ export async function POST(request: Request) {
     const updateData: Record<string, unknown> = {
       status: "confirmed",
       confirmed_at: now,
-      paid_at: now,
+      seller_settled_at: now,
     }
     if (paymentIntentId) updateData.stripe_payment_intent_id = paymentIntentId
     if (receiptUrl) updateData.stripe_receipt_url = receiptUrl

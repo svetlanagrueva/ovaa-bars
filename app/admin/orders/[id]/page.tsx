@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react"
 import Link from "next/link"
 import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, suggestBatchesForShipment, confirmShipmentBatches, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchSuggestion } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
+import { hasCustomerPaid } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -324,14 +325,10 @@ export default function AdminOrderDetailPage({
             "More actions" pattern. Items are gated by order state — only
             show what's actionable on the current order. */}
         {(() => {
-          // Refund allowed when funds are with us (paid_at set) OR for COD
-          // orders where the courier already collected from the customer
-          // (status=delivered) but hasn't yet settled with us — the customer
-          // is owed regardless of when courier remits, refund goes out via
-          // bank transfer to their IBAN.
-          const canRefund =
-            !!order.paid_at ||
-            (order.payment_method === "cod" && order.status === "delivered")
+          // Refund follows the customer-payment moment, not seller-settlement.
+          // For COD this means refundable as soon as delivered — courier
+          // remittance to us is independent. See lib/orders.ts.
+          const canRefund = hasCustomerPaid(order)
           const canOutcome = order.status === "shipped" || order.status === "delivered"
           // Email gating mirrors the underlying server actions' state checks.
           const canEmailConfirm = order.status !== "pending" && order.status !== "cancelled" && order.status !== "expired"
@@ -867,14 +864,14 @@ export default function AdminOrderDetailPage({
       </div>
 
       {/* COD Payment status (when already settled) */}
-      {order.payment_method === "cod" && order.paid_at && (
+      {order.payment_method === "cod" && order.seller_settled_at && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="text-base">Плащане (наложен платеж)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
-              Плащането е получено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              Плащането е получено на {new Date(order.seller_settled_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
             </div>
             {order.courier_ppp_ref && (
               <div><span className="text-muted-foreground">ППП референция:</span> <span className="font-mono">{order.courier_ppp_ref}</span></div>
@@ -897,14 +894,14 @@ export default function AdminOrderDetailPage({
       )}
 
       {/* Card Payment */}
-      {order.payment_method === "card" && order.paid_at && (
+      {order.payment_method === "card" && order.seller_settled_at && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="text-base">Плащане (карта)</CardTitle>
           </CardHeader>
           <CardContent className="text-sm">
             <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
-              Платено на {new Date(order.paid_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              Платено на {new Date(order.seller_settled_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
             </div>
           </CardContent>
         </Card>
@@ -1096,7 +1093,7 @@ export default function AdminOrderDetailPage({
             {(() => {
               // Map an order_audit_events row to a Bulgarian label + detail
               // string for the timeline. Domain events that aren't already
-              // captured by column-derived rows (status, paid_at, etc.) live
+              // captured by column-derived rows (status, seller_settled_at, etc.) live
               // here. The server filters event_type to TIMELINE_EVENT_TYPES;
               // any new outcome / audit type added there should also get a
               // case here so it renders something readable.
@@ -1196,7 +1193,7 @@ export default function AdminOrderDetailPage({
                   .map((inv) => ({ label: "Кредитно известие изпратено", date: inv.sent_at })),
                 { label: "Изпратена", date: order.shipped_at, detail: order.tracking_number || undefined },
                 { label: "Доставена", date: order.delivered_at },
-                { label: "Плащане получено", date: order.paid_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
+                { label: "Плащане получено", date: order.seller_settled_at, detail: order.settlement_ref ? `Ref: ${order.settlement_ref}` : undefined },
                 ...order.refunds.map((r) => ({
                   label: "Възстановяване",
                   date: r.refunded_at,
@@ -1874,7 +1871,7 @@ export default function AdminOrderDetailPage({
           )}
 
           {order.status === "delivered" && (
-            order.payment_method === "cod" && !order.paid_at ? (
+            order.payment_method === "cod" && !order.seller_settled_at ? (
               <div className="space-y-3">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Плащане (наложен платеж)</p>
                 <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
@@ -1950,7 +1947,7 @@ export default function AdminOrderDetailPage({
                           courierPppRef: settlementPppRef.trim() || undefined,
                           settlementRef: settlementRef.trim() || undefined,
                           settlementAmount: amountCents,
-                          paidAt: settlementPaidAt,
+                          settledAt: settlementPaidAt,
                         })
                         const updated = await getOrder(id)
                         setOrder(updated)
@@ -2004,11 +2001,8 @@ export default function AdminOrderDetailPage({
               {(() => {
             const alreadyRefunded = order.refunds.reduce((s, r) => s + r.amount_cents, 0)
             const remainingCents = order.total_amount - alreadyRefunded
-            // Mirror the dropdown's canRefund predicate: COD-delivered before
-            // settlement also unlocks the form (refund via bank transfer).
-            const isCodDeliveredAwaitingSettlement =
-              order.payment_method === "cod" && order.status === "delivered"
-            if (!order.paid_at && !isCodDeliveredAwaitingSettlement) return null
+            // Mirror the dropdown's canRefund predicate.
+            if (!hasCustomerPaid(order)) return null
 
             const resetFlow = () => {
               setRefundAmount("")
