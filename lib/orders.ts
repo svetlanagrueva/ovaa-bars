@@ -23,3 +23,74 @@ export function hasCustomerPaid(order: {
   if (order.payment_method === "card") return !!order.seller_settled_at
   return !!order.delivered_at
 }
+
+// Lightweight Shopify-style financial status, derived from the existing
+// order + refunds data. Single source of truth for "where is this order
+// on the money axis" — used by the orders list Плащане column, the
+// order detail Възстановявания card, and any future surface (CSV
+// export, dashboard tile, email template) that needs the same answer.
+//
+// Refund states outrank settlement states: once money has gone back to
+// the customer, the refund is the most relevant payment-side fact.
+//
+// Priority (first match wins):
+//   none              → status is cancelled or expired
+//   refunded          → refunds_total >= total_amount  (fully refunded)
+//   partially_refunded→ 0 < refunds_total < total_amount
+//   paid              → seller_settled_at is set
+//   awaiting_courier  → COD, status='delivered', not yet settled
+//   awaiting_delivery → COD, status in {confirmed, shipped}
+//   pending           → everything else (card, no capture yet)
+export type FinancialStatus =
+  | "none"
+  | "refunded"
+  | "partially_refunded"
+  | "paid"
+  | "awaiting_courier"
+  | "awaiting_delivery"
+  | "pending"
+
+export function getFinancialStatus(order: {
+  status: string
+  payment_method: string
+  total_amount: number
+  refunds_total: number
+  seller_settled_at: string | null
+}): FinancialStatus {
+  if (order.status === "cancelled" || order.status === "expired") return "none"
+  if (order.refunds_total > 0 && order.refunds_total >= order.total_amount) return "refunded"
+  if (order.refunds_total > 0) return "partially_refunded"
+  if (order.seller_settled_at) return "paid"
+  if (order.payment_method === "cod") {
+    return order.status === "delivered" ? "awaiting_courier" : "awaiting_delivery"
+  }
+  return "pending"
+}
+
+// Bulgarian labels for the badge text. Kept alongside the helper so any
+// surface that renders the status uses the same wording.
+export const FINANCIAL_STATUS_LABELS: Record<FinancialStatus, string> = {
+  none: "—",
+  refunded: "Изцяло възстановена",
+  partially_refunded: "Частично възстановена",
+  paid: "Платена",
+  awaiting_courier: "Чака от куриер",
+  awaiting_delivery: "Очаква доставка",
+  pending: "Чака плащане",
+}
+
+// Convenience: same as FINANCIAL_STATUS_LABELS[status] but applies the
+// COD-specific override — "Уредена" reads more naturally than "Платена"
+// when describing courier settlement on a cash-on-delivery order. Card
+// orders stay "Платена".
+export function getFinancialStatusLabel(order: {
+  status: string
+  payment_method: string
+  total_amount: number
+  refunds_total: number
+  seller_settled_at: string | null
+}): string {
+  const status = getFinancialStatus(order)
+  if (status === "paid" && order.payment_method === "cod") return "Уредена"
+  return FINANCIAL_STATUS_LABELS[status]
+}

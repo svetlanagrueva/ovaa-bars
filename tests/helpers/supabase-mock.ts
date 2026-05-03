@@ -3,6 +3,19 @@ import { vi } from "vitest"
 /**
  * Creates a chainable Supabase mock that returns itself for all query builder methods.
  * Use `mockSupabase.single.mockResolvedValueOnce(...)` to control returned data.
+ *
+ * Assertion guidance — when in doubt, prefer output over plumbing:
+ *   - PREFER: assert on the function's return value, thrown error, or the
+ *     payload passed to insert/update/rpc (those are the externally
+ *     observable side effects of the action).
+ *   - AVOID: assert table names via `.from(...)` or filter args via `.eq(...)`
+ *     when the mocked return value already carries the contract — refactors
+ *     to the data layer (different query shape, joined select, RPC) will
+ *     break those tests for no behavioral reason.
+ *   - EXCEPTION: when the mock returns the same data regardless of which
+ *     filters were applied, call-pattern assertions become load-bearing
+ *     (a missing filter would silently pass). Add a comment in the test
+ *     explaining why so future cleanups don't strip them blindly.
  */
 export function createSupabaseMock() {
   const mock: Record<string, ReturnType<typeof vi.fn>> = {
@@ -21,7 +34,9 @@ export function createSupabaseMock() {
     not: vi.fn(() => mock),
     ilike: vi.fn(() => mock),
     or: vi.fn(() => mock),
+    gt: vi.fn(() => mock),
     gte: vi.fn(() => mock),
+    lt: vi.fn(() => mock),
     lte: vi.fn(() => mock),
     single: vi.fn(),
     maybeSingle: vi.fn(),
@@ -43,7 +58,9 @@ export function mockThenableResult(data: unknown, error: unknown = null, count: 
     in: vi.fn(() => obj),
     ilike: vi.fn(() => obj),
     or: vi.fn(() => obj),
+    gt: vi.fn(() => obj),
     gte: vi.fn(() => obj),
+    lt: vi.fn(() => obj),
     lte: vi.fn(() => obj),
     select: vi.fn(() => obj),
     range: vi.fn(() => obj),
@@ -99,7 +116,9 @@ export function resetSupabaseMock(mock: Record<string, ReturnType<typeof vi.fn>>
   mock.not = vi.fn(() => mock)
   mock.ilike = vi.fn(() => mock)
   mock.or = vi.fn(() => mock)
+  mock.gt = vi.fn(() => mock)
   mock.gte = vi.fn(() => mock)
+  mock.lt = vi.fn(() => mock)
   mock.lte = vi.fn(() => mock)
   mock.single = vi.fn()
   mock.maybeSingle = vi.fn()

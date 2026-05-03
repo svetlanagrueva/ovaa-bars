@@ -48,6 +48,8 @@ interface BillingInfo {
 // surfaces the same Bulgarian message inline before any server roundtrip.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
+const EIK_REGEX = /^\d{9,13}$/
+const VAT_REGEX = /^BG\d{9,13}$/
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -214,6 +216,10 @@ export default function CheckoutPage() {
       if (billingType === "company") {
         if (!billingInfo.company.trim()) return "Моля, въведете име на фирмата за фактурата."
         if (!billingInfo.eik.trim()) return "Моля, въведете ЕИК / Булстат за фактурата."
+        if (!EIK_REGEX.test(billingInfo.eik.trim())) return "ЕИК трябва да съдържа 9 до 13 цифри."
+        if (billingInfo.vatNumber.trim() && !VAT_REGEX.test(billingInfo.vatNumber.trim())) {
+          return "Невалиден ДДС номер. Форматът е BG + 9 до 13 цифри (напр. BG123456789)."
+        }
         if (!billingInfo.firstName.trim()) return "Моля, въведете име на МОЛ."
         if (!billingInfo.lastName.trim()) return "Моля, въведете фамилия на МОЛ."
       } else {
@@ -364,6 +370,13 @@ export default function CheckoutPage() {
         "City is required": "Моля, въведете град.",
         "Address is required for address delivery": "Моля, въведете адрес за доставка.",
         "Postal code is required for address delivery": "Моля, въведете пощенски код за доставка на адрес.",
+        "ЕИК трябва да бъде 9 или 13 цифри": "ЕИК трябва да съдържа 9 до 13 цифри.",
+        "Невалиден ДДС номер (формат: BG + ЕИК)": "Невалиден ДДС номер. Форматът е BG + 9 до 13 цифри (напр. BG123456789).",
+        "Името на фирмата е задължително за фактура": "Моля, въведете име на фирмата за фактурата.",
+        "Името на фирмата е твърде дълго": "Името на фирмата е твърде дълго.",
+        "МОЛ е задължително за фактура на фирма": "Моля, въведете име на МОЛ.",
+        "Адресът е задължителен за фактура": "Моля, въведете адрес за фактурата.",
+        "Невалиден тип фактура": "Невалиден тип фактура.",
       }
       setError(friendlyMessages[message] || "Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
@@ -588,7 +601,7 @@ export default function CheckoutPage() {
                           <Banknote className="h-4 w-4" />
                           Наложен платеж
                         </span>
-                        <p className="text-sm text-muted-foreground">Плащане при доставка (+{formatPrice(COD_FEE)})</p>
+                        <p className="text-sm text-muted-foreground">Плащане при доставка</p>
                       </Label>
                     </div>
                   </RadioGroup>

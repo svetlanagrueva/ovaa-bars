@@ -76,7 +76,7 @@ Migration `20260429111613_refund_items_table.sql`. Adds explicit per-line moneta
 - **Append-only**: no edits or deletes on refund_items; corrections via reversing entries (post-launch) or manual data repair.
 - **Webhook idempotency** unchanged — `stripe_refund_id` unique partial index dedupes regardless of refund_items presence.
 
-**Precedence** in `lib/refund-breakdown.ts`: refund_items > derived from inventory_log returns > none. When refund_items rows exist, they're authoritative for the credit-note breakdown.
+**Allocation authority**: when `refund_items` rows exist they're the authoritative per-line allocation; otherwise the refund is treated as un-allocated (goodwill / shipping-only). The admin UI does NOT render a VAT/net/gross breakdown — VAT is recorded from Microinvest paste post-registration, never computed in the UI.
 
 ## Withdrawals State Machine
 Migration `20260429071812_withdrawals_table.sql`. **Decisions**:

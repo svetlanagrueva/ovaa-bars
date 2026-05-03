@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Search, Download } from "lucide-react"
 import { getOrders, getAllOrders, type OrderSummary } from "@/app/actions/admin"
+import { getFinancialStatus, getFinancialStatusLabel } from "@/lib/orders"
 import { formatPrice } from "@/lib/products"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -315,61 +316,75 @@ function AdminOrdersPage() {
                   <TableCell className="text-sm">{PAYMENT_LABELS[order.payment_method] || order.payment_method}</TableCell>
                   <TableCell className="text-sm">
                     {(() => {
-                      // Priority: terminal states → settled → COD pre-settle → card pending.
-                      // Checking seller_settled_at first avoids "settled COD" rows still matching
-                      // the "delivered+null seller_settled_at" branch.
-                      let inner: React.ReactNode = null
-                      if (order.status === "cancelled" || order.status === "expired") {
-                        inner = <span className="text-muted-foreground">—</span>
-                      } else if (order.seller_settled_at) {
-                        inner = (
-                          <>
-                            <Badge variant="default" className="text-xs">
-                              {order.payment_method === "cod" ? "Уредена" : "Платена"}
-                            </Badge>
-                            <span className="text-[10px] text-muted-foreground">
-                              {new Date(order.seller_settled_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit" })}
+                      // Status comes from the shared helper (lib/orders.ts) so
+                      // every surface (this list, order detail, exports) sees
+                      // the same answer. Sub-line / variant choices stay here
+                      // because they're presentation-specific (paid date, COD
+                      // aging color, refund amount breakdown).
+                      const status = getFinancialStatus(order)
+                      const label = getFinancialStatusLabel(order)
+
+                      if (status === "none") return <span className="text-muted-foreground">—</span>
+
+                      if (status === "refunded") {
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <Badge variant="destructive" className="text-xs">{label}</Badge>
+                            <span className="text-[10px] text-red-700">
+                              −{formatPrice(order.refunds_total)}
                             </span>
-                          </>
+                          </div>
                         )
-                      } else if (order.payment_method === "cod") {
-                        if (order.status === "delivered") {
-                          const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null
-                          const daysAgo = deliveredDate
-                            ? Math.floor((Date.now() - deliveredDate.getTime()) / (1000 * 60 * 60 * 24))
-                            : null
-                          const overdue = daysAgo !== null && daysAgo >= 30
-                          const stale = daysAgo !== null && daysAgo >= 14 && !overdue
-                          inner = (
-                            <>
-                              <Badge
-                                variant={overdue ? "destructive" : "outline"}
-                                className={`text-xs ${stale ? "border-amber-400 text-amber-700" : ""}`}
-                              >
-                                Чака от куриер
-                              </Badge>
-                              {daysAgo !== null && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  {daysAgo === 0 ? "доставена днес" : `доставена преди ${daysAgo}д`}
-                                </span>
-                              )}
-                            </>
-                          )
-                        } else {
-                          inner = <Badge variant="outline" className="text-xs">Очаква доставка</Badge>
-                        }
-                      } else {
-                        // card with no seller_settled_at
-                        inner = <Badge variant="outline" className="text-xs">Чака плащане</Badge>
                       }
+                      if (status === "partially_refunded") {
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <Badge variant="outline" className="text-xs border-amber-400 text-amber-700">
+                              {label}
+                            </Badge>
+                            <span className="text-[10px] text-red-700">
+                              −{formatPrice(order.refunds_total)} от {formatPrice(order.total_amount)}
+                            </span>
+                          </div>
+                        )
+                      }
+                      if (status === "paid") {
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <Badge variant="default" className="text-xs">{label}</Badge>
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(order.seller_settled_at!).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit" })}
+                            </span>
+                          </div>
+                        )
+                      }
+                      if (status === "awaiting_courier") {
+                        const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null
+                        const daysAgo = deliveredDate
+                          ? Math.floor((Date.now() - deliveredDate.getTime()) / (1000 * 60 * 60 * 24))
+                          : null
+                        const overdue = daysAgo !== null && daysAgo >= 30
+                        const stale = daysAgo !== null && daysAgo >= 14 && !overdue
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <Badge
+                              variant={overdue ? "destructive" : "outline"}
+                              className={`text-xs ${stale ? "border-amber-400 text-amber-700" : ""}`}
+                            >
+                              {label}
+                            </Badge>
+                            {daysAgo !== null && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {daysAgo === 0 ? "доставена днес" : `доставена преди ${daysAgo}д`}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      }
+                      // awaiting_delivery, pending — outline badge, no sub-line
                       return (
                         <div className="flex flex-col gap-0.5">
-                          {inner}
-                          {order.refunds_total > 0 && (
-                            <span className="text-[10px] text-red-700">
-                              възст. {formatPrice(order.refunds_total)}
-                            </span>
-                          )}
+                          <Badge variant="outline" className="text-xs">{label}</Badge>
                         </div>
                       )
                     })()}

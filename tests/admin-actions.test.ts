@@ -219,7 +219,6 @@ describe("admin actions", () => {
         invoiceState: "pending_send",
         refunds_total: 0,
       })
-      expect(mockSupabase.from).toHaveBeenCalledWith("orders")
     })
 
     it("returns empty array when no orders exist", async () => {
@@ -477,13 +476,39 @@ describe("admin actions", () => {
       const { getDashboardStats } = await import("@/app/actions/admin")
       const result = await getDashboardStats()
 
-      expect(result.today).toEqual({ orders: 3, revenue: 5000 })
-      expect(result.week).toEqual({ orders: 10, revenue: 20000 })
-      expect(result.month).toEqual({ orders: 25, revenue: 50000 })
+      // refunds default to 0 when the RPC payload doesn't include them
+      // (e.g. backwards-compatible fixture). Net revenue is gross - refunds,
+      // computed at the rendering layer; the action's job is to surface
+      // both numbers verbatim.
+      expect(result.today).toEqual({ orders: 3, revenue: 5000, refunds: 0 })
+      expect(result.week).toEqual({ orders: 10, revenue: 20000, refunds: 0 })
+      expect(result.month).toEqual({ orders: 25, revenue: 50000, refunds: 0 })
       expect(result.pendingOrders).toBe(2)
       expect(result.invoicesAwaiting).toBe(1)
       expect(result.awaitingSettlement).toBe(4)
       expect(result.recentOrders).toEqual(recentOrders)
+    })
+
+    it("flows refund aggregates from RPC into each window", async () => {
+      // dashboard_stats RPC was extended (migration 20260503151237) with
+      // today_refunds / week_refunds / month_refunds. Net revenue = gross
+      // - refunds is computed at the rendering layer; this test pins the
+      // pass-through contract so silent regressions are caught.
+      const mockRpcResult = {
+        today_orders: 5, today_revenue: 10000, today_refunds: 2500,
+        week_orders: 20, week_revenue: 40000, week_refunds: 5000,
+        month_orders: 50, month_revenue: 100000, month_refunds: 12000,
+        pending_orders: 0, invoices_awaiting: 0, awaiting_settlement: 0,
+      }
+      mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: mockRpcResult, error: null }))
+      mockSupabase.limit = vi.fn(() => mockThenableResult([]))
+
+      const { getDashboardStats } = await import("@/app/actions/admin")
+      const result = await getDashboardStats()
+
+      expect(result.today).toEqual({ orders: 5, revenue: 10000, refunds: 2500 })
+      expect(result.week).toEqual({ orders: 20, revenue: 40000, refunds: 5000 })
+      expect(result.month).toEqual({ orders: 50, revenue: 100000, refunds: 12000 })
     })
 
     it("defaults awaitingSettlement to 0 when not in RPC result", async () => {
@@ -3998,7 +4023,9 @@ describe("admin actions", () => {
       const { getRecallCandidates } = await import("@/app/actions/admin")
       const result = await getRecallCandidates(validSku)
 
-      // Query targets order_items, filters by sku, joins status via !inner.
+      // Call-pattern assertions are load-bearing here, not plumbing: the
+      // mock chain returns its rows regardless of filter args, so without
+      // these checks a missing sku/status filter would silently pass.
       expect(mockSupabase.from).toHaveBeenCalledWith("order_items")
       expect(mockSupabase.eq).toHaveBeenCalledWith("sku", validSku)
       expect(chain.in).toHaveBeenCalledWith("orders.status", ["confirmed", "shipped", "delivered"])

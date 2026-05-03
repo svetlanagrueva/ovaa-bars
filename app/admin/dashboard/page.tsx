@@ -130,44 +130,37 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* Stats cards */}
-      <p className="text-xs text-muted-foreground mb-2">Приходи от продукти (без доставка и НП такси)</p>
+      {/* Stats cards. Headline = NET product revenue (gross − refunds in
+          window); when refunds occurred we show the gross + refund breakdown
+          below so the deduction is auditable, not magic. */}
+      <p className="text-xs text-muted-foreground mb-2">Нетни приходи от продукти (без доставка и НП такси, след възстановявания)</p>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Днес</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatPrice(stats.today.revenue)}</div>
-            <p className="text-sm text-muted-foreground">
-              {stats.today.orders} {stats.today.orders === 1 ? "поръчка" : "поръчки"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Тази седмица</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatPrice(stats.week.revenue)}</div>
-            <p className="text-sm text-muted-foreground">
-              {stats.week.orders} {stats.week.orders === 1 ? "поръчка" : "поръчки"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Този месец</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatPrice(stats.month.revenue)}</div>
-            <p className="text-sm text-muted-foreground">
-              {stats.month.orders} {stats.month.orders === 1 ? "поръчка" : "поръчки"}
-            </p>
-          </CardContent>
-        </Card>
+        {(["today", "week", "month"] as const).map((key) => {
+          const w = stats[key]
+          const net = w.revenue - w.refunds
+          const label = key === "today" ? "Днес" : key === "week" ? "Тази седмица" : "Този месец"
+          return (
+            <Card key={key}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className={`text-2xl font-bold ${net < 0 ? "text-red-700" : ""}`}>
+                  {formatPrice(net)}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {w.orders} {w.orders === 1 ? "поръчка" : "поръчки"}
+                </p>
+                {w.refunds > 0 && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    бруто {formatPrice(w.revenue)}
+                    <span className="text-red-700"> − {formatPrice(w.refunds)} възст.</span>
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}
       </div>
 
       {/* Recent orders */}
