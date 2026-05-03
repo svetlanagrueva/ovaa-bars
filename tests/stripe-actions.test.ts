@@ -462,8 +462,8 @@ describe("createCODOrder", () => {
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
-    // 2570 (product) + 300 (shipping, 25.70 < 30 € threshold) + 200 (COD fee) = 3070
-    expect(insertCall.total_amount).toBe(3070)
+    // 2570 (product) + 300 (shipping, 25.70 < 30 € threshold) + 0 (COD fee) = 2870
+    expect(insertCall.total_amount).toBe(2870)
   })
 
   it("throws when product not found", async () => {
@@ -857,7 +857,8 @@ describe("createCODOrder — additional", () => {
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
     expect(insertCall.shipping_fee).toBe(300) // speedy office shipping
-    expect(insertCall.cod_fee).toBe(200)
+    // COD fee was dropped 2026-05-03 — every COD order now has cod_fee = 0.
+    expect(insertCall.cod_fee).toBe(0)
     expect(insertCall.confirmed_at).toBeTruthy()
   })
 
@@ -949,8 +950,8 @@ describe("createCODOrder — additional", () => {
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
     expect(insertCall.shipping_fee).toBe(0)
-    // total = 5140 (products) + 0 (shipping) + 200 (cod) = 5340
-    expect(insertCall.total_amount).toBe(5340)
+    // total = 5140 (products) + 0 (shipping) + 0 (cod, dropped 2026-05-03) = 5140
+    expect(insertCall.total_amount).toBe(5140)
   })
 })
 

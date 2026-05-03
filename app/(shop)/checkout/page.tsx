@@ -601,7 +601,7 @@ export default function CheckoutPage() {
                           <Banknote className="h-4 w-4" />
                           Наложен платеж
                         </span>
-                        <p className="text-sm text-muted-foreground">Плащане при доставка (+{formatPrice(COD_FEE)})</p>
+                        <p className="text-sm text-muted-foreground">Плащане при доставка</p>
                       </Label>
                     </div>
                   </RadioGroup>
