@@ -315,12 +315,34 @@ function AdminOrdersPage() {
                   <TableCell className="text-sm">{PAYMENT_LABELS[order.payment_method] || order.payment_method}</TableCell>
                   <TableCell className="text-sm">
                     {(() => {
-                      // Priority: terminal states → settled → COD pre-settle → card pending.
-                      // Checking seller_settled_at first avoids "settled COD" rows still matching
-                      // the "delivered+null seller_settled_at" branch.
+                      // Priority: terminal → fully refunded → partially refunded
+                      //   → settled → COD pre-settle → card pending.
+                      // Refund states intentionally outrank the settled/awaiting
+                      // signals: once money has gone back to the customer, the
+                      // refund is the most relevant payment-side fact.
                       let inner: React.ReactNode = null
                       if (order.status === "cancelled" || order.status === "expired") {
                         inner = <span className="text-muted-foreground">—</span>
+                      } else if (order.refunds_total > 0 && order.refunds_total >= order.total_amount) {
+                        inner = (
+                          <>
+                            <Badge variant="destructive" className="text-xs">Изцяло възстановена</Badge>
+                            <span className="text-[10px] text-red-700">
+                              −{formatPrice(order.refunds_total)}
+                            </span>
+                          </>
+                        )
+                      } else if (order.refunds_total > 0) {
+                        inner = (
+                          <>
+                            <Badge variant="outline" className="text-xs border-amber-400 text-amber-700">
+                              Частично възстановена
+                            </Badge>
+                            <span className="text-[10px] text-red-700">
+                              −{formatPrice(order.refunds_total)} от {formatPrice(order.total_amount)}
+                            </span>
+                          </>
+                        )
                       } else if (order.seller_settled_at) {
                         inner = (
                           <>
@@ -362,16 +384,7 @@ function AdminOrdersPage() {
                         // card with no seller_settled_at
                         inner = <Badge variant="outline" className="text-xs">Чака плащане</Badge>
                       }
-                      return (
-                        <div className="flex flex-col gap-0.5">
-                          {inner}
-                          {order.refunds_total > 0 && (
-                            <span className="text-[10px] text-red-700">
-                              възст. {formatPrice(order.refunds_total)}
-                            </span>
-                          )}
-                        </div>
-                      )
+                      return <div className="flex flex-col gap-0.5">{inner}</div>
                     })()}
                   </TableCell>
                   <TableCell className="text-sm">

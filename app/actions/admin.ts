@@ -80,9 +80,15 @@ async function requireAdmin() {
 }
 
 export interface DashboardStats {
-  today: { orders: number; revenue: number }
-  week: { orders: number; revenue: number }
-  month: { orders: number; revenue: number }
+  // `revenue` is GROSS product revenue (total_amount - shipping_fee -
+  // cod_fee summed over orders whose created_at falls in the window).
+  // `refunds` is SUM(refunds.amount_cents) for refunds whose refunded_at
+  // falls in the same window — Shopify-style: a refund issued today
+  // counts against today regardless of when the order was placed. Net
+  // revenue is `revenue - refunds`, computed at the rendering layer.
+  today: { orders: number; revenue: number; refunds: number }
+  week: { orders: number; revenue: number; refunds: number }
+  month: { orders: number; revenue: number; refunds: number }
   pendingOrders: number
   invoicesAwaiting: number
   creditNotesAwaiting: number
@@ -134,9 +140,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .limit(10)
 
   return {
-    today: { orders: s.today_orders ?? 0, revenue: s.today_revenue ?? 0 },
-    week: { orders: s.week_orders ?? 0, revenue: s.week_revenue ?? 0 },
-    month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0 },
+    today: { orders: s.today_orders ?? 0, revenue: s.today_revenue ?? 0, refunds: s.today_refunds ?? 0 },
+    week: { orders: s.week_orders ?? 0, revenue: s.week_revenue ?? 0, refunds: s.week_refunds ?? 0 },
+    month: { orders: s.month_orders ?? 0, revenue: s.month_revenue ?? 0, refunds: s.month_refunds ?? 0 },
     pendingOrders: s.pending_orders ?? 0,
     invoicesAwaiting: s.invoices_awaiting ?? 0,
     creditNotesAwaiting: s.credit_notes_awaiting ?? 0,
