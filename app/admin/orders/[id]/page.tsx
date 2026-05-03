@@ -3229,13 +3229,14 @@ export default function AdminOrderDetailPage({
   )
 }
 
-// One row in the refunds list. Shows the refund details, a computed
-// breakdown for кредитно известие (VAT 20% inclusive; copy-pasteable for
-// Microinvest), and an inline annotation edit for reason +
-// bank_transfer_ref + credit_note_skip_reason. The actual credit-note
-// document number lives on the linked invoices row of type='credit_note'
-// (auto-created on refund when conditions hold) — admin edits it from the
-// Документи section.
+// One row in the refunds list. Shows refund details (amount, method, date,
+// per-line allocation when refund_items exist) and an inline annotation
+// edit for reason + bank_transfer_ref + credit_note_skip_reason. No VAT
+// math here by design — business is not VAT-registered, and once it is,
+// VAT amounts will be pasted from Microinvest, never computed in the UI.
+// The credit-note document number lives on the linked invoices row of
+// type='credit_note' (auto-created on refund when conditions hold) —
+// admin edits it from the Документи section.
 function RefundRow({
   refund,
   creditNoteInvoice,

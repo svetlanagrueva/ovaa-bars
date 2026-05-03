@@ -119,12 +119,8 @@ Status transitions with validation, cancellation requires reason field.
 ### Annotation edits
 `RefundRow` allows admin to edit `reason`, `bank_transfer_ref`, `credit_note_skip_reason` on any row (including webhook-created rows). `updateRefundAnnotation` only touches those three columns; financial fields stay immutable per the append-only trigger. Each actual change emits a `refund_annotation_edited` audit event with per-field `{old, new}` pairs. No-op UPDATEs do not emit. (`credit_note_ref` was dropped — credit-note linkage now lives on `invoices.refund_id`.)
 
-### Кредитно известие breakdown
-Each `RefundRow` renders a VAT-20%-inclusive per-line breakdown (gross / VAT / net). Precedence (in `lib/refund-breakdown.ts`):
-1. **`refund_items` rows** (authoritative when present) — sum of allocated amounts.
-2. **`inventory_log` return rows** (`reference_type='return' AND reference_id=refund.id`) × `order_items.unit_price_cents` — derived when no refund_items.
-3. **No-returns** (goodwill / shipping-only).
-A "Копирай" button copies a formatted Bulgarian text block to clipboard — admin pastes it into Microinvest when issuing the кредитно известие. Handles three shapes: full match (lines = refund amount), mismatch (handling-fee / partial-discount case — surfaced with an amber note), no-returns. VAT rate hardcoded 20%.
+### Кредитно известие breakdown — not in the UI
+The refund row does not compute or display a VAT/net/gross breakdown. Business is not VAT-registered; once it is, VAT amounts on credit notes will be pasted from Microinvest into the linked `invoices` row (type='credit_note'), never computed in the admin UI. Principle: system suggests, Microinvest decides, DB records, reports query.
 
 ### Webhook path (Stripe refunds)
 `refund.created` / `refund.updated` / `refund.failed` / `charge.refunded` all converge on `upsertRefundFromStripe`, which branches by `refund.status`:

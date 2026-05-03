@@ -73,7 +73,7 @@
 - Trigger `trg_refund_items_amount_cap` (BEFORE INSERT) — `sum(refund_items.amount_cents for refund) ≤ refunds.amount_cents`. Items can sum to LESS than the refund total — the difference is non-allocated (e.g. shipping or goodwill portion).
 - **Append-only**: `trg_refund_items_immutable_update` and `trg_refund_items_immutable_delete` reject all UPDATEs and DELETEs.
 - Webhook-originated refunds (`source='stripe_webhook'`) leave `refund_items` empty by design — Stripe doesn't tell us which line was refunded.
-- Precedence in `lib/refund-breakdown.ts`: `refund_items` > derived from `inventory_log` returns > none. When refund_items rows exist, they're authoritative for the credit-note breakdown.
+- When `refund_items` rows exist they're the authoritative per-line allocation; otherwise the refund is treated as un-allocated (goodwill / shipping-only). The admin UI does not render a VAT/net/gross breakdown — VAT is recorded from Microinvest paste post-registration, never computed in the UI.
 
 ## Withdrawals Table
 - `withdrawals` — formal register for ЗЗП Чл. 50 (право на отказ / 14-day return) requests (migration `20260429071812`). Strict separation from complaints (рекламация — Чл. 122-127), refunds (money), inventory (goods), and invoices/credit_notes (accounting). Multiple per order over time; one open at a time. Intake is admin-driven (no public form) — customer emails or calls, admin opens the order and registers.
