@@ -4,7 +4,7 @@ import { useEffect, useState, use } from "react"
 import Link from "next/link"
 import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, suggestBatchesForShipment, confirmShipmentBatches, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchSuggestion } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
-import { hasCustomerPaid } from "@/lib/orders"
+import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -915,11 +915,18 @@ export default function AdminOrderDetailPage({
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {(() => {
+              // Use the shared financial-status helper so the wording here
+              // never drifts from the orders list. The summary card only
+              // renders when refunds.length > 0, so getFinancialStatus
+              // returns either "refunded" or "partially_refunded".
               const totalRefunded = order.refunds.reduce((sum, r) => sum + r.amount_cents, 0)
-              const fullyRefunded = totalRefunded >= order.total_amount
+              const status = getFinancialStatus({
+                ...order,
+                refunds_total: totalRefunded,
+              })
               return (
                 <div className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-blue-900">
-                  {fullyRefunded ? "Изцяло възстановена" : "Частично възстановена"}:{" "}
+                  {FINANCIAL_STATUS_LABELS[status]}:{" "}
                   <span className="font-medium">{formatPrice(totalRefunded)}</span>
                   {" / "}
                   <span>{formatPrice(order.total_amount)}</span>
