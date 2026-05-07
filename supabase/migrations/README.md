@@ -64,11 +64,19 @@ While pre-launch:
 
 ## Squash history
 
-The 26-file migration series from the `db-modifications` branch was
-consolidated into the single `20260420120000_initial_schema.sql` on
-2026-04-25, before launch. The pre-squash version of each migration
-remains accessible via the merge commit on the squash PR (and any
-branch that still holds the original step-by-step files) for forensic
-look-back if needed. From this point forward the rules above apply —
-new schema changes go in their own dated file, never edit
-`initial_schema.sql` post-launch.
+Two pre-launch squashes have been applied to
+`20260420120000_initial_schema.sql`:
+
+1. **2026-04-25** — the 26-file migration series from the
+   `db-modifications` branch was consolidated into the v1 initial
+   schema before launch.
+2. **2026-05-06** — 12 further migrations applied between 2026-04-27
+   and 2026-05-03 (invoices table, withdrawals table, batch
+   traceability, refund_items, append-mostly invoices, paid_at →
+   seller_settled_at rename, dashboard refunds aggregates, etc.) were
+   folded into the same file. The site was still pre-launch so the
+   pre-squash versions are available via the merge commit on the
+   squash PR for any forensic look-back.
+
+From this point forward the rules above apply — new schema changes go
+in their own dated file, never edit `initial_schema.sql` post-launch.
