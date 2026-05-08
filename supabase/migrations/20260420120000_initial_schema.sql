@@ -1,16 +1,21 @@
 -- ══════════════════════════════════════════════════════════════════════════
--- Initial schema for the Egg Origin e-commerce site (consolidated).
+-- Initial schema for the Egg Origin e-commerce site (consolidated v2).
 -- ══════════════════════════════════════════════════════════════════════════
 --
--- This file replaces the 26 incremental migrations from the db-modifications
--- branch. The pre-launch DB had no real customer data so the migration
--- series was squashed into a single canonical schema before launch. The
--- pre-squash history lives in the merge commit on the squash PR (and in
--- branches that hold the original step-by-step migration files) for any
--- forensic look-back.
+-- This file replaces a series of incremental migrations: the original
+-- 26-file series from the `db-modifications` branch (squashed into the
+-- v1 initial schema on 2026-04-25) plus 12 further migrations applied
+-- between 2026-04-27 and 2026-05-03 (squashed on 2026-05-06).
+--
+-- The site was still pre-launch at squash time so the DB had no real
+-- customer data — see README.md § "Pre-launch note" for the rules. The
+-- pre-squash migration files remain accessible via the merge commits on
+-- the squash PRs for any forensic look-back. Once the first real customer
+-- order lands, this file becomes immutable; new schema changes go in
+-- their own dated file.
 --
 -- Layout:
---   1. Tables (in FK dependency order)
+--   1. Tables + sequences (in FK dependency order)
 --   2. Indexes
 --   3. CHECK constraints applied after table creation (for readability)
 --   4. RLS + deny-all policies (service role bypasses)
@@ -24,10 +29,16 @@
 
 -- ── 1. TABLES ───────────────────────────────────────────────────────────────
 
+-- Sequences for human-readable refs minted by RPCs.
+create sequence if not exists complaint_ref_seq start 1;
+create sequence if not exists withdrawal_ref_seq start 1;
+
 -- ─── orders ─────────────────────────────────────────────────────────────────
--- Customer-facing orders. Refund data lives in the order_refunds child table
--- (added below). Items live in order_items (added below). EGN is never
--- collected; ЗДДС does not require it for individual retail invoices.
+-- Customer-facing orders. Refund data lives in the refunds child table.
+-- Items live in order_items. Invoice profile + issuance metadata live in
+-- the invoices child table (one type='invoice' row + zero-or-more
+-- type='credit_note' rows per order). EGN is never collected — ЗДДС does
+-- not require it for individual retail invoices.
 create table if not exists orders (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz default now(),
@@ -61,18 +72,6 @@ create table if not exists orders (
   delivered_at timestamptz,
   cancelled_at timestamptz,
 
-  -- Invoice (no invoice_egn — see ЗДДС note above)
-  needs_invoice boolean default false,
-  invoice_type text check (invoice_type in ('individual', 'company')),
-  invoice_company_name text,
-  invoice_eik text,
-  invoice_vat_number text,
-  invoice_mol text,
-  invoice_address text,
-  invoice_number text unique,
-  invoice_date timestamptz,
-  invoice_sent_at timestamptz,
-
   -- Econt delivery (optional)
   econt_office_id integer,
   econt_office_code text,
@@ -84,8 +83,12 @@ create table if not exists orders (
   speedy_office_name text,
   speedy_office_address text,
 
-  -- Payment tracking
-  paid_at timestamptz,              -- Card: set on Stripe webhook; COD: set when courier settlement received
+  -- Settlement tracking (when the seller has the money in hand)
+  --   Card: set on Stripe webhook (capture).
+  --   COD:  set when admin records courier remittance (≠ when customer
+  --         paid the courier — for COD the customer-paid moment is
+  --         delivered_at).
+  seller_settled_at timestamptz,
   courier_ppp_ref text,             -- COD: courier's postal money transfer (ППП) document reference
   settlement_ref text,              -- COD: courier's bank transfer reference (batch payout)
   settlement_amount integer,        -- COD: actual amount received after courier commission, in cents
@@ -141,15 +144,6 @@ create table if not exists product_sales (
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   constraint chk_sale_price check (sale_price_in_cents < original_price_in_cents)
-);
-
--- ─── product_price_history ──────────────────────────────────────────────────
--- For EU Omnibus Directive compliance (lowest price in last 30 days).
-create table if not exists product_price_history (
-  id uuid primary key default gen_random_uuid(),
-  product_id text not null,
-  price_in_cents integer not null,
-  recorded_at timestamptz not null default now()
 );
 
 -- ─── promo_codes ────────────────────────────────────────────────────────────
@@ -258,8 +252,10 @@ create table if not exists inventory_current (
 -- ─── order_audit_events ─────────────────────────────────────────────────────
 -- Unified append-only event log for orders. Populated by:
 --   - emit_order_audit_events trigger (column-diff events on orders UPDATE)
---   - emit_order_refund_audit trigger (refunded events from order_refunds INSERT)
---   - emit_order_refund_annotation_audit trigger (annotation edits)
+--   - emit_invoice_audit_events trigger (invoices UPDATE)
+--   - emit_refund_audit trigger (refunded events from refunds INSERT)
+--   - emit_refund_annotation_audit trigger (annotation edits)
+--   - emit_withdrawal_audit_events trigger (withdrawal lifecycle)
 --   - record_order_outcome RPC (admin-driven domain events + Stripe webhooks)
 -- Mutations blocked by triggers below.
 create table if not exists order_audit_events (
@@ -273,12 +269,16 @@ create table if not exists order_audit_events (
   constraint chk_order_audit_actor_nonempty check (actor <> '')
 );
 
--- ─── order_refunds ──────────────────────────────────────────────────────────
+-- ─── refunds ────────────────────────────────────────────────────────────────
 -- Child table — many refunds per order. stripe_refund_id is the natural
 -- idempotency key for webhook arrivals; client_idempotency_key for admin-UI
--- submissions. Append-only for financial fields (only reason / credit_note_ref
--- are mutable via updateRefundAnnotation).
-create table if not exists order_refunds (
+-- submissions. Append-only for financial fields (only reason,
+-- bank_transfer_ref, and credit_note_skip_reason are mutable).
+--
+-- The withdrawal_id FK is added below after the withdrawals table is
+-- created (mutual reference: withdrawals.refund_id → refunds.id, and
+-- refunds.withdrawal_id → withdrawals.id).
+create table if not exists refunds (
   id                       uuid        primary key default gen_random_uuid(),
   order_id                 uuid        not null references orders(id) on delete cascade,
   stripe_refund_id         text,
@@ -287,17 +287,335 @@ create table if not exists order_refunds (
   method                   text        not null check (method in ('stripe', 'bank_transfer')),
   source                   text        not null check (source in ('admin_ui', 'stripe_webhook')),
   reason                   text,
-  credit_note_ref          text,
+  bank_transfer_ref        text,
+  affects_invoiced_supply  boolean     not null default true,
+  credit_note_skip_reason  text,
+  withdrawal_id            uuid,                      -- FK constraint added after withdrawals table created
   recorded_by              text        not null default 'admin',
   refunded_at              timestamptz not null default now(),
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now(),
   constraint chk_stripe_method_has_refund_id
     check (method <> 'stripe' or stripe_refund_id is not null),
+  constraint chk_bank_transfer_method_has_ref
+    check (method <> 'bank_transfer' or bank_transfer_ref is not null),
   constraint chk_refund_reason_length
     check (reason is null or length(reason) <= 1000),
-  constraint chk_refund_credit_note_length
-    check (credit_note_ref is null or length(credit_note_ref) <= 100)
+  constraint chk_bank_transfer_ref_length
+    check (bank_transfer_ref is null or length(bank_transfer_ref) <= 200),
+  constraint chk_skip_reason_when_skipping check (
+    affects_invoiced_supply = true
+    or (credit_note_skip_reason is not null and btrim(credit_note_skip_reason) <> '')
+  ),
+  constraint chk_skip_reason_length check (
+    credit_note_skip_reason is null or length(credit_note_skip_reason) <= 500
+  )
+);
+
+-- ─── withdrawals ────────────────────────────────────────────────────────────
+-- Право на отказ (Чл. 50 ЗЗП) register. Strict separation from complaints
+-- (рекламация — Чл. 122-127), refunds (money), inventory (goods), and
+-- invoices/credit_notes (accounting). Intake is admin-driven (no public
+-- form): customer emails or calls, admin opens the order, classifies, and
+-- registers the withdrawal here.
+--
+-- Status machine (forward-only; data-repair via force_withdrawal_status_override):
+--
+--   Path A (return required, default):
+--     requested → approved → goods_received → completed
+--                          ↘ rejected
+--
+--   Path B (return NOT required, e.g. goodwill / customer keeps product):
+--     requested → approved → completed
+--                          ↘ rejected
+create table if not exists withdrawals (
+  id              uuid primary key default gen_random_uuid(),
+  order_id        uuid not null references orders(id) on delete restrict,
+  withdrawal_ref  text not null unique,         -- WD-YYYY-NNNN
+
+  -- Intake
+  requested_via   text not null default 'email'
+                  check (requested_via in ('email', 'phone', 'admin')),
+  customer_email  text not null,
+  customer_request_text text,
+
+  -- Status machine
+  status text not null default 'requested' check (status in (
+    'requested', 'approved', 'goods_received', 'rejected', 'completed'
+  )),
+
+  -- Eligibility (3 dimensions; informational, not a hard gate)
+  eligibility_time_based     boolean,
+  eligibility_product_based  text check (eligibility_product_based in (
+    'eligible', 'perishable_or_short_shelf_life', 'hygiene_exception', 'unknown'
+  )),
+  eligibility_condition      text check (eligibility_condition in (
+    'pending_inspection', 'sealed_sellable', 'opened', 'damaged', 'expired', 'other'
+  )) default 'pending_inspection',
+
+  -- Resolution
+  resolution_type   text check (resolution_type in ('refund', 'replacement', 'none')),
+  rejection_reason  text,
+  refund_id         uuid references refunds(id) on delete restrict,
+
+  -- Path B: skip-the-return
+  return_required  boolean not null default true,
+  completion_note  text,
+
+  -- Optional return logistics
+  return_tracking_number text,
+  return_courier         text,
+
+  -- Admin lifecycle
+  approved_at        timestamptz,
+  approved_by        text,
+  goods_received_at  timestamptz,
+  rejected_at        timestamptz,
+  rejected_by        text,
+  completed_at       timestamptz,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+
+  constraint chk_withdrawal_ref_format check (withdrawal_ref ~ '^WD-\d{4}-\d{4,}$'),
+  constraint chk_customer_email_lowercase check (customer_email = lower(customer_email)),
+
+  -- Rejection requires a reason
+  constraint chk_rejection_reason check (
+    status <> 'rejected'
+    or (rejection_reason is not null and btrim(rejection_reason) <> '')
+  ),
+
+  -- Completion requires a resolution declared
+  constraint chk_completed_requires_resolution check (
+    status <> 'completed' or resolution_type is not null
+  ),
+
+  -- When resolution is refund, the refund linkage is mandatory
+  constraint chk_refund_resolution_has_refund_id check (
+    coalesce(resolution_type, '') <> 'refund' or refund_id is not null
+  ),
+
+  -- Path B (no-return completion) requires an explicit completion_note
+  constraint chk_completion_note_when_no_return check (
+    status <> 'completed'
+    or return_required = true
+    or (completion_note is not null and btrim(completion_note) <> '')
+  ),
+
+  -- Cannot reject after physically receiving goods (legally messy)
+  constraint chk_no_reject_after_goods check (
+    not (status = 'rejected' and goods_received_at is not null)
+  ),
+
+  -- Length caps
+  constraint chk_request_text_length check (
+    customer_request_text is null or length(customer_request_text) <= 2000
+  ),
+  constraint chk_rejection_reason_length check (
+    rejection_reason is null or length(rejection_reason) <= 1000
+  ),
+  constraint chk_completion_note_length check (
+    completion_note is null or length(completion_note) <= 1000
+  ),
+  constraint chk_return_tracking_length check (
+    return_tracking_number is null or length(return_tracking_number) <= 200
+  ),
+  constraint chk_return_courier_length check (
+    return_courier is null or length(return_courier) <= 100
+  )
+);
+
+-- Now that withdrawals exists, close the cycle: refunds.withdrawal_id FK.
+-- Set once when admin issues a refund from a withdrawal context. Immutable
+-- once set (extended into the append-only enforcement on refunds).
+alter table refunds
+  add constraint refunds_withdrawal_id_fkey
+  foreign key (withdrawal_id) references withdrawals(id) on delete restrict;
+
+-- ─── invoices ───────────────────────────────────────────────────────────────
+-- Holds both initial фактури (type='invoice') and кредитни известия
+-- (type='credit_note'). Replaces the in-orders invoice columns.
+--
+-- Legal basis:
+--   ЗДДС Чл. 113 — фактура required for invoiced supplies (issued in Microinvest)
+--   ЗДДС Чл. 115 — кредитно известие required when tax base changes or
+--                  supply is cancelled for an invoiced order; must reference
+--                  the original фактура number; due within 5 days
+--   ЗДДС Чл. 116 — corrections to issued documents go through credit_note,
+--                  never via in-place edit
+--   ЗСч Чл. 6   — every business operation needs a primary accounting
+--                  document; for non-VAT-registered traders this is the
+--                  basis for credit notes on invoiced refunds
+--
+-- Append-mostly: identity, profile, linkage, and due_at strictly immutable;
+-- invoice_number / invoice_date / sent_at are forward-only (NULL → set,
+-- never reverted, never re-set). DELETE blocked.
+create table if not exists invoices (
+  id                     uuid primary key default gen_random_uuid(),
+  order_id               uuid not null references orders(id) on delete restrict,
+  type                   text not null check (type in ('invoice', 'credit_note')),
+
+  -- Credit note linkage (only set for type='credit_note')
+  refund_id              uuid references refunds(id) on delete restrict,
+  references_invoice_id  uuid references invoices(id) on delete restrict,
+
+  -- Profile (only meaningful for type='invoice'; null for credit_note)
+  invoice_type   text check (invoice_type in ('individual', 'company')),
+  company_name   text,
+  eik            text,
+  vat_number     text,
+  mol            text,                -- only for company; individual name comes from order
+  address        text,
+
+  -- Issuance metadata (admin enters from Microinvest)
+  invoice_number text,
+  invoice_date   timestamptz,
+  sent_at        timestamptz,
+
+  -- Deadline (mandatory for credit_note: refund.refunded_at + 5 days per ЗДДС Чл. 113 ал. 4)
+  due_at         timestamptz,
+
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+
+  -- Type='invoice' shape: no refund/origin links; profile required (address
+  -- minimum, mode-specific extras handled by separate constraints below).
+  constraint chk_invoice_shape check (
+    type <> 'invoice' or (
+      refund_id is null
+      and references_invoice_id is null
+      and invoice_type is not null
+      and address is not null and btrim(address) <> ''
+    )
+  ),
+
+  -- Type='credit_note' shape: refund + origin required, profile fields null,
+  -- due_at populated.
+  constraint chk_credit_note_shape check (
+    type <> 'credit_note' or (
+      refund_id is not null
+      and references_invoice_id is not null
+      and invoice_type is null
+      and company_name is null
+      and eik is null
+      and vat_number is null
+      and mol is null
+      and address is null
+      and due_at is not null
+    )
+  ),
+
+  -- Company invoices: company_name + eik + mol required; vat_number optional.
+  constraint chk_invoice_company_fields check (
+    type <> 'invoice' or invoice_type <> 'company' or (
+      company_name is not null and btrim(company_name) <> ''
+      and eik is not null and btrim(eik) <> ''
+      and mol is not null and btrim(mol) <> ''
+    )
+  ),
+
+  -- Individual invoices: forbid all company-only fields (mol included — the
+  -- legal name on the invoice comes from the order's first_name + last_name).
+  constraint chk_invoice_individual_fields check (
+    type <> 'invoice' or invoice_type <> 'individual' or (
+      company_name is null
+      and eik is null
+      and vat_number is null
+      and mol is null
+    )
+  ),
+
+  -- Length caps
+  constraint chk_invoices_invoice_number_length check (invoice_number is null or length(invoice_number) <= 50),
+  constraint chk_invoices_company_name_length check (company_name is null or length(company_name) <= 200),
+  constraint chk_invoices_eik_length check (eik is null or length(eik) <= 13),
+  constraint chk_invoices_vat_number_length check (vat_number is null or length(vat_number) <= 15),
+  constraint chk_invoices_mol_length check (mol is null or length(mol) <= 200),
+  constraint chk_invoices_address_length check (address is null or length(address) <= 500)
+);
+
+-- ─── refund_items ───────────────────────────────────────────────────────────
+-- Explicit per-line allocation of a refund. Independent of inventory_log:
+-- lets admin allocate a refund to specific order lines for shipping
+-- disputes, partial price reductions, or goodwill discounts where no goods
+-- physically move.
+--
+-- When refund_items rows exist they're the authoritative per-line
+-- allocation; otherwise the refund is treated as un-allocated. Append-only.
+create table if not exists refund_items (
+  id              uuid primary key default gen_random_uuid(),
+  refund_id       uuid not null references refunds(id) on delete cascade,
+  order_item_id   bigint not null references order_items(id) on delete restrict,
+  quantity        integer not null check (quantity > 0),
+  amount_cents    integer not null check (amount_cents > 0),
+  created_at      timestamptz not null default now(),
+
+  -- One allocation row per (refund, line). Combine quantities at insert
+  -- rather than splitting across rows; otherwise sum-cap math gets noisier.
+  constraint uq_refund_items_per_pair unique (refund_id, order_item_id)
+);
+
+-- ─── product_batches ────────────────────────────────────────────────────────
+-- Tier 1 batch traceability — minimum legally-defensible recall capability.
+--
+-- Legal basis:
+--   EU 178/2002 Чл. 18 — one-step-back, one-step-forward traceability
+--   EU 931/2011        — batch info on commercial consignments (animal-origin)
+--   ЗХр Чл. 84-86      — Bulgarian transposition
+--   ЗЗП recall procedure — БАБХ supervises withdrawals/recalls
+--
+-- Append-mostly: only the active → recalled forward transition is allowed;
+-- recall metadata must be set in the same UPDATE. DELETE blocked. Tamper-
+-- evident for БАБХ inspections.
+create table if not exists product_batches (
+  id              uuid primary key default gen_random_uuid(),
+  sku             text not null,
+  batch_number    text not null,
+  expiry_date     date not null,                 -- food: every batch has a use-by date
+  status          text not null default 'active'
+                  check (status in ('active', 'recalled')),
+
+  -- Recall metadata: required when status='recalled', forbidden when 'active'.
+  -- Provides audit trail for inspectors ("when did you recall, why").
+  recalled_at     timestamptz,
+  recalled_by     text,
+  recall_reason   text,
+  notes           text,
+  created_at      timestamptz not null default now(),
+  created_by      text not null default 'admin',
+
+  unique (sku, batch_number),
+
+  constraint chk_recall_metadata check (
+    (status = 'active' and recalled_at is null and recalled_by is null and recall_reason is null)
+    or (status = 'recalled' and recalled_at is not null
+        and recalled_by is not null and btrim(recalled_by) <> ''
+        and recall_reason is not null and length(btrim(recall_reason)) >= 20)
+  ),
+  constraint chk_recall_reason_length check (
+    recall_reason is null or length(recall_reason) <= 1000
+  ),
+  constraint chk_notes_length check (
+    notes is null or length(notes) <= 1000
+  ),
+  constraint chk_batch_number_nonempty check (btrim(batch_number) <> '')
+);
+
+-- ─── order_item_batches ─────────────────────────────────────────────────────
+-- Populated at ship time; records "this order_item consumed N units from
+-- this batch". Fully immutable post-insert — allocation is locked at ship
+-- time.
+create table if not exists order_item_batches (
+  id                uuid primary key default gen_random_uuid(),
+  order_item_id     bigint not null references order_items(id) on delete cascade,
+  product_batch_id  uuid not null references product_batches(id) on delete restrict,
+  quantity          integer not null check (quantity > 0),
+  confirmed_at      timestamptz not null default now(),
+  confirmed_by      text not null default 'admin',
+
+  -- One row per (order_item, batch). Multiple batches per item supported
+  -- via separate rows; combining lines avoids ambiguous totals.
+  unique (order_item_id, product_batch_id)
 );
 
 -- ─── email_unsubscribes ─────────────────────────────────────────────────────
@@ -327,10 +645,8 @@ create table if not exists marketing_email_log (
 );
 
 -- ─── complaints ─────────────────────────────────────────────────────────────
--- Formal complaints register (ЗЗП чл. 127). complaint_ref auto-generated as
--- RCL-YYYY-NNNN via a sequence (server-side composes the format).
-create sequence if not exists complaint_ref_seq start 1;
-
+-- Formal complaints register (ЗЗП Чл. 122-127). complaint_ref auto-generated
+-- as RCL-YYYY-NNNN via complaint_ref_seq (server-side composes the format).
 create table if not exists complaints (
   id                  bigint generated always as identity primary key,
   order_id            uuid not null references orders(id),
@@ -352,14 +668,10 @@ create table if not exists complaints (
 -- ── 2. INDEXES ──────────────────────────────────────────────────────────────
 
 -- orders
-create index if not exists idx_orders_invoice_number on orders (invoice_number)
-  where invoice_number is not null;
 create index if not exists idx_orders_status on orders (status);
 create unique index if not exists idx_orders_tracking_number_unique
   on orders (tracking_number) where tracking_number is not null and tracking_number != '__generating__';
 create index if not exists idx_orders_created_at on orders (created_at desc);
-create index if not exists idx_orders_needs_invoice on orders (needs_invoice)
-  where needs_invoice = true and invoice_number is null;
 create index if not exists idx_orders_delivered_at
   on orders (delivered_at) where delivered_at is not null;
 
@@ -370,10 +682,6 @@ create index if not exists idx_order_items_sku on order_items (sku);
 -- product_sales — at most one active sale per product
 create unique index if not exists idx_product_sales_one_active
   on product_sales (product_id) where is_active = true;
-
--- product_price_history
-create index if not exists idx_price_history_lookup
-  on product_price_history (product_id, recorded_at desc);
 
 -- promo_codes — at most one active code per uppercase value
 create unique index if not exists idx_promo_codes_unique_active
@@ -390,12 +698,63 @@ create unique index if not exists idx_inventory_log_idempotency_key_unique
 create index if not exists idx_order_audit_events_order_id on order_audit_events (order_id, created_at);
 create index if not exists idx_order_audit_events_event_type on order_audit_events (event_type);
 
--- order_refunds
-create unique index if not exists idx_order_refunds_stripe_id
-  on order_refunds (stripe_refund_id) where stripe_refund_id is not null;
-create unique index if not exists idx_order_refunds_client_idempotency_unique
-  on order_refunds (client_idempotency_key) where client_idempotency_key is not null;
-create index if not exists idx_order_refunds_order_id on order_refunds (order_id, refunded_at desc);
+-- refunds
+create unique index if not exists idx_refunds_stripe_id
+  on refunds (stripe_refund_id) where stripe_refund_id is not null;
+create unique index if not exists idx_refunds_client_idempotency_unique
+  on refunds (client_idempotency_key) where client_idempotency_key is not null;
+create index if not exists idx_refunds_order_id on refunds (order_id, refunded_at desc);
+create index if not exists idx_refunds_bank_transfer_ref
+  on refunds (bank_transfer_ref) where bank_transfer_ref is not null;
+create index if not exists idx_refunds_withdrawal_id
+  on refunds (withdrawal_id) where withdrawal_id is not null;
+-- One refund per withdrawal at most (preserves 1:1 invariant)
+create unique index if not exists uq_refunds_withdrawal_id
+  on refunds (withdrawal_id) where withdrawal_id is not null;
+
+-- invoices
+create unique index if not exists uq_invoices_one_per_order
+  on invoices (order_id) where type = 'invoice';
+create unique index if not exists uq_invoices_one_per_refund
+  on invoices (refund_id) where refund_id is not null;
+create unique index if not exists uq_invoices_invoice_number
+  on invoices (invoice_number) where invoice_number is not null;
+create index if not exists idx_invoices_order_id on invoices (order_id);
+create index if not exists idx_invoices_type on invoices (type);
+create index if not exists idx_invoices_pending
+  on invoices (type) where invoice_number is null;
+create index if not exists idx_invoices_due_at
+  on invoices (due_at) where due_at is not null and invoice_number is null;
+
+-- withdrawals
+-- One open withdrawal per order at a time; closed-state rows excluded so a
+-- customer who had a rejected/completed withdrawal can file a new one.
+create unique index if not exists uq_open_withdrawal_per_order
+  on withdrawals (order_id)
+  where status in ('requested', 'approved', 'goods_received');
+create index if not exists idx_withdrawals_status
+  on withdrawals (status)
+  where status in ('requested', 'approved', 'goods_received');
+create index if not exists idx_withdrawals_order_id on withdrawals (order_id);
+create index if not exists idx_withdrawals_created_at on withdrawals (created_at desc);
+
+-- refund_items
+create index if not exists idx_refund_items_refund_id     on refund_items (refund_id);
+create index if not exists idx_refund_items_order_item_id on refund_items (order_item_id);
+
+-- product_batches
+create index if not exists idx_product_batches_sku_status
+  on product_batches (sku, status);
+create index if not exists idx_product_batches_expiry
+  on product_batches (sku, expiry_date) where status = 'active';
+create index if not exists idx_product_batches_recalled
+  on product_batches (status) where status = 'recalled';
+
+-- order_item_batches
+create index if not exists idx_order_item_batches_order_item
+  on order_item_batches (order_item_id);
+create index if not exists idx_order_item_batches_product_batch
+  on order_item_batches (product_batch_id);
 
 -- marketing_email_log
 create index if not exists idx_marketing_email_log_claimable
@@ -471,51 +830,6 @@ alter table orders add constraint chk_delivery_fields_consistent check (
   )
 );
 
--- Invoice mode consistency
--- needs_invoice=true requires invoice_type, mol, address.
-alter table orders add constraint chk_invoice_needs_fields check (
-  needs_invoice = false
-  or (
-    invoice_type is not null
-    and invoice_mol is not null and btrim(invoice_mol) <> ''
-    and invoice_address is not null and btrim(invoice_address) <> ''
-  )
-);
--- Company invoices require EIK + company name. (No EGN — column doesn't exist.)
-alter table orders add constraint chk_invoice_company_fields check (
-  needs_invoice = false
-  or invoice_type <> 'company'
-  or (
-    invoice_company_name is not null and btrim(invoice_company_name) <> ''
-    and invoice_eik is not null and btrim(invoice_eik) <> ''
-  )
-);
--- Individual invoices must NOT carry company-only identifiers.
-alter table orders add constraint chk_invoice_individual_fields check (
-  needs_invoice = false
-  or invoice_type <> 'individual'
-  or (
-    invoice_eik is null
-    and invoice_vat_number is null
-    and invoice_company_name is null
-  )
-);
--- needs_invoice=false → profile fields cleared. invoice_number / _date /
--- _sent_at are intentionally NOT in this list — those are admin-controlled
--- (issued in Microinvest, recorded against any order regardless of original
--- consent), and orthogonal to checkout-time profile capture.
-alter table orders add constraint chk_invoice_fields_cleared check (
-  needs_invoice = true
-  or (
-    invoice_type is null
-    and invoice_company_name is null
-    and invoice_eik is null
-    and invoice_vat_number is null
-    and invoice_mol is null
-    and invoice_address is null
-  )
-);
-
 
 -- ── 4. RLS + POLICIES ───────────────────────────────────────────────────────
 -- Server actions use SUPABASE_SERVICE_ROLE_KEY which bypasses RLS. The anon
@@ -523,12 +837,16 @@ alter table orders add constraint chk_invoice_fields_cleared check (
 alter table orders                enable row level security;
 alter table order_items           enable row level security;
 alter table product_sales         enable row level security;
-alter table product_price_history enable row level security;
 alter table promo_codes           enable row level security;
 alter table inventory_log         enable row level security;
 alter table inventory_current     enable row level security;
 alter table order_audit_events    enable row level security;
-alter table order_refunds         enable row level security;
+alter table refunds               enable row level security;
+alter table invoices              enable row level security;
+alter table withdrawals           enable row level security;
+alter table refund_items          enable row level security;
+alter table product_batches       enable row level security;
+alter table order_item_batches    enable row level security;
 alter table email_unsubscribes    enable row level security;
 alter table marketing_email_log   enable row level security;
 alter table complaints            enable row level security;
@@ -546,9 +864,6 @@ create policy "Deny public inserts on sales" on product_sales for insert with ch
 create policy "Deny public updates on sales" on product_sales for update using (false);
 create policy "Deny public deletes on sales" on product_sales for delete using (false);
 
-create policy "Deny public reads on price history" on product_price_history for select using (false);
-create policy "Deny public inserts on price history" on product_price_history for insert with check (false);
-
 create policy "Deny public reads on promo codes" on promo_codes for select using (false);
 create policy "Deny public inserts on promo codes" on promo_codes for insert with check (false);
 create policy "Deny public updates on promo codes" on promo_codes for update using (false);
@@ -563,7 +878,22 @@ create policy "Deny public updates on inventory_current" on inventory_current fo
 create policy "Deny all on order_audit_events" on order_audit_events
   for all using (false) with check (false);
 
-create policy "Deny all on order_refunds" on order_refunds
+create policy "Deny all on refunds" on refunds
+  for all using (false) with check (false);
+
+create policy "Deny all on invoices" on invoices
+  for all using (false) with check (false);
+
+create policy "Deny all on withdrawals" on withdrawals
+  for all using (false) with check (false);
+
+create policy "Deny all on refund_items" on refund_items
+  for all using (false) with check (false);
+
+create policy "Deny all on product_batches" on product_batches
+  for all using (false) with check (false);
+
+create policy "Deny all on order_item_batches" on order_item_batches
   for all using (false) with check (false);
 
 create policy "Deny all on email_unsubscribes" on email_unsubscribes
@@ -582,8 +912,16 @@ create policy "Deny all on complaints" on complaints
 -- BEFORE INSERT trigger function. Sets NEW.before_quantity / .after_quantity
 -- so a single INSERT writes the complete log row (no second UPDATE — that
 -- preserves inventory_log immutability with no service-role bypass).
+--
 -- order_out is hard-blocked from going negative; admin decrements may go
 -- negative (operational debt, surfaced as red "Дълг" badge in the admin UI).
+--
+-- Customer-return damaged is treated specially: 'damaged' rows with
+-- reference_type='return' AND order_id IS NOT NULL are audit-only — the
+-- unit was already removed from sellable via order_out at ship time, so
+-- this row records its disposition (destroyed) without double-decrementing.
+-- Mirrors Shopify's two-bucket model (sellable + damaged as separate
+-- accounting buckets).
 create or replace function update_inventory_current()
 returns trigger
 language plpgsql
@@ -607,8 +945,19 @@ begin
   v_delta := case
     when new.type in ('batch_in', 'cancellation', 'return_in', 'adjustment_gain')
       then  new.quantity
-    when new.type in ('order_out', 'wholesale_out', 'sample_out', 'damaged', 'adjustment_loss')
+    when new.type in ('order_out', 'wholesale_out', 'sample_out', 'adjustment_loss')
       then -new.quantity
+    when new.type = 'damaged' then
+      case
+        -- Customer-return damaged: audit-only. The unit was already removed
+        -- from sellable via order_out at ship time; this row records its
+        -- disposition (destroyed) but does not double-decrement.
+        when new.reference_type = 'return' and new.order_id is not null
+          then 0
+        -- Warehouse-internal damaged (broken in storage, expired, etc.):
+        -- real subtraction from sellable.
+        else -new.quantity
+      end
     else null
   end;
 
@@ -781,6 +1130,9 @@ $$;
 -- override transactions (the RPC writes a richer status_force_override event).
 -- contact_info_changed bundles all per-field {old,new} pairs into ONE event
 -- with jsonb_strip_nulls dropping unchanged-field keys.
+--
+-- Note: invoice events come from emit_invoice_audit_events on the invoices
+-- table, not from here.
 create or replace function emit_order_audit_events()
 returns trigger
 language plpgsql
@@ -799,28 +1151,12 @@ begin
     end if;
   end if;
 
-  if old.invoice_number is distinct from new.invoice_number
-     and new.invoice_number is not null then
+  if old.seller_settled_at is distinct from new.seller_settled_at
+     and new.seller_settled_at is not null then
     insert into public.order_audit_events (order_id, event_type, actor, payload)
-    values (new.id, 'invoice_number_set', v_actor,
+    values (new.id, 'seller_settled_at_recorded', v_actor,
       jsonb_build_object(
-        'invoice_number', new.invoice_number,
-        'invoice_date', new.invoice_date
-      ));
-  end if;
-
-  if old.invoice_sent_at is distinct from new.invoice_sent_at
-     and new.invoice_sent_at is not null then
-    insert into public.order_audit_events (order_id, event_type, actor, payload)
-    values (new.id, 'invoice_marked_sent', v_actor,
-      jsonb_build_object('invoice_sent_at', new.invoice_sent_at));
-  end if;
-
-  if old.paid_at is distinct from new.paid_at and new.paid_at is not null then
-    insert into public.order_audit_events (order_id, event_type, actor, payload)
-    values (new.id, 'paid_at_recorded', v_actor,
-      jsonb_build_object(
-        'paid_at', new.paid_at,
+        'seller_settled_at', new.seller_settled_at,
         'payment_method', new.payment_method,
         'courier_ppp_ref', new.courier_ppp_ref,
         'settlement_ref', new.settlement_ref,
@@ -947,7 +1283,15 @@ begin
     'dispute_closed',
     'dispute_funds_reinstated',
     'order_items_changed',
-    'email_resent'
+    'email_resent',
+    -- Withdrawals (emitted by emit_withdrawal_audit_events trigger; here so
+    -- record_order_outcome accepts them too if ever called manually)
+    'withdrawal_requested',
+    'withdrawal_approved',
+    'withdrawal_goods_received',
+    'withdrawal_rejected',
+    'withdrawal_completed',
+    'withdrawal_status_force_override'
   ) then
     raise exception 'Unknown outcome type: %', p_outcome_type;
   end if;
@@ -1182,6 +1526,10 @@ as $$
 $$;
 
 -- ─── Orders: dashboard_stats RPC ────────────────────────────────────────────
+-- Returns headline numbers + action-item counters. Refund aggregates are
+-- by refunded_at window (Shopify convention: a refund issued today counts
+-- against today, regardless of when the original order was placed). Net
+-- revenue is derived on the page (gross - refunds).
 create or replace function dashboard_stats(
   p_today_start timestamptz,
   p_week_start timestamptz,
@@ -1202,9 +1550,21 @@ begin
     'month_orders', coalesce(count(*), 0),
     'month_revenue', coalesce(sum(total_amount - coalesce(shipping_fee, 0) - coalesce(cod_fee, 0)), 0),
     'pending_orders', (select count(*) from orders where status = 'pending'),
-    'invoices_awaiting', (select count(*) from orders where needs_invoice = true and invoice_number is null and status != 'cancelled'),
-    'awaiting_settlement', (select count(*) from orders where payment_method = 'cod' and delivered_at is not null and paid_at is null and status = 'delivered'),
-    'inventory_debt_skus', (select count(*) from inventory_current where quantity < 0)
+    'invoices_awaiting', (select count(*) from invoices i
+                          join orders o on o.id = i.order_id
+                          where i.type = 'invoice' and i.invoice_number is null
+                            and o.status <> 'cancelled'),
+    'credit_notes_awaiting', (select count(*) from invoices
+                              where type = 'credit_note' and invoice_number is null),
+    'awaiting_settlement', (select count(*) from orders where payment_method = 'cod' and delivered_at is not null and seller_settled_at is null and status = 'delivered'),
+    'inventory_debt_skus', (select count(*) from inventory_current where quantity < 0),
+    'withdrawals_pending', (select count(*) from withdrawals where status in ('requested', 'approved', 'goods_received')),
+    -- Refund aggregates by refunded_at window. Match Shopify's "Returns"
+    -- convention: a refund issued today counts against today, regardless
+    -- of when the original order was placed.
+    'today_refunds', (select coalesce(sum(amount_cents), 0) from refunds where refunded_at >= p_today_start),
+    'week_refunds', (select coalesce(sum(amount_cents), 0) from refunds where refunded_at >= p_week_start),
+    'month_refunds', (select coalesce(sum(amount_cents), 0) from refunds where refunded_at >= p_month_start)
   ) into result
   from orders
   where created_at >= p_month_start and status != 'cancelled';
@@ -1213,10 +1573,10 @@ begin
 end;
 $$;
 
--- ─── Refunds: enforce_refund_total trigger function ─────────────────────────
+-- ─── Refunds: enforce_refunds_total trigger function ────────────────────────
 -- Locks orders row to serialize concurrent inserts. Sums existing refunds
 -- (excluding self on UPDATE) and rejects when sum + new exceeds total.
-create or replace function enforce_refund_total()
+create or replace function enforce_refunds_total()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
@@ -1235,7 +1595,7 @@ begin
   end if;
 
   select coalesce(sum(amount_cents), 0) into v_already_refunded
-  from public.order_refunds
+  from public.refunds
   where order_id = new.order_id
     and id <> new.id;
 
@@ -1250,7 +1610,7 @@ end;
 $$;
 
 -- ─── Refunds: maintain updated_at ───────────────────────────────────────────
-create or replace function set_order_refunds_updated_at()
+create or replace function set_refunds_updated_at()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
@@ -1262,7 +1622,7 @@ end;
 $$;
 
 -- ─── Refunds: emit 'refunded' event on INSERT ───────────────────────────────
-create or replace function emit_order_refund_audit()
+create or replace function emit_refund_audit()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
@@ -1273,13 +1633,15 @@ begin
   insert into public.order_audit_events (order_id, event_type, actor, payload)
   values (new.order_id, 'refunded', v_actor,
     jsonb_build_object(
-      'refund_id',        new.id,
-      'amount_cents',     new.amount_cents,
-      'method',           new.method,
-      'source',           new.source,
-      'stripe_refund_id', new.stripe_refund_id,
-      'reason',           new.reason,
-      'credit_note_ref',  new.credit_note_ref
+      'refund_id',                new.id,
+      'amount_cents',             new.amount_cents,
+      'method',                   new.method,
+      'source',                   new.source,
+      'stripe_refund_id',         new.stripe_refund_id,
+      'bank_transfer_ref',        new.bank_transfer_ref,
+      'reason',                   new.reason,
+      'affects_invoiced_supply',  new.affects_invoiced_supply,
+      'withdrawal_id',            new.withdrawal_id
     ));
   return new;
 end;
@@ -1288,7 +1650,7 @@ $$;
 -- ─── Refunds: emit 'refund_annotation_edited' on UPDATE ─────────────────────
 -- Early-returns on no-op UPDATEs (auto-bumped updated_at alone isn't worth
 -- auditing). Per-field {old, new} payload via jsonb_strip_nulls.
-create or replace function emit_order_refund_annotation_audit()
+create or replace function emit_refund_annotation_audit()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
@@ -1297,7 +1659,8 @@ declare
   v_actor text := coalesce(current_setting('app.actor', true), new.recorded_by);
 begin
   if old.reason is not distinct from new.reason
-     and old.credit_note_ref is not distinct from new.credit_note_ref then
+     and old.bank_transfer_ref is not distinct from new.bank_transfer_ref
+     and old.credit_note_skip_reason is not distinct from new.credit_note_skip_reason then
     return new;
   end if;
 
@@ -1313,9 +1676,14 @@ begin
           then jsonb_build_object('old', old.reason, 'new', new.reason)
         else null
       end,
-      'credit_note_ref', case
-        when old.credit_note_ref is distinct from new.credit_note_ref
-          then jsonb_build_object('old', old.credit_note_ref, 'new', new.credit_note_ref)
+      'bank_transfer_ref', case
+        when old.bank_transfer_ref is distinct from new.bank_transfer_ref
+          then jsonb_build_object('old', old.bank_transfer_ref, 'new', new.bank_transfer_ref)
+        else null
+      end,
+      'credit_note_skip_reason', case
+        when old.credit_note_skip_reason is distinct from new.credit_note_skip_reason
+          then jsonb_build_object('old', old.credit_note_skip_reason, 'new', new.credit_note_skip_reason)
         else null
       end
     ))
@@ -1325,8 +1693,9 @@ end;
 $$;
 
 -- ─── Refunds: append-only enforcement ───────────────────────────────────────
--- UPDATE allowed only for reason / credit_note_ref / updated_at. DELETE never.
-create or replace function enforce_order_refunds_append_only_update()
+-- UPDATE allowed only for reason / bank_transfer_ref / credit_note_skip_reason
+-- / updated_at. DELETE never. withdrawal_id is set once at insert and immutable.
+create or replace function enforce_refunds_append_only_update()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
@@ -1341,21 +1710,667 @@ begin
      or old.source is distinct from new.source
      or old.recorded_by is distinct from new.recorded_by
      or old.refunded_at is distinct from new.refunded_at
-     or old.created_at is distinct from new.created_at then
-    raise exception 'order_refunds financial fields are immutable; only reason and credit_note_ref may be edited (via updateRefundAnnotation)';
+     or old.created_at is distinct from new.created_at
+     or old.affects_invoiced_supply is distinct from new.affects_invoiced_supply
+     or old.withdrawal_id is distinct from new.withdrawal_id then
+    raise exception 'refunds financial fields are immutable; only reason, bank_transfer_ref, and credit_note_skip_reason may be edited';
   end if;
   return new;
 end;
 $$;
 
-create or replace function raise_order_refunds_immutable_delete()
+create or replace function raise_refunds_immutable_delete()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
-  raise exception 'order_refunds is append-only; DELETE is not permitted. To correct a mistake, create a reversing refund (phase 2) or apply a manual data repair.';
+  raise exception 'refunds is append-only; DELETE is not permitted. To correct a mistake, create a reversing refund (phase 2) or apply a manual data repair.';
 end;
+$$;
+
+-- ─── Invoices: maintain updated_at ──────────────────────────────────────────
+create or replace function set_invoices_updated_at()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- ─── Invoices: emit audit events on issuance / sent_at ──────────────────────
+-- Type-aware: invoice_number_set vs credit_note_number_set; invoice_marked_sent
+-- vs credit_note_marked_sent. All events keyed by order_id so the order
+-- timeline aggregates them.
+create or replace function emit_invoice_audit_events()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_actor text := coalesce(current_setting('app.actor', true), 'admin');
+  v_event_number_set text;
+  v_event_marked_sent text;
+begin
+  if new.type = 'invoice' then
+    v_event_number_set  := 'invoice_number_set';
+    v_event_marked_sent := 'invoice_marked_sent';
+  else
+    v_event_number_set  := 'credit_note_number_set';
+    v_event_marked_sent := 'credit_note_marked_sent';
+  end if;
+
+  if old.invoice_number is distinct from new.invoice_number
+     and new.invoice_number is not null then
+    insert into public.order_audit_events (order_id, event_type, actor, payload)
+    values (new.order_id, v_event_number_set, v_actor,
+      jsonb_build_object(
+        'invoice_id',     new.id,
+        'invoice_number', new.invoice_number,
+        'invoice_date',   new.invoice_date,
+        'type',           new.type,
+        'refund_id',      new.refund_id
+      ));
+  end if;
+
+  if old.sent_at is distinct from new.sent_at and new.sent_at is not null then
+    insert into public.order_audit_events (order_id, event_type, actor, payload)
+    values (new.order_id, v_event_marked_sent, v_actor,
+      jsonb_build_object(
+        'invoice_id',     new.id,
+        'invoice_number', new.invoice_number,
+        'sent_at',        new.sent_at,
+        'type',           new.type,
+        'refund_id',      new.refund_id
+      ));
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ─── Invoices: append-mostly enforcement ────────────────────────────────────
+-- Identity, profile, linkage, and due_at strictly immutable post-insert.
+-- invoice_number / invoice_date / sent_at are forward-only (NULL → set,
+-- never reverted, never re-set). Once a фактура or кредитно известие has a
+-- number, that number is the document's identity in Microinvest's sequence
+-- and can't be silently rewritten. Backstop to the app-layer .is(..., null)
+-- guards in setInvoiceNumber / markInvoiceSent.
+create or replace function enforce_invoices_append_mostly_update()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if old.id is distinct from new.id
+     or old.order_id is distinct from new.order_id
+     or old.type is distinct from new.type
+     or old.refund_id is distinct from new.refund_id
+     or old.references_invoice_id is distinct from new.references_invoice_id
+     or old.invoice_type is distinct from new.invoice_type
+     or old.company_name is distinct from new.company_name
+     or old.eik is distinct from new.eik
+     or old.vat_number is distinct from new.vat_number
+     or old.mol is distinct from new.mol
+     or old.address is distinct from new.address
+     or old.due_at is distinct from new.due_at
+     or old.created_at is distinct from new.created_at then
+    raise exception 'invoices identity, profile, and linkage fields are immutable post-insert; corrections to issued documents go through credit_note (ЗДДС Чл. 115)';
+  end if;
+
+  if old.invoice_number is not null
+     and new.invoice_number is distinct from old.invoice_number then
+    raise exception 'invoices.invoice_number is immutable once set; issue a credit_note for corrections';
+  end if;
+  if old.invoice_date is not null
+     and new.invoice_date is distinct from old.invoice_date then
+    raise exception 'invoices.invoice_date is immutable once set';
+  end if;
+  if old.sent_at is not null
+     and new.sent_at is distinct from old.sent_at then
+    raise exception 'invoices.sent_at is immutable once set';
+  end if;
+
+  return new;
+end;
+$$;
+
+create or replace function raise_invoices_immutable_delete()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  raise exception 'invoices is append-mostly; DELETE is not permitted. Issued documents can only be corrected via credit_note (ЗДДС Чл. 115).';
+end;
+$$;
+
+-- ─── Withdrawals: next_withdrawal_ref RPC ───────────────────────────────────
+-- Atomic helper for the app layer to mint the next WD-YYYY-NNNN ref. Called
+-- from createWithdrawal to avoid a race between two concurrent admin clicks.
+create or replace function next_withdrawal_ref()
+returns text
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_n bigint;
+begin
+  v_n := nextval('public.withdrawal_ref_seq');
+  return 'WD-' || to_char(now(), 'YYYY') || '-' || lpad(v_n::text, 4, '0');
+end;
+$$;
+
+-- ─── Withdrawals: maintain updated_at ───────────────────────────────────────
+create or replace function set_withdrawals_updated_at()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- ─── Withdrawals: state-machine trigger ─────────────────────────────────────
+-- BEFORE UPDATE on withdrawals. Fires only when status actually changes.
+-- Bypass via current_setting('app.allow_withdrawal_status_override', true) =
+-- 'true' (set by force_withdrawal_status_override RPC).
+create or replace function enforce_withdrawal_status_transition()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_bypass text := current_setting('app.allow_withdrawal_status_override', true);
+begin
+  if old.status is not distinct from new.status then
+    return new;
+  end if;
+
+  if v_bypass = 'true' then
+    return new;
+  end if;
+
+  -- Legal transitions
+  if old.status = 'requested' and new.status in ('approved', 'rejected') then
+    return new;
+  end if;
+
+  if old.status = 'approved' and new.status in ('goods_received', 'rejected') then
+    return new;
+  end if;
+
+  -- Path B: approved → completed when return_required=false + completion_note
+  -- + resolution declared. Refund linkage required when resolution_type='refund'.
+  if old.status = 'approved' and new.status = 'completed' then
+    if new.return_required then
+      raise exception 'Withdrawal cannot complete from approved when return_required=true. Mark goods_received first.';
+    end if;
+    if new.completion_note is null or btrim(new.completion_note) = '' then
+      raise exception 'completion_note is required to complete a withdrawal without goods receipt';
+    end if;
+    if new.resolution_type is null then
+      raise exception 'resolution_type is required to complete a withdrawal';
+    end if;
+    if new.resolution_type = 'refund' and new.refund_id is null then
+      raise exception 'refund_id is required when resolution_type=refund';
+    end if;
+    return new;
+  end if;
+
+  if old.status = 'goods_received' and new.status = 'completed' then
+    if new.resolution_type is null then
+      raise exception 'resolution_type is required to complete a withdrawal';
+    end if;
+    if new.resolution_type = 'refund' and new.refund_id is null then
+      raise exception 'refund_id is required when resolution_type=refund';
+    end if;
+    return new;
+  end if;
+
+  raise exception 'Illegal withdrawal status transition: % → %. Use force_withdrawal_status_override for data repair.',
+    old.status, new.status;
+end;
+$$;
+
+-- ─── Withdrawals: force_withdrawal_status_override RPC ──────────────────────
+create or replace function force_withdrawal_status_override(
+  p_id uuid,
+  p_new_status text,
+  p_reason text,
+  p_actor text default 'admin'
+)
+returns void
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_order_id uuid;
+  v_old_status text;
+begin
+  if p_new_status not in ('requested', 'approved', 'goods_received', 'rejected', 'completed') then
+    raise exception 'Invalid withdrawal status: %', p_new_status;
+  end if;
+
+  if p_reason is null or length(btrim(p_reason)) < 20 then
+    raise exception 'force_withdrawal_status_override requires a reason of at least 20 characters explaining the repair';
+  end if;
+
+  if p_actor is null or btrim(p_actor) = '' then
+    raise exception 'actor is required';
+  end if;
+
+  select status, order_id into v_old_status, v_order_id
+  from public.withdrawals where id = p_id;
+
+  if v_old_status is null then
+    raise exception 'Withdrawal % not found', p_id;
+  end if;
+
+  -- Audit BEFORE the bypass so a failed insert aborts the repair.
+  insert into public.order_audit_events (order_id, event_type, actor, payload)
+  values (
+    v_order_id,
+    'withdrawal_status_force_override',
+    p_actor,
+    jsonb_build_object(
+      'withdrawal_id', p_id,
+      'from', v_old_status,
+      'to', p_new_status,
+      'reason', p_reason
+    )
+  );
+
+  perform set_config('app.allow_withdrawal_status_override', 'true', true);
+
+  update public.withdrawals
+  set status = p_new_status
+  where id = p_id;
+
+  perform set_config('app.allow_withdrawal_status_override', 'false', true);
+end;
+$$;
+
+-- ─── Withdrawals: audit emission trigger ────────────────────────────────────
+-- Emits typed events into order_audit_events on INSERT and on status
+-- transitions. Suppresses status_changed during force-override (the RPC
+-- already wrote a richer event).
+create or replace function emit_withdrawal_audit_events()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_actor text := coalesce(current_setting('app.actor', true), 'admin');
+  v_override text := current_setting('app.allow_withdrawal_status_override', true);
+begin
+  if tg_op = 'INSERT' then
+    insert into public.order_audit_events (order_id, event_type, actor, payload)
+    values (new.order_id, 'withdrawal_requested', v_actor,
+      jsonb_build_object(
+        'withdrawal_id',  new.id,
+        'withdrawal_ref', new.withdrawal_ref,
+        'requested_via',  new.requested_via,
+        'customer_email', new.customer_email
+      ));
+    return new;
+  end if;
+
+  -- UPDATE
+  if old.status is distinct from new.status and coalesce(v_override, '') <> 'true' then
+    if new.status = 'approved' then
+      insert into public.order_audit_events (order_id, event_type, actor, payload)
+      values (new.order_id, 'withdrawal_approved', v_actor,
+        jsonb_build_object(
+          'withdrawal_id',   new.id,
+          'withdrawal_ref',  new.withdrawal_ref,
+          'return_required', new.return_required,
+          'approved_by',     new.approved_by,
+          'approved_at',     new.approved_at
+        ));
+    elsif new.status = 'goods_received' then
+      insert into public.order_audit_events (order_id, event_type, actor, payload)
+      values (new.order_id, 'withdrawal_goods_received', v_actor,
+        jsonb_build_object(
+          'withdrawal_id',         new.id,
+          'withdrawal_ref',        new.withdrawal_ref,
+          'eligibility_condition', new.eligibility_condition,
+          'resolution_type',       new.resolution_type,
+          'goods_received_at',     new.goods_received_at,
+          'return_tracking_number',new.return_tracking_number,
+          'return_courier',        new.return_courier
+        ));
+    elsif new.status = 'rejected' then
+      insert into public.order_audit_events (order_id, event_type, actor, payload)
+      values (new.order_id, 'withdrawal_rejected', v_actor,
+        jsonb_build_object(
+          'withdrawal_id',     new.id,
+          'withdrawal_ref',    new.withdrawal_ref,
+          'rejection_reason',  new.rejection_reason,
+          'rejected_by',       new.rejected_by,
+          'rejected_at',       new.rejected_at
+        ));
+    elsif new.status = 'completed' then
+      insert into public.order_audit_events (order_id, event_type, actor, payload)
+      values (new.order_id, 'withdrawal_completed', v_actor,
+        jsonb_build_object(
+          'withdrawal_id',    new.id,
+          'withdrawal_ref',   new.withdrawal_ref,
+          'resolution_type',  new.resolution_type,
+          'refund_id',        new.refund_id,
+          'return_required',  new.return_required,
+          'completion_note',  new.completion_note,
+          'completed_at',     new.completed_at
+        ));
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ─── Refund items: same-order consistency ───────────────────────────────────
+-- The refund_id and order_item_id must belong to the same order. Without
+-- this guard, admin could allocate refund X (for order A) to line item from
+-- order B — the join wouldn't fail, but the allocation would be nonsense.
+create or replace function check_refund_item_order_consistency()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_refund_order_id uuid;
+  v_item_order_id   uuid;
+begin
+  select order_id into v_refund_order_id from public.refunds where id = new.refund_id;
+  select order_id into v_item_order_id   from public.order_items where id = new.order_item_id;
+  if v_refund_order_id is null or v_item_order_id is null then
+    raise exception 'refund_items: refund_id or order_item_id not found';
+  end if;
+  if v_refund_order_id <> v_item_order_id then
+    raise exception 'refund_items: refund and order_item must belong to the same order';
+  end if;
+  return new;
+end;
+$$;
+
+-- ─── Refund items: quantity cap per order_item ──────────────────────────────
+-- sum(refund_items.quantity for order_item_id=X) ≤ order_items.quantity.
+-- Locks the order_items row to serialize concurrent inserts on the same line.
+create or replace function enforce_refund_items_quantity_cap()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_order_item_qty   integer;
+  v_already_refunded integer;
+begin
+  select quantity into v_order_item_qty
+  from public.order_items
+  where id = new.order_item_id
+  for update;
+
+  if v_order_item_qty is null then
+    raise exception 'refund_items: order_item % not found', new.order_item_id;
+  end if;
+
+  select coalesce(sum(quantity), 0) into v_already_refunded
+  from public.refund_items
+  where order_item_id = new.order_item_id
+    and id <> new.id;
+
+  if v_already_refunded + new.quantity > v_order_item_qty then
+    raise exception 'refund_items: total refunded quantity (% existing + % new = %) would exceed ordered quantity % for order_item %',
+      v_already_refunded, new.quantity,
+      v_already_refunded + new.quantity, v_order_item_qty, new.order_item_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ─── Refund items: amount cap per refund ────────────────────────────────────
+-- sum(refund_items.amount_cents for refund_id=R) ≤ refunds.amount_cents.
+-- Items can sum to LESS than the total — the difference is non-allocated
+-- (e.g. shipping or goodwill portion).
+create or replace function enforce_refund_items_amount_cap()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_refund_total integer;
+  v_already_alloc integer;
+begin
+  select amount_cents into v_refund_total
+  from public.refunds
+  where id = new.refund_id
+  for update;
+
+  if v_refund_total is null then
+    raise exception 'refund_items: refund % not found', new.refund_id;
+  end if;
+
+  select coalesce(sum(amount_cents), 0) into v_already_alloc
+  from public.refund_items
+  where refund_id = new.refund_id
+    and id <> new.id;
+
+  if v_already_alloc + new.amount_cents > v_refund_total then
+    raise exception 'refund_items: allocated amount (% existing + % new = %) would exceed refund total % for refund %',
+      v_already_alloc, new.amount_cents,
+      v_already_alloc + new.amount_cents, v_refund_total, new.refund_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ─── Refund items: append-only enforcement ──────────────────────────────────
+create or replace function raise_refund_items_immutable()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  raise exception 'refund_items is append-only; % is not permitted. Corrections require a reversing refund.', tg_op;
+end;
+$$;
+
+-- ─── Product batches: append-mostly enforcement ─────────────────────────────
+-- DELETE: blocked unconditionally.
+-- UPDATE: only the active→recalled transition with metadata fields set.
+-- Anything else raises — keeps records tamper-evident for inspections.
+create or replace function enforce_product_batches_append_mostly_update()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  -- All non-status fields must remain unchanged.
+  if old.id is distinct from new.id
+     or old.sku is distinct from new.sku
+     or old.batch_number is distinct from new.batch_number
+     or old.expiry_date is distinct from new.expiry_date
+     or old.created_at is distinct from new.created_at
+     or old.created_by is distinct from new.created_by
+     or old.notes is distinct from new.notes then
+    raise exception 'product_batches is append-mostly; only status can transition active → recalled (with metadata) — other fields are immutable';
+  end if;
+
+  -- Only forward transition active → recalled is allowed.
+  if old.status is distinct from new.status then
+    if not (old.status = 'active' and new.status = 'recalled') then
+      raise exception 'product_batches.status: only the forward transition active → recalled is allowed (got % → %)', old.status, new.status;
+    end if;
+    -- Recall metadata must be set in the same UPDATE.
+    if new.recalled_at is null or new.recalled_by is null or new.recall_reason is null then
+      raise exception 'product_batches: recalling a batch requires recalled_at, recalled_by, and recall_reason to be set in the same update';
+    end if;
+  else
+    -- Status unchanged; recall metadata fields must also be unchanged.
+    if old.recalled_at is distinct from new.recalled_at
+       or old.recalled_by is distinct from new.recalled_by
+       or old.recall_reason is distinct from new.recall_reason then
+      raise exception 'product_batches: recall metadata can only change as part of the active → recalled transition';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create or replace function raise_product_batches_immutable_delete()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  raise exception 'product_batches is append-mostly; DELETE is not permitted. Mark a batch as recalled instead.';
+end;
+$$;
+
+-- ─── Order item batches: fully immutable post-insert ────────────────────────
+-- Allocation is locked at ship time. Mistakes corrected by reversing entries
+-- (out of MVP — for now manual data repair).
+create or replace function raise_order_item_batches_immutable()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  raise exception 'order_item_batches is immutable post-insert; % is not permitted. Allocation is locked at ship time.', tg_op;
+end;
+$$;
+
+-- ─── Order item batches: batch-SKU consistency ──────────────────────────────
+-- The batch's sku must match the order_item's sku. Otherwise we'd record
+-- "shipped from batch of SKU A" against an order line for SKU B — silently
+-- corrupt traceability.
+create or replace function check_order_item_batch_sku_consistency()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_item_sku text;
+  v_batch_sku text;
+begin
+  select sku into v_item_sku from public.order_items where id = new.order_item_id;
+  select sku into v_batch_sku from public.product_batches where id = new.product_batch_id;
+  if v_item_sku is null or v_batch_sku is null then
+    raise exception 'order_item_batches: order_item_id or product_batch_id not found';
+  end if;
+  if v_item_sku <> v_batch_sku then
+    raise exception 'order_item_batches: batch SKU (%) does not match order_item SKU (%)', v_batch_sku, v_item_sku;
+  end if;
+  return new;
+end;
+$$;
+
+-- ─── Batch helpers: batch_quantity_available ────────────────────────────────
+-- Derives current available units. Inventory_log is the source of truth for
+-- inflows/outflows; order_item_batches tracks order-level allocation.
+--
+-- Rules:
+--   + batch_in / return_in / adjustment_gain (matching sku + batch_number)
+--   - damaged / wholesale_out / sample_out / adjustment_loss
+--     (excluding damaged with reference_type='return' — that's audit-only,
+--      the unit was already counted out via order_item_batches at ship time)
+--   - order_item_batches.quantity for orders in confirmed/shipped/delivered
+--     (cancelled releases the allocation; pending/expired never confirmed)
+create or replace function batch_quantity_available(p_batch_id uuid)
+returns integer
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_sku          text;
+  v_batch_number text;
+  v_in           integer;
+  v_out          integer;
+  v_alloc        integer;
+begin
+  select sku, batch_number into v_sku, v_batch_number
+  from public.product_batches
+  where id = p_batch_id;
+
+  if v_sku is null then
+    return 0;
+  end if;
+
+  select coalesce(sum(quantity), 0) into v_in
+  from public.inventory_log
+  where sku = v_sku
+    and batch_id = v_batch_number
+    and type in ('batch_in', 'return_in', 'adjustment_gain');
+
+  select coalesce(sum(quantity), 0) into v_out
+  from public.inventory_log
+  where sku = v_sku
+    and batch_id = v_batch_number
+    and type in ('damaged', 'wholesale_out', 'sample_out', 'adjustment_loss')
+    and not (type = 'damaged' and reference_type = 'return');
+
+  select coalesce(sum(oib.quantity), 0) into v_alloc
+  from public.order_item_batches oib
+  join public.order_items oi on oi.id = oib.order_item_id
+  join public.orders      o  on o.id = oi.order_id
+  where oib.product_batch_id = p_batch_id
+    and o.status in ('confirmed', 'shipped', 'delivered');
+
+  return v_in - v_out - v_alloc;
+end;
+$$;
+
+-- ─── Batch helpers: affected_orders_for_batch ───────────────────────────────
+-- Recall worklist. Excludes orders that never went out the door
+-- (cancelled / pending / expired) — confirmed is included so admin can
+-- intercept allocations before the courier label is printed.
+create or replace function affected_orders_for_batch(p_batch_id uuid)
+returns table (
+  order_id          uuid,
+  order_status      text,
+  customer_email    text,
+  customer_first_name text,
+  customer_last_name  text,
+  customer_phone   text,
+  customer_city     text,
+  shipped_at        timestamptz,
+  delivered_at      timestamptz,
+  quantity_from_batch integer,
+  tracking_number   text
+)
+language sql
+set search_path = public, pg_temp
+as $$
+  select
+    o.id,
+    o.status,
+    o.email,
+    o.first_name,
+    o.last_name,
+    o.phone,
+    o.city,
+    o.shipped_at,
+    o.delivered_at,
+    sum(oib.quantity)::integer,
+    o.tracking_number
+  from public.product_batches pb
+  join public.order_item_batches oib on oib.product_batch_id = pb.id
+  join public.order_items oi on oi.id = oib.order_item_id
+  join public.orders      o  on o.id = oi.order_id
+  where pb.id = p_batch_id
+    and o.status in ('confirmed', 'shipped', 'delivered')
+  group by o.id, o.status, o.email, o.first_name, o.last_name, o.phone,
+           o.city, o.shipped_at, o.delivered_at, o.tracking_number
+  order by o.shipped_at desc nulls last, o.created_at desc;
 $$;
 
 -- ─── Marketing: claim_marketing_emails RPC ──────────────────────────────────
@@ -1499,34 +2514,129 @@ create trigger trg_order_audit_events_immutable_delete
   before delete on order_audit_events
   for each row execute function raise_order_audit_events_immutable();
 
--- order_refunds — order matters: enforce_refund_total runs first, then
+-- refunds — order matters: enforce_refunds_total runs first, then
 -- append-only check, then updated_at bump (alphabetical by trigger name).
-drop trigger if exists trg_enforce_refund_total on order_refunds;
-create trigger trg_enforce_refund_total
-  before insert or update on order_refunds
-  for each row execute function enforce_refund_total();
+drop trigger if exists trg_refunds_enforce_total on refunds;
+create trigger trg_refunds_enforce_total
+  before insert or update on refunds
+  for each row execute function enforce_refunds_total();
 
-drop trigger if exists trg_order_refunds_append_only_update on order_refunds;
-create trigger trg_order_refunds_append_only_update
-  before update on order_refunds
-  for each row execute function enforce_order_refunds_append_only_update();
+drop trigger if exists trg_refunds_append_only_update on refunds;
+create trigger trg_refunds_append_only_update
+  before update on refunds
+  for each row execute function enforce_refunds_append_only_update();
 
-drop trigger if exists trg_set_order_refunds_updated_at on order_refunds;
-create trigger trg_set_order_refunds_updated_at
-  before update on order_refunds
-  for each row execute function set_order_refunds_updated_at();
+drop trigger if exists trg_refunds_set_updated_at on refunds;
+create trigger trg_refunds_set_updated_at
+  before update on refunds
+  for each row execute function set_refunds_updated_at();
 
-drop trigger if exists trg_emit_order_refund_audit on order_refunds;
-create trigger trg_emit_order_refund_audit
-  after insert on order_refunds
-  for each row execute function emit_order_refund_audit();
+drop trigger if exists trg_refunds_emit_audit on refunds;
+create trigger trg_refunds_emit_audit
+  after insert on refunds
+  for each row execute function emit_refund_audit();
 
-drop trigger if exists trg_emit_order_refund_annotation_audit on order_refunds;
-create trigger trg_emit_order_refund_annotation_audit
-  after update on order_refunds
-  for each row execute function emit_order_refund_annotation_audit();
+drop trigger if exists trg_refunds_emit_annotation_audit on refunds;
+create trigger trg_refunds_emit_annotation_audit
+  after update on refunds
+  for each row execute function emit_refund_annotation_audit();
 
-drop trigger if exists trg_order_refunds_immutable_delete on order_refunds;
-create trigger trg_order_refunds_immutable_delete
-  before delete on order_refunds
-  for each row execute function raise_order_refunds_immutable_delete();
+drop trigger if exists trg_refunds_immutable_delete on refunds;
+create trigger trg_refunds_immutable_delete
+  before delete on refunds
+  for each row execute function raise_refunds_immutable_delete();
+
+-- invoices
+drop trigger if exists trg_set_invoices_updated_at on invoices;
+create trigger trg_set_invoices_updated_at
+  before update on invoices
+  for each row execute function set_invoices_updated_at();
+
+drop trigger if exists trg_emit_invoice_audit_events on invoices;
+create trigger trg_emit_invoice_audit_events
+  after update on invoices
+  for each row execute function emit_invoice_audit_events();
+
+drop trigger if exists trg_invoices_append_mostly_update on invoices;
+create trigger trg_invoices_append_mostly_update
+  before update on invoices
+  for each row execute function enforce_invoices_append_mostly_update();
+
+drop trigger if exists trg_invoices_immutable_delete on invoices;
+create trigger trg_invoices_immutable_delete
+  before delete on invoices
+  for each row execute function raise_invoices_immutable_delete();
+
+-- withdrawals
+drop trigger if exists trg_set_withdrawals_updated_at on withdrawals;
+create trigger trg_set_withdrawals_updated_at
+  before update on withdrawals
+  for each row execute function set_withdrawals_updated_at();
+
+drop trigger if exists trg_enforce_withdrawal_status_transition on withdrawals;
+create trigger trg_enforce_withdrawal_status_transition
+  before update on withdrawals
+  for each row execute function enforce_withdrawal_status_transition();
+
+drop trigger if exists trg_emit_withdrawal_audit_events_insert on withdrawals;
+create trigger trg_emit_withdrawal_audit_events_insert
+  after insert on withdrawals
+  for each row execute function emit_withdrawal_audit_events();
+
+drop trigger if exists trg_emit_withdrawal_audit_events_update on withdrawals;
+create trigger trg_emit_withdrawal_audit_events_update
+  after update on withdrawals
+  for each row execute function emit_withdrawal_audit_events();
+
+-- refund_items
+drop trigger if exists trg_refund_items_order_consistency on refund_items;
+create trigger trg_refund_items_order_consistency
+  before insert on refund_items
+  for each row execute function check_refund_item_order_consistency();
+
+drop trigger if exists trg_refund_items_quantity_cap on refund_items;
+create trigger trg_refund_items_quantity_cap
+  before insert on refund_items
+  for each row execute function enforce_refund_items_quantity_cap();
+
+drop trigger if exists trg_refund_items_amount_cap on refund_items;
+create trigger trg_refund_items_amount_cap
+  before insert on refund_items
+  for each row execute function enforce_refund_items_amount_cap();
+
+drop trigger if exists trg_refund_items_immutable_update on refund_items;
+create trigger trg_refund_items_immutable_update
+  before update on refund_items
+  for each row execute function raise_refund_items_immutable();
+
+drop trigger if exists trg_refund_items_immutable_delete on refund_items;
+create trigger trg_refund_items_immutable_delete
+  before delete on refund_items
+  for each row execute function raise_refund_items_immutable();
+
+-- product_batches
+drop trigger if exists trg_product_batches_append_mostly_update on product_batches;
+create trigger trg_product_batches_append_mostly_update
+  before update on product_batches
+  for each row execute function enforce_product_batches_append_mostly_update();
+
+drop trigger if exists trg_product_batches_immutable_delete on product_batches;
+create trigger trg_product_batches_immutable_delete
+  before delete on product_batches
+  for each row execute function raise_product_batches_immutable_delete();
+
+-- order_item_batches
+drop trigger if exists trg_order_item_batches_immutable_update on order_item_batches;
+create trigger trg_order_item_batches_immutable_update
+  before update on order_item_batches
+  for each row execute function raise_order_item_batches_immutable();
+
+drop trigger if exists trg_order_item_batches_immutable_delete on order_item_batches;
+create trigger trg_order_item_batches_immutable_delete
+  before delete on order_item_batches
+  for each row execute function raise_order_item_batches_immutable();
+
+drop trigger if exists trg_order_item_batches_sku_consistency on order_item_batches;
+create trigger trg_order_item_batches_sku_consistency
+  before insert on order_item_batches
+  for each row execute function check_order_item_batch_sku_consistency();
