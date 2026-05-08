@@ -2379,19 +2379,18 @@ $$;
 -- email helpers see the same shape they did before order_items normalization.
 create or replace function claim_marketing_emails(p_now timestamptz, p_limit integer default 50)
 returns table (
-  log_id bigint,
-  order_id uuid,
-  email text,
-  first_name text,
-  items jsonb,
-  total_amount integer,
-  payment_method text,
-  email_type text,
-  attempt_count integer
+  out_log_id bigint,
+  out_order_id uuid,
+  out_email text,
+  out_first_name text,
+  out_items jsonb,
+  out_total_amount integer,
+  out_payment_method text,
+  out_email_type text,
+  out_attempt_count integer
 ) language plpgsql
 set search_path = public, pg_temp
 as $$
-#variable_conflict use_column
 begin
   -- Step 1: Reclaim stale sending rows (crashed workers)
   update public.marketing_email_log

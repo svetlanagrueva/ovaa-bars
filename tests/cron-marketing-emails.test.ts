@@ -53,17 +53,17 @@ function makeRequest(authHeader: string | null = `Bearer ${VALID_SECRET}`): Requ
 
 function fakeJob(overrides: Record<string, unknown> = {}) {
   return {
-    log_id: 101,
-    order_id: "11111111-2222-3333-4444-555555555555",
-    email: "customer@example.com",
-    first_name: "Иван",
-    items: [
+    out_log_id: 101,
+    out_order_id: "11111111-2222-3333-4444-555555555555",
+    out_email: "customer@example.com",
+    out_first_name: "Иван",
+    out_items: [
       { productId: "egg-origin-dark-chocolate-box", productName: "Тъмен Шоколад", quantity: 2, priceInCents: 2570 },
     ],
-    total_amount: 5140,
-    payment_method: "card",
-    email_type: "review_request",
-    attempt_count: 0,
+    out_total_amount: 5140,
+    out_payment_method: "card",
+    out_email_type: "review_request",
+    out_attempt_count: 0,
     ...overrides,
   }
 }
@@ -166,7 +166,7 @@ describe("Marketing-emails cron — RPC + send loop", () => {
   })
 
   it("sends review_request emails and updates marketing_email_log to status='sent'", async () => {
-    mockClaimReturns([fakeJob({ log_id: 101, email_type: "review_request" })])
+    mockClaimReturns([fakeJob({ out_log_id: 101, out_email_type: "review_request" })])
 
     const res = await GET(makeRequest())
     const body = await res.json()
@@ -204,9 +204,9 @@ describe("Marketing-emails cron — RPC + send loop", () => {
 
   it("routes cross_sell email_type to the cross-sell template with purchasedProductIds", async () => {
     mockClaimReturns([fakeJob({
-      log_id: 202,
-      email_type: "cross_sell",
-      items: [
+      out_log_id: 202,
+      out_email_type: "cross_sell",
+      out_items: [
         { productId: "egg-origin-dark-chocolate-box", productName: "Тъмен", quantity: 1, priceInCents: 2570 },
         { productId: "egg-origin-white-chocolate-raspberry-box", productName: "Бял", quantity: 1, priceInCents: 2570 },
       ],
@@ -234,7 +234,7 @@ describe("Marketing-emails cron — RPC + send loop", () => {
   })
 
   it("marks unknown email_type as 'skipped' without calling Resend", async () => {
-    mockClaimReturns([fakeJob({ log_id: 303, email_type: "unknown_type_xyz" })])
+    mockClaimReturns([fakeJob({ out_log_id: 303, out_email_type: "unknown_type_xyz" })])
 
     const res = await GET(makeRequest())
     const body = await res.json()
@@ -254,8 +254,8 @@ describe("Marketing-emails cron — RPC + send loop", () => {
 
   it("marks Resend failure as status='failed' with the error message and continues processing", async () => {
     mockClaimReturns([
-      fakeJob({ log_id: 401, email_type: "review_request" }),
-      fakeJob({ log_id: 402, email_type: "review_request", email: "ok@example.com" }),
+      fakeJob({ out_log_id: 401, out_email_type: "review_request" }),
+      fakeJob({ out_log_id: 402, out_email_type: "review_request", out_email: "ok@example.com" }),
     ])
     // First send fails, second succeeds — proves the loop continues past failure.
     mockResendSend
@@ -286,10 +286,10 @@ describe("Marketing-emails cron — RPC + send loop", () => {
 
   it("counts mixed sent/failed/skipped across one batch", async () => {
     mockClaimReturns([
-      fakeJob({ log_id: 1, email_type: "review_request" }),
-      fakeJob({ log_id: 2, email_type: "cross_sell" }),
-      fakeJob({ log_id: 3, email_type: "garbage_type" }),
-      fakeJob({ log_id: 4, email_type: "review_request" }),
+      fakeJob({ out_log_id: 1, out_email_type: "review_request" }),
+      fakeJob({ out_log_id: 2, out_email_type: "cross_sell" }),
+      fakeJob({ out_log_id: 3, out_email_type: "garbage_type" }),
+      fakeJob({ out_log_id: 4, out_email_type: "review_request" }),
     ])
     mockResendSend
       .mockImplementationOnce(() => Promise.resolve({ data: { id: "a" }, error: null }) as never)
@@ -304,7 +304,7 @@ describe("Marketing-emails cron — RPC + send loop", () => {
   })
 
   it("forwards the Bulgarian subject 'Как Ви се стори поръчка #...' for review_request", async () => {
-    mockClaimReturns([fakeJob({ email_type: "review_request" })])
+    mockClaimReturns([fakeJob({ out_email_type: "review_request" })])
 
     await GET(makeRequest())
 

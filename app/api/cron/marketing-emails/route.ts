@@ -10,34 +10,34 @@ import { requireEnv } from "@/lib/env"
 export const maxDuration = 60
 
 interface ClaimedJob {
-  log_id: number
-  order_id: string
-  email: string
-  first_name: string
-  items: Array<{ productId: string; productName: string; quantity: number; priceInCents: number }>
-  total_amount: number
-  payment_method: string
-  email_type: string
-  attempt_count: number
+  out_log_id: number
+  out_order_id: string
+  out_email: string
+  out_first_name: string
+  out_items: Array<{ productId: string; productName: string; quantity: number; priceInCents: number }>
+  out_total_amount: number
+  out_payment_method: string
+  out_email_type: string
+  out_attempt_count: number
 }
 
 function buildEmailForJob(job: ClaimedJob, unsubscribeUrl: string): { html: string; text: string; subject: string } | null {
-  const shortId = job.order_id.slice(0, 8)
+  const shortId = job.out_order_id.slice(0, 8)
 
-  if (job.email_type === "review_request") {
+  if (job.out_email_type === "review_request") {
     const { html, text } = buildReviewRequestEmail({
-      orderId: job.order_id,
-      firstName: job.first_name,
-      items: job.items,
+      orderId: job.out_order_id,
+      firstName: job.out_first_name,
+      items: job.out_items,
       unsubscribeUrl,
     })
     return { html, text, subject: `Как Ви се стори поръчка #${shortId}?` }
   }
 
-  if (job.email_type === "cross_sell") {
-    const purchasedProductIds = job.items.map((i) => i.productId)
+  if (job.out_email_type === "cross_sell") {
+    const purchasedProductIds = job.out_items.map((i) => i.productId)
     const { html, text } = buildCrossSellEmail({
-      firstName: job.first_name,
+      firstName: job.out_first_name,
       purchasedProductIds,
       unsubscribeUrl,
     })
@@ -89,16 +89,16 @@ export async function GET(request: Request) {
   let skipped = 0
 
   for (const job of jobs as ClaimedJob[]) {
-    const unsubscribeUrl = buildUnsubscribeUrl(job.email)
+    const unsubscribeUrl = buildUnsubscribeUrl(job.out_email)
 
     const emailContent = buildEmailForJob(job, unsubscribeUrl)
     if (!emailContent) {
-      console.error(`Skipping unknown email type: ${job.email_type} for log_id ${job.log_id}`)
+      console.error(`Skipping unknown email type: ${job.out_email_type} for log_id ${job.out_log_id}`)
       const { error: skipError } = await supabase
         .from("marketing_email_log")
-        .update({ status: "skipped", error_message: `Unknown email type: ${job.email_type}`, claimed_at: null })
-        .eq("id", job.log_id)
-      if (skipError) console.error(`Failed to update log row ${job.log_id} to skipped:`, skipError)
+        .update({ status: "skipped", error_message: `Unknown email type: ${job.out_email_type}`, claimed_at: null })
+        .eq("id", job.out_log_id)
+      if (skipError) console.error(`Failed to update log row ${job.out_log_id} to skipped:`, skipError)
       skipped++
       continue
     }
@@ -108,7 +108,7 @@ export async function GET(request: Request) {
 
       const result = await resend.emails.send({
         from: requireEnv("EMAIL_FROM"),
-        to: job.email,
+        to: job.out_email,
         subject,
         html,
         text,
@@ -123,15 +123,15 @@ export async function GET(request: Request) {
           claimed_at: null,
           error_message: null,
         })
-        .eq("id", job.log_id)
+        .eq("id", job.out_log_id)
 
       if (updateError) {
-        console.error(`Failed to update log row ${job.log_id} to sent:`, updateError)
+        console.error(`Failed to update log row ${job.out_log_id} to sent:`, updateError)
       }
 
       sent++
     } catch (err) {
-      console.error(`Failed to send ${job.email_type} for log_id=${job.log_id} order=${job.order_id}:`, sanitizeError(err))
+      console.error(`Failed to send ${job.out_email_type} for log_id=${job.out_log_id} order=${job.out_order_id}:`, sanitizeError(err))
 
       const { error: updateError } = await supabase
         .from("marketing_email_log")
@@ -140,10 +140,10 @@ export async function GET(request: Request) {
           error_message: String(err),
           claimed_at: null,
         })
-        .eq("id", job.log_id)
+        .eq("id", job.out_log_id)
 
       if (updateError) {
-        console.error(`Failed to update log row ${job.log_id} to failed:`, updateError)
+        console.error(`Failed to update log row ${job.out_log_id} to failed:`, updateError)
       }
 
       failed++
