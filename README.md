@@ -272,6 +272,17 @@ Defined in [`vercel.json`](./vercel.json):
 
 Both authenticate via `Authorization: Bearer $CRON_SECRET` (verified with `timingSafeEqual`). Vercel injects this header automatically when invoking scheduled crons.
 
+**Running them locally.** They're regular HTTP routes — no scheduler needed. With `npm run dev` running, fire either with:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/marketing-emails
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/delivery-checks
+```
+
+Use the value of `CRON_SECRET` from your `.env.local` (e.g. `Bearer kk` if that's what's set). Marketing emails sent in dev land in Mailpit (http://127.0.0.1:54324) via the email-client fallback.
+
+With no qualifying orders in the local DB, you'll get `{"sent":0,"failed":0,"skipped":0}` — that's the cron correctly doing nothing. Place a real order through the checkout flow, mark it delivered with a backdated `delivered_at` (3d for review email, 10d for cross-sell), and re-run.
+
 ## Migrations
 
 ```
