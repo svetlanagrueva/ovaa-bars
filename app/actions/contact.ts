@@ -1,7 +1,7 @@
 "use server"
 
 import { headers } from "next/headers"
-import { Resend } from "resend"
+import { getEmailClient, isEmailEnabled } from "@/lib/email-client"
 import { requireEnv } from "@/lib/env"
 
 interface ContactData {
@@ -44,7 +44,7 @@ export async function sendContactMessage(data: ContactData) {
     throw new Error("Missing required fields")
   }
 
-  if (!process.env.RESEND_API_KEY) {
+  if (!isEmailEnabled()) {
     throw new Error("Email service not configured")
   }
 
@@ -53,7 +53,7 @@ export async function sendContactMessage(data: ContactData) {
   const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
   checkContactRateLimit(ip)
 
-  const resend = new Resend(process.env.RESEND_API_KEY)
+  const resend = getEmailClient()
 
   await resend.emails.send({
     from: requireEnv("EMAIL_FROM"),

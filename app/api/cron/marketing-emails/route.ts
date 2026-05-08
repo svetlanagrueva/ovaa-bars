@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { timingSafeEqual } from "crypto"
 import { createClient } from "@/lib/supabase/server"
-import { Resend } from "resend"
+import { getEmailClient, isEmailEnabled } from "@/lib/email-client"
 import { buildReviewRequestEmail, buildCrossSellEmail } from "@/lib/email-template"
 import { buildUnsubscribeUrl } from "@/lib/unsubscribe"
 import { sanitizeError } from "@/lib/logger"
@@ -62,12 +62,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  if (!process.env.RESEND_API_KEY) {
-    return NextResponse.json({ error: "RESEND_API_KEY not configured" }, { status: 500 })
+  if (!isEmailEnabled()) {
+    return NextResponse.json({ error: "No email transport configured" }, { status: 500 })
   }
 
   const supabase = await createClient()
-  const resend = new Resend(process.env.RESEND_API_KEY)
+  const resend = getEmailClient()
 
   // Single RPC: find candidates, insert pending, reclaim stale, claim work
   const { data: jobs, error: rpcError } = await supabase.rpc("claim_marketing_emails", {

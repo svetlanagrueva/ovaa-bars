@@ -112,7 +112,11 @@ A red banner mounts at the top of every page when `NODE_ENV === "development"` a
 
 ### 4. Resend (email)
 
-Required for customer order/shipping/delivery emails, marketing cron, and admin alerts. Without `RESEND_API_KEY` all email paths early-return silently — local dev still works, production won't deliver.
+Required for customer order/shipping/delivery emails, marketing cron, and admin alerts.
+In **development** without `RESEND_API_KEY`, all email paths fall back to the local Mailpit captured by `npx supabase start` (browse at http://127.0.0.1:54324). 
+In **production** without a key, emails silently no-op.
+
+The transport selection lives in [`lib/email-client.ts`](./lib/email-client.ts) — every call site goes through `getEmailClient()` rather than `new Resend(...)` directly.
 
 1. [resend.com](https://resend.com) → API Keys → create → `RESEND_API_KEY`.
 2. Verify your sender domain (DKIM/SPF) before launch — without it, Gmail/Outlook will SPF-fail and silently drop.
