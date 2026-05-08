@@ -33,11 +33,61 @@ npm install
 
 ### 2. Supabase
 
+Local Supabase CLI is the recommended dev path — Postgres + Studio + Storage + Auth in Docker, all migrations auto-applied on first start. Cloud is for staging / prod.
+
+**Local (dev).** Requires Docker Desktop running. The `supabase` CLI is in `devDependencies`, but its postinstall script fails on Node 12, so confirm `nvm use 22` is active before `npm install`.
+
+```bash
+npx supabase start         # first run pulls Docker images (~3-5 min)
+```
+
+The output prints local URLs + keys. Paste into `.env.local`:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_ROLE_KEY=<Secret value from `supabase start`>
+```
+
+Run `npx supabase status` any time to reprint URLs and keys.
+
+Local services:
+
+| Service | URL |
+|---|---|
+| API | http://127.0.0.1:54321 |
+| Studio (DB UI) | http://127.0.0.1:54323 |
+| Mailpit (outgoing email) | http://127.0.0.1:54324 |
+| Postgres direct | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
+
+Useful commands:
+
+```bash
+npx supabase status        # show URLs + keys
+npx supabase stop          # shut down (Docker volumes persist data)
+npx supabase db reset      # drop + re-apply all migrations from supabase/migrations/
+```
+
+**Cloud (staging / prod).**
+
 1. Create a project at [supabase.com](https://supabase.com).
 2. Apply migrations from `supabase/migrations/` in filename order (timestamp prefix defines order). Open Supabase Studio → SQL Editor → paste each file → run. Workflow detail in [`supabase/migrations/README.md`](./supabase/migrations/README.md).
 3. Settings → API:
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **service_role secret** → `SUPABASE_SERVICE_ROLE_KEY`
+
+**Switching local ↔ prod.** Keep both blocks in `.env.local`, comment-toggle to switch:
+
+```
+# LOCAL — from `npx supabase start`
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_local_value
+
+# PROD — uncomment to debug against prod data
+# NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+# SUPABASE_SERVICE_ROLE_KEY=sb_secret_prod_value
+```
+
+A red banner mounts at the top of every page when `NODE_ENV === "development"` and the URL points at `*.supabase.co` — visible reminder that writes hit prod data. Source: [`components/dev-prod-db-banner.tsx`](./components/dev-prod-db-banner.tsx).
 
 ### 3. Stripe
 
