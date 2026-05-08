@@ -1,4 +1,22 @@
 -- ══════════════════════════════════════════════════════════════════════════
+-- WIPE + REAPPLY ALL MIGRATIONS — paste into Supabase SQL Editor and run.
+-- 1 migration: initial_schema (squashed; see supabase/migrations/README.md).
+-- ══════════════════════════════════════════════════════════════════════════
+
+drop schema if exists public cascade;
+create schema public;
+grant usage on schema public to anon, authenticated, service_role;
+grant all   on schema public to postgres, service_role;
+alter default privileges in schema public grant all    on tables    to postgres, service_role;
+alter default privileges in schema public grant all    on sequences to postgres, service_role;
+alter default privileges in schema public grant all    on functions to postgres, service_role;
+alter default privileges in schema public grant select on tables    to anon, authenticated;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- 20260420120000_initial_schema.sql
+-- ══════════════════════════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════════════
 -- Initial schema for the Egg Origin e-commerce site (consolidated v2).
 -- ══════════════════════════════════════════════════════════════════════════
 --
@@ -2379,15 +2397,15 @@ $$;
 -- email helpers see the same shape they did before order_items normalization.
 create or replace function claim_marketing_emails(p_now timestamptz, p_limit integer default 50)
 returns table (
-  out_log_id bigint,
-  out_order_id uuid,
-  out_email text,
-  out_first_name text,
-  out_items jsonb,
-  out_total_amount integer,
-  out_payment_method text,
-  out_email_type text,
-  out_attempt_count integer
+  log_id bigint,
+  order_id uuid,
+  email text,
+  first_name text,
+  items jsonb,
+  total_amount integer,
+  payment_method text,
+  email_type text,
+  attempt_count integer
 ) language plpgsql
 set search_path = public, pg_temp
 as $$

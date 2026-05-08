@@ -1,4 +1,4 @@
-import { Resend } from "resend"
+import { getEmailClient, isEmailEnabled } from "@/lib/email-client"
 import { formatPrice } from "@/lib/products"
 import {
   buildOrderConfirmationEmail,
@@ -41,14 +41,14 @@ async function fetchOrderItemsForEmail(
  * Fire-and-forget — logs errors but never throws.
  */
 export async function sendOrderConfirmationEmail(order: Record<string, unknown>) {
-  if (!process.env.RESEND_API_KEY) return
+  if (!isEmailEnabled()) return
 
   try {
     const supabase = await createClient()
     const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
     if (!orderItems) return
 
-    const resend = new Resend(process.env.RESEND_API_KEY)
+    const resend = getEmailClient()
 
     const subtotal = orderItems.reduce(
       (sum, item) => sum + item.priceInCents * item.quantity,
@@ -113,7 +113,7 @@ export async function sendDeliveryEmail(
   order: Record<string, unknown>,
   options?: { force?: boolean },
 ) {
-  if (!process.env.RESEND_API_KEY) return
+  if (!isEmailEnabled()) return
   if (order.delivery_email_sent_at && !options?.force) return
 
   try {
@@ -121,7 +121,7 @@ export async function sendDeliveryEmail(
     const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
     if (!orderItems) return
 
-    const resend = new Resend(process.env.RESEND_API_KEY)
+    const resend = getEmailClient()
 
     const { html, text } = buildDeliveryEmail({
       orderId: order.id as string,
@@ -177,13 +177,13 @@ export async function sendDeliveryEmail(
  * Fire-and-forget — logs errors but never throws.
  */
 export async function notifyAdminNewOrder(order: Record<string, unknown>, paymentMethod: string) {
-  if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
+  if (!isEmailEnabled() || !process.env.ADMIN_EMAIL) return
 
   const supabase = await createClient()
   const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
   if (!orderItems) return
 
-  const resend = new Resend(process.env.RESEND_API_KEY)
+  const resend = getEmailClient()
   const itemsList = orderItems
     .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
     .join("\n")
@@ -224,9 +224,9 @@ export async function sendWithdrawalReceivedEmail(
   order: Record<string, unknown>,
   data: { withdrawalRef: string; customerEmail: string },
 ): Promise<void> {
-  if (!process.env.RESEND_API_KEY) return
+  if (!isEmailEnabled()) return
   try {
-    const resend = new Resend(process.env.RESEND_API_KEY)
+    const resend = getEmailClient()
     const { html, text } = buildWithdrawalReceivedEmail({
       orderId: order.id as string,
       withdrawalRef: data.withdrawalRef,
@@ -249,9 +249,9 @@ export async function sendWithdrawalApprovedEmail(data: {
   withdrawalRef: string
   returnRequired: boolean
 }): Promise<void> {
-  if (!process.env.RESEND_API_KEY) return
+  if (!isEmailEnabled()) return
   try {
-    const resend = new Resend(process.env.RESEND_API_KEY)
+    const resend = getEmailClient()
     const { html, text } = buildWithdrawalApprovedEmail({
       orderId: data.orderId,
       withdrawalRef: data.withdrawalRef,
@@ -275,9 +275,9 @@ export async function sendWithdrawalRejectedEmail(data: {
   withdrawalRef: string
   rejectionReason: string
 }): Promise<void> {
-  if (!process.env.RESEND_API_KEY) return
+  if (!isEmailEnabled()) return
   try {
-    const resend = new Resend(process.env.RESEND_API_KEY)
+    const resend = getEmailClient()
     const { html, text } = buildWithdrawalRejectedEmail({
       orderId: data.orderId,
       withdrawalRef: data.withdrawalRef,

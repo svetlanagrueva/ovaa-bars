@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { Resend } from "resend"
+import { getEmailClient, isEmailEnabled } from "@/lib/email-client"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
@@ -13,8 +13,8 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // Fire-and-forget admin alert for events that need operator attention
 // (refunds issued outside the admin UI, disputes, etc.).
 function alertAdmin(subject: string, body: string) {
-  if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) return
-  const resend = new Resend(process.env.RESEND_API_KEY)
+  if (!isEmailEnabled() || !process.env.ADMIN_EMAIL) return
+  const resend = getEmailClient()
   resend.emails.send({
     from: requireEnv("EMAIL_FROM"),
     to: process.env.ADMIN_EMAIL,

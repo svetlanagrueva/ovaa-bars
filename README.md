@@ -33,11 +33,61 @@ npm install
 
 ### 2. Supabase
 
+Local Supabase CLI is the recommended dev path — Postgres + Studio + Storage + Auth in Docker, all migrations auto-applied on first start. Cloud is for staging / prod.
+
+**Local (dev).** Requires Docker Desktop running. The `supabase` CLI is in `devDependencies`, but its postinstall script fails on Node 12, so confirm `nvm use 22` is active before `npm install`.
+
+```bash
+npx supabase start         # first run pulls Docker images (~3-5 min)
+```
+
+The output prints local URLs + keys. Paste into `.env.local`:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_ROLE_KEY=<Secret value from `supabase start`>
+```
+
+Run `npx supabase status` any time to reprint URLs and keys.
+
+Local services:
+
+| Service | URL |
+|---|---|
+| API | http://127.0.0.1:54321 |
+| Studio (DB UI) | http://127.0.0.1:54323 |
+| Mailpit (outgoing email) | http://127.0.0.1:54324 |
+| Postgres direct | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
+
+Useful commands:
+
+```bash
+npx supabase status        # show URLs + keys
+npx supabase stop          # shut down (Docker volumes persist data)
+npx supabase db reset      # drop + re-apply all migrations from supabase/migrations/
+```
+
+**Cloud (staging / prod).**
+
 1. Create a project at [supabase.com](https://supabase.com).
 2. Apply migrations from `supabase/migrations/` in filename order (timestamp prefix defines order). Open Supabase Studio → SQL Editor → paste each file → run. Workflow detail in [`supabase/migrations/README.md`](./supabase/migrations/README.md).
 3. Settings → API:
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **service_role secret** → `SUPABASE_SERVICE_ROLE_KEY`
+
+**Switching local ↔ prod.** Keep both blocks in `.env.local`, comment-toggle to switch:
+
+```
+# LOCAL — from `npx supabase start`
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_local_value
+
+# PROD — uncomment to debug against prod data
+# NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+# SUPABASE_SERVICE_ROLE_KEY=sb_secret_prod_value
+```
+
+A red banner mounts at the top of every page when `NODE_ENV === "development"` and the URL points at `*.supabase.co` — visible reminder that writes hit prod data. Source: [`components/dev-prod-db-banner.tsx`](./components/dev-prod-db-banner.tsx).
 
 ### 3. Stripe
 
@@ -62,7 +112,11 @@ npm install
 
 ### 4. Resend (email)
 
-Required for customer order/shipping/delivery emails, marketing cron, and admin alerts. Without `RESEND_API_KEY` all email paths early-return silently — local dev still works, production won't deliver.
+Required for customer order/shipping/delivery emails, marketing cron, and admin alerts.
+In **development** without `RESEND_API_KEY`, all email paths fall back to the local Mailpit captured by `npx supabase start` (browse at http://127.0.0.1:54324). 
+In **production** without a key, emails silently no-op.
+
+The transport selection lives in [`lib/email-client.ts`](./lib/email-client.ts) — every call site goes through `getEmailClient()` rather than `new Resend(...)` directly.
 
 1. [resend.com](https://resend.com) → API Keys → create → `RESEND_API_KEY`.
 2. Verify your sender domain (DKIM/SPF) before launch — without it, Gmail/Outlook will SPF-fail and silently drop.
@@ -217,6 +271,17 @@ Defined in [`vercel.json`](./vercel.json):
 | `/api/cron/marketing-emails` | `0 7 * * *` (07:00 UTC ≈ 10:00 EET) | Sends review-request (3d after delivery) + cross-sell (10d after delivery). Single Postgres RPC `claim_marketing_emails` does find + claim + reclaim-stale + insert in one call. |
 
 Both authenticate via `Authorization: Bearer $CRON_SECRET` (verified with `timingSafeEqual`). Vercel injects this header automatically when invoking scheduled crons.
+
+**Running them locally.** They're regular HTTP routes — no scheduler needed. With `npm run dev` running, fire either with:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/marketing-emails
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/delivery-checks
+```
+
+Use the value of `CRON_SECRET` from your `.env.local` (e.g. `Bearer kk` if that's what's set). Marketing emails sent in dev land in Mailpit (http://127.0.0.1:54324) via the email-client fallback.
+
+With no qualifying orders in the local DB, you'll get `{"sent":0,"failed":0,"skipped":0}` — that's the cron correctly doing nothing. Place a real order through the checkout flow, mark it delivered with a backdated `delivered_at` (3d for review email, 10d for cross-sell), and re-run.
 
 ## Migrations
 

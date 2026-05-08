@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server"
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { revalidateTag } from "next/cache"
 import { getDeliveryLabel } from "@/lib/delivery"
-import { Resend } from "resend"
+import { getEmailClient, isEmailEnabled } from "@/lib/email-client"
 import { redirect } from "next/navigation"
 import { createHmac, timingSafeEqual } from "crypto"
 import { headers } from "next/headers"
@@ -3195,7 +3195,7 @@ export async function getOrderWithdrawals(orderId: string): Promise<Withdrawal[]
 
 
 async function sendShippingEmail(order: Record<string, unknown>, trackingNumber: string) {
-  if (!process.env.RESEND_API_KEY) return
+  if (!isEmailEnabled()) return
 
   const supabase = await createClient()
   const { data: orderItems, error: itemsErr } = await supabase
@@ -3208,7 +3208,7 @@ async function sendShippingEmail(order: Record<string, unknown>, trackingNumber:
     return
   }
 
-  const resend = new Resend(process.env.RESEND_API_KEY)
+  const resend = getEmailClient()
   const deliveryLabel = getDeliveryLabel(order.logistics_partner as string)
 
   const itemsList = orderItems
