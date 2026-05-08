@@ -2391,6 +2391,7 @@ returns table (
 ) language plpgsql
 set search_path = public, pg_temp
 as $$
+#variable_conflict use_column
 begin
   -- Step 1: Reclaim stale sending rows (crashed workers)
   update public.marketing_email_log
