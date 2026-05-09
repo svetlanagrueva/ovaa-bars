@@ -1919,15 +1919,19 @@ async function resendOrderEmail(orderId: string, kind: ResendKind): Promise<{ su
   return { success: true }
 }
 
-export function resendOrderConfirmationEmail(orderId: string): Promise<{ success: true }> {
+// Thin async wrappers around `resendOrderEmail`. Must be `async function` —
+// Next.js's "use server" directive rejects sync functions even when they
+// return a Promise, so the obvious `return resendOrderEmail(...)` form
+// triggers a build error.
+export async function resendOrderConfirmationEmail(orderId: string): Promise<{ success: true }> {
   return resendOrderEmail(orderId, "order_confirmation")
 }
 
-export function resendShippingEmail(orderId: string): Promise<{ success: true }> {
+export async function resendShippingEmail(orderId: string): Promise<{ success: true }> {
   return resendOrderEmail(orderId, "shipping")
 }
 
-export function resendDeliveryEmail(orderId: string): Promise<{ success: true }> {
+export async function resendDeliveryEmail(orderId: string): Promise<{ success: true }> {
   return resendOrderEmail(orderId, "delivery")
 }
 
