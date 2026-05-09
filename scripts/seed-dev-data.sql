@@ -75,13 +75,13 @@ begin
   -- ─ Order 1: pending (card) — no stock movement ─────────────────────
   insert into orders (id, created_at, email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner)
-  values ('aaaaaaaa-0001-0001-0001-000000000001', v_t10,
+  values ('11111111-1111-1111-1111-111111111111', v_t10,
           'pending@seed.local', 'Иван', 'Петров', '+359888000001',
           'София', 'ул. Тестова 1', '1000',
           2570, 0, 'pending', 'card', 'speedy-address');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('aaaaaaaa-0001-0001-0001-000000000001', 1,
+  values ('11111111-1111-1111-1111-111111111111', 1,
           'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 1, 2570);
 
   -- ─ Order 2: confirmed (COD, Econt office) ──────────────────────────
@@ -89,7 +89,7 @@ begin
                       total_amount, shipping_fee, cod_fee, status, payment_method, logistics_partner,
                       econt_office_id, econt_office_code, econt_office_name, econt_office_address,
                       cod_confirmed_at, cod_confirmed_by)
-  values ('aaaaaaaa-0002-0002-0002-000000000002', v_t10, v_t10 + interval '1 hour',
+  values ('22222222-2222-2222-2222-222222222222', v_t10, v_t10 + interval '1 hour',
           'confirmed@seed.local', 'Мария', 'Иванова', '+359888000002',
           'София', '', '',
           5340, 500, 200, 'confirmed', 'cod', 'econt-office',
@@ -98,27 +98,27 @@ begin
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
   values
-    ('aaaaaaaa-0002-0002-0002-000000000002', 1, 'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 1, 2570),
-    ('aaaaaaaa-0002-0002-0002-000000000002', 2, 'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
+    ('22222222-2222-2222-2222-222222222222', 1, 'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 1, 2570),
+    ('22222222-2222-2222-2222-222222222222', 2, 'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
 
-  perform reserve_inventory('EGO-DC-12',  1, 'aaaaaaaa-0002-0002-0002-000000000002');
-  perform reserve_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0002-0002-0002-000000000002');
+  perform reserve_inventory('EGO-DC-12',  1, '22222222-2222-2222-2222-222222222222');
+  perform reserve_inventory('EGO-MIX-12', 1, '22222222-2222-2222-2222-222222222222');
 
   -- ─ Order 3: shipped (card, Speedy address) ─────────────────────────
   insert into orders (id, created_at, confirmed_at, shipped_at, email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
-  values ('aaaaaaaa-0003-0003-0003-000000000003', v_t10, v_t10 + interval '1 hour', v_t10 + interval '2 days',
+  values ('33333333-3333-3333-3333-333333333333', v_t10, v_t10 + interval '1 hour', v_t10 + interval '2 days',
           'shipped@seed.local', 'Петър', 'Стоянов', '+359888000003',
           'Варна', 'ул. Тестова 3', '9000',
           2570, 0, 'shipped', 'card', 'speedy-address',
           'SEED-SP-3', v_t10 + interval '1 hour', 'pi_seed_3', v_t10 + interval '1 hour');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('aaaaaaaa-0003-0003-0003-000000000003', 1,
+  values ('33333333-3333-3333-3333-333333333333', 1,
           'egg-origin-white-chocolate-raspberry-box', 'EGO-WCR-12', 'Бял Шоколад с Малини Кутия', 1, 2570);
 
-  perform reserve_inventory('EGO-WCR-12', 1, 'aaaaaaaa-0003-0003-0003-000000000003');
+  perform reserve_inventory('EGO-WCR-12', 1, '33333333-3333-3333-3333-333333333333');
 
   -- ─ Order 4: delivered (card) — ~10.5 days ago triggers cross_sell ──
   -- email window (delivered_at between -11d and -10d). For review_request
@@ -127,7 +127,7 @@ begin
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
-  values ('aaaaaaaa-0004-0004-0004-000000000004',
+  values ('44444444-4444-4444-4444-444444444444',
           now() - interval '11 days', now() - interval '11 days',
           now() - interval '10 days 18 hours', now() - interval '10 days 12 hours',
           'delivered@seed.local', 'Светлана', 'Тодорова', '+359888000004',
@@ -136,27 +136,27 @@ begin
           'SEED-SP-4', now() - interval '11 days', 'pi_seed_4', now() - interval '11 days');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('aaaaaaaa-0004-0004-0004-000000000004', 1,
+  values ('44444444-4444-4444-4444-444444444444', 1,
           'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 2, 2570);
 
-  perform reserve_inventory('EGO-DC-12', 2, 'aaaaaaaa-0004-0004-0004-000000000004');
+  perform reserve_inventory('EGO-DC-12', 2, '44444444-4444-4444-4444-444444444444');
 
   -- ─ Order 5: cancelled (COD) — reserve + restore for clean books ────
   insert into orders (id, created_at, cancelled_at, cancellation_reason,
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, cod_fee, status, payment_method, logistics_partner)
-  values ('aaaaaaaa-0005-0005-0005-000000000005', v_t10, v_t10 + interval '4 hours',
+  values ('55555555-5555-5555-5555-555555555555', v_t10, v_t10 + interval '4 hours',
           'клиент промени мнение',
           'cancelled@seed.local', 'Георги', 'Димитров', '+359888000005',
           'Стара Загора', 'ул. Тестова 5', '6000',
           2770, 500, 200, 'cancelled', 'cod', 'speedy-address');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('aaaaaaaa-0005-0005-0005-000000000005', 1,
+  values ('55555555-5555-5555-5555-555555555555', 1,
           'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
 
-  perform reserve_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0005-0005-0005-000000000005');
-  perform restore_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0005-0005-0005-000000000005');
+  perform reserve_inventory('EGO-MIX-12', 1, '55555555-5555-5555-5555-555555555555');
+  perform restore_inventory('EGO-MIX-12', 1, '55555555-5555-5555-5555-555555555555');
 
   -- ─ Order 6: delivered ~3.5 days ago — review_request cron window ───
   -- (delivered_at >= now - 4d AND delivered_at < now - 3d)
@@ -164,7 +164,7 @@ begin
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
-  values ('aaaaaaaa-0006-0006-0006-000000000006',
+  values ('66666666-6666-6666-6666-666666666666',
           now() - interval '4 days', now() - interval '4 days',
           now() - interval '3 days 18 hours', now() - interval '3 days 12 hours',
           'review-window@seed.local', 'Анна', 'Колева', '+359888000006',
@@ -173,10 +173,10 @@ begin
           'SEED-SP-6', now() - interval '4 days', 'pi_seed_6', now() - interval '4 days');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('aaaaaaaa-0006-0006-0006-000000000006', 1,
+  values ('66666666-6666-6666-6666-666666666666', 1,
           'egg-origin-white-chocolate-raspberry-box', 'EGO-WCR-12', 'Бял Шоколад с Малини Кутия', 1, 2570);
 
-  perform reserve_inventory('EGO-WCR-12', 1, 'aaaaaaaa-0006-0006-0006-000000000006');
+  perform reserve_inventory('EGO-WCR-12', 1, '66666666-6666-6666-6666-666666666666');
 
   -- ─ Order 7: delivered ~15 days ago — outside BOTH cron windows ─────
   -- Verifies the cron correctly skips orders past the cross_sell window.
@@ -184,7 +184,7 @@ begin
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
-  values ('aaaaaaaa-0007-0007-0007-000000000007',
+  values ('77777777-7777-7777-7777-777777777777',
           now() - interval '16 days', now() - interval '16 days',
           now() - interval '15 days 12 hours', now() - interval '15 days 6 hours',
           'past-window@seed.local', 'Никола', 'Маринов', '+359888000007',
@@ -193,10 +193,10 @@ begin
           'SEED-SP-7', now() - interval '16 days', 'pi_seed_7', now() - interval '16 days');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('aaaaaaaa-0007-0007-0007-000000000007', 1,
+  values ('77777777-7777-7777-7777-777777777777', 1,
           'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
 
-  perform reserve_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0007-0007-0007-000000000007');
+  perform reserve_inventory('EGO-MIX-12', 1, '77777777-7777-7777-7777-777777777777');
 end;
 $$;
 
