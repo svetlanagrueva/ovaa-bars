@@ -2,15 +2,17 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, cancelShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, cancelShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, addOrderItem, removeOrderItem, getProductsForOrderEdit, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { BatchAllocationCard } from "./batch-allocation-card"
@@ -105,6 +107,22 @@ export default function AdminOrderDetailPage({
   // Order edit — COD quantity state (per-SKU)
   const [qtyEditing, setQtyEditing] = useState<Record<string, number | null>>({})
   const [qtySaving, setQtySaving] = useState<Record<string, boolean>>({})
+
+  // Order edit — add/remove line item dialogs (COD only). Sibling to qty edit:
+  // same gate (canEditQty), but adds/drops whole lines via add_order_item /
+  // remove_order_item RPCs. Each dialog has its own local error state per
+  // memory/feedback_form_error_handling.md.
+  type EditableProduct = Awaited<ReturnType<typeof getProductsForOrderEdit>>[number]
+  const [removeItemSku, setRemoveItemSku] = useState<string | null>(null)
+  const [removeItemReason, setRemoveItemReason] = useState("")
+  const [removeItemSaving, setRemoveItemSaving] = useState(false)
+  const [removeItemError, setRemoveItemError] = useState("")
+  const [addItemOpen, setAddItemOpen] = useState(false)
+  const [addItemSku, setAddItemSku] = useState("")
+  const [addItemQuantity, setAddItemQuantity] = useState("1")
+  const [addItemSaving, setAddItemSaving] = useState(false)
+  const [addItemError, setAddItemError] = useState("")
+  const [editableProducts, setEditableProducts] = useState<EditableProduct[]>([])
 
   // Exception-flow dialogs. Refund / complaint / outcome are rare actions
   // (<5% of orders touch any of them), so they live behind the "Още действия"
@@ -749,6 +767,24 @@ export default function AdminOrderDetailPage({
                             >
                               Редактирай
                             </Button>
+                            {/* Remove-line button. Hidden when the order has only
+                                one item — the RPC rejects "remove last line" and
+                                admin should cancel the order instead. */}
+                            {order.items.length > 1 && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-[11px] text-red-600 hover:text-red-700 hover:bg-red-50"
+                                title="Премахни артикул"
+                                onClick={() => {
+                                  setRemoveItemSku(item.sku)
+                                  setRemoveItemReason("")
+                                  setRemoveItemError("")
+                                }}
+                              >
+                                ✕
+                              </Button>
+                            )}
                           </>
                         )}
                         {canEditQty && editing !== null && (
@@ -848,6 +884,48 @@ export default function AdminOrderDetailPage({
                       <span>{formatPrice(order.total_amount)}</span>
                     </div>
                   </>
+                )
+              })()}
+              {/* Add-item button — gated to the same canEditQty conditions
+                  (COD + confirmed + no tracking_number) AND only shown when
+                  there's at least one product not yet on the order. The
+                  RPC rejects duplicate SKUs (use Редактирай for qty change). */}
+              {(() => {
+                const canEditQty =
+                  order.payment_method === "cod" &&
+                  order.status === "confirmed" &&
+                  !order.tracking_number
+                if (!canEditQty) return null
+                const onOrderSkus = new Set(order.items.map((i) => i.sku))
+                const allSkus = editableProducts.length > 0
+                  ? editableProducts.map((p) => p.sku)
+                  : []
+                const hasAvailable = allSkus.length === 0 || allSkus.some((s) => !onOrderSkus.has(s))
+                if (!hasAvailable && editableProducts.length > 0) return null
+                return (
+                  <div className="border-t pt-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[11px]"
+                      onClick={async () => {
+                        setAddItemSku("")
+                        setAddItemQuantity("1")
+                        setAddItemError("")
+                        setAddItemOpen(true)
+                        if (editableProducts.length === 0) {
+                          try {
+                            const products = await getProductsForOrderEdit()
+                            setEditableProducts(products)
+                          } catch (err) {
+                            setAddItemError(err instanceof Error ? err.message : "Грешка при зареждане на продуктите")
+                          }
+                        }
+                      }}
+                    >
+                      + Добави артикул
+                    </Button>
+                  </div>
                 )
               })()}
             </div>
@@ -1133,6 +1211,19 @@ export default function AdminOrderDetailPage({
                 switch (e.event_type) {
                   case "order_items_changed": {
                     const productName = (p.product_name as string) || (p.sku as string) || "артикул"
+                    const action = p.action as string | undefined
+                    if (action === "added") {
+                      const q = p.quantity as number | undefined
+                      const detail = q != null ? `${productName} × ${q}` : productName
+                      return { label: "Добавен артикул", detail }
+                    }
+                    if (action === "removed") {
+                      const q = p.removed_quantity as number | undefined
+                      const reason = p.reason as string | null | undefined
+                      const base = q != null ? `${productName} × ${q}` : productName
+                      const detail = reason ? `${base} — ${truncate(reason, 80)}` : base
+                      return { label: "Премахнат артикул", detail }
+                    }
                     const oldQ = p.old_quantity as number | undefined
                     const newQ = p.new_quantity as number | undefined
                     const detail = oldQ != null && newQ != null
@@ -3228,6 +3319,247 @@ export default function AdminOrderDetailPage({
               })()}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove-line confirmation dialog (per-row ✕ button). Shows preview
+          impact summary so admin sees the new total before committing.
+          Optional reason is appended as an admin_note for support context. */}
+      <Dialog
+        open={removeItemSku !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRemoveItemSku(null)
+            setRemoveItemReason("")
+            setRemoveItemError("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Премахни артикул</DialogTitle>
+            <DialogDescription>
+              Артикулът ще бъде премахнат от поръчката, наличността — възстановена. Това действие не може да бъде отменено.
+            </DialogDescription>
+          </DialogHeader>
+          {(() => {
+            const item = order.items.find((i) => i.sku === removeItemSku)
+            if (!item) return null
+            const lineCents = item.priceInCents * item.quantity
+            const newTotal = order.total_amount - lineCents
+            return (
+              <div className="space-y-3 text-sm">
+                <div className="rounded-md border border-border bg-muted/20 p-3">
+                  <p className="font-medium">{item.productName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.quantity} бр. × {formatPrice(item.priceInCents)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border p-3 space-y-1">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Текущ общ</span>
+                    <span>{formatPrice(order.total_amount)}</span>
+                  </div>
+                  <div className="flex justify-between text-red-600">
+                    <span>Промяна</span>
+                    <span>−{formatPrice(lineCents)}</span>
+                  </div>
+                  <div className="flex justify-between font-medium border-t pt-1">
+                    <span>Нов общ</span>
+                    <span>{formatPrice(newTotal)}</span>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Причина (по желание)</Label>
+                  <Textarea
+                    value={removeItemReason}
+                    onChange={(e) => setRemoveItemReason(e.target.value)}
+                    placeholder='напр. "клиентът се отказа от един от артикулите"…'
+                    rows={2}
+                    className="text-xs"
+                    maxLength={1000}
+                  />
+                </div>
+                {removeItemError && (
+                  <p className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-900">
+                    {removeItemError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={removeItemSaving}
+                    onClick={() => {
+                      setRemoveItemSku(null)
+                      setRemoveItemReason("")
+                      setRemoveItemError("")
+                    }}
+                  >
+                    Отказ
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={removeItemSaving}
+                    onClick={async () => {
+                      if (!removeItemSku) return
+                      setRemoveItemSaving(true)
+                      setRemoveItemError("")
+                      try {
+                        await removeOrderItem(id, removeItemSku, removeItemReason || undefined)
+                        const refreshed = await getOrder(id)
+                        setOrder(refreshed)
+                        setRemoveItemSku(null)
+                        setRemoveItemReason("")
+                      } catch (err) {
+                        setRemoveItemError(err instanceof Error ? err.message : "Грешка при премахване")
+                      } finally {
+                        setRemoveItemSaving(false)
+                      }
+                    }}
+                  >
+                    {removeItemSaving ? "Премахване…" : "Премахни"}
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add-item dialog. SKU dropdown is filtered to products NOT already on
+          the order (the RPC rejects duplicates). Preview impact uses the live
+          sale price from getProductsForOrderEdit so the displayed total
+          matches what the server will commit. */}
+      <Dialog
+        open={addItemOpen}
+        onOpenChange={(open) => {
+          setAddItemOpen(open)
+          if (!open) {
+            setAddItemSku("")
+            setAddItemQuantity("1")
+            setAddItemError("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Добави артикул</DialogTitle>
+            <DialogDescription>
+              Резервира наличност и преизчислява общата сума. Цената е текущата активна цена (включително активни промоции).
+            </DialogDescription>
+          </DialogHeader>
+          {(() => {
+            const onOrderSkus = new Set(order.items.map((i) => i.sku))
+            const available = editableProducts.filter((p) => !onOrderSkus.has(p.sku))
+            const selected = available.find((p) => p.sku === addItemSku)
+            const qtyNum = parseInt(addItemQuantity, 10)
+            const qtyValid = Number.isInteger(qtyNum) && qtyNum >= 1 && qtyNum <= 100
+            const lineCents = selected && qtyValid ? selected.priceInCents * qtyNum : 0
+            const newTotal = order.total_amount + lineCents
+            return (
+              <div className="space-y-3 text-sm">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Продукт</Label>
+                  {editableProducts.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Зареждане на продуктите…</p>
+                  ) : available.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Всички продукти вече са в поръчката. Използвайте „Редактирай“ за промяна на количество.
+                    </p>
+                  ) : (
+                    <select
+                      value={addItemSku}
+                      onChange={(e) => setAddItemSku(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs"
+                    >
+                      <option value="">— Избери продукт —</option>
+                      {available.map((p) => (
+                        <option key={p.sku} value={p.sku}>
+                          {p.name} — {formatPrice(p.priceInCents)}
+                          {p.originalPriceInCents != null && p.originalPriceInCents !== p.priceInCents
+                            ? ` (вместо ${formatPrice(p.originalPriceInCents)})`
+                            : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Количество</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="100"
+                    step="1"
+                    value={addItemQuantity}
+                    onChange={(e) => setAddItemQuantity(e.target.value)}
+                    className="h-8 w-24 text-xs"
+                  />
+                </div>
+                {selected && qtyValid && (
+                  <div className="rounded-md border border-border p-3 space-y-1">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Текущ общ</span>
+                      <span>{formatPrice(order.total_amount)}</span>
+                    </div>
+                    <div className="flex justify-between text-green-700">
+                      <span>Промяна</span>
+                      <span>+{formatPrice(lineCents)}</span>
+                    </div>
+                    <div className="flex justify-between font-medium border-t pt-1">
+                      <span>Нов общ</span>
+                      <span>{formatPrice(newTotal)}</span>
+                    </div>
+                  </div>
+                )}
+                {addItemError && (
+                  <p className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-900">
+                    {addItemError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={addItemSaving}
+                    onClick={() => {
+                      setAddItemOpen(false)
+                      setAddItemSku("")
+                      setAddItemQuantity("1")
+                      setAddItemError("")
+                    }}
+                  >
+                    Отказ
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={addItemSaving || !selected || !qtyValid || available.length === 0}
+                    onClick={async () => {
+                      if (!selected || !qtyValid) return
+                      setAddItemSaving(true)
+                      setAddItemError("")
+                      try {
+                        await addOrderItem(id, selected.sku, qtyNum)
+                        const refreshed = await getOrder(id)
+                        setOrder(refreshed)
+                        setAddItemOpen(false)
+                        setAddItemSku("")
+                        setAddItemQuantity("1")
+                      } catch (err) {
+                        setAddItemError(err instanceof Error ? err.message : "Грешка при добавяне")
+                      } finally {
+                        setAddItemSaving(false)
+                      }
+                    }}
+                  >
+                    {addItemSaving ? "Добавяне…" : "Добави"}
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 

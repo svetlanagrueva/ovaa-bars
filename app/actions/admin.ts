@@ -25,6 +25,8 @@ import {
 } from "@/lib/email-sender"
 import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 import { buildExpectedFefoPlan, isFefoCompliant } from "@/lib/batches/fefo"
+import { getProductsWithSales } from "@/lib/sales"
+import { translateRpcError } from "@/lib/rpc-errors"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -2051,6 +2053,172 @@ export async function updateOrderQuantity(
   return { success: true, newTotalCents }
 }
 
+// ─── Read: products with current sale prices for order-edit dropdown ───
+// Thin admin-gated wrapper around getProductsWithSales so the order detail
+// page (client component) can resolve the same price the addOrderItem
+// server action will use. Without this, the preview-impact summary would
+// show base price while the saved row gets the sale price — surprising.
+export async function getProductsForOrderEdit(): Promise<
+  { sku: string; id: string; name: string; priceInCents: number; originalPriceInCents: number | null }[]
+> {
+  await requireAdmin()
+  const products = await getProductsWithSales()
+  return products.map((p) => ({
+    sku: p.sku,
+    id: p.id,
+    name: p.name,
+    priceInCents: p.priceInCents,
+    originalPriceInCents: p.originalPriceInCents ?? null,
+  }))
+}
+
+// ─── Add a new line item to an existing COD order ───────────────────────
+// Customer calls and wants to add a different product. Sibling to
+// updateOrderQuantity (qty edits) and removeOrderItem (line drops). Same
+// gates: COD, confirmed, no tracking_number. Atomic via add_order_item RPC
+// which handles the FOR UPDATE lock + reserve_inventory + total recalc.
+export async function addOrderItem(
+  orderId: string,
+  sku: string,
+  quantity: number,
+): Promise<{ success: true; newTotalCents: number; unitPriceCents: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!sku || !PRODUCTS.find((p) => p.sku === sku)) throw new Error("Невалиден SKU")
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
+    throw new Error("Количеството трябва да е цяло число между 1 и 100")
+  }
+
+  const product = PRODUCTS.find((p) => p.sku === sku)!
+
+  // Resolve active price (sale > base) so the new line is at the price
+  // the customer would have paid at fresh-checkout right now. Same logic
+  // the new-order flow uses.
+  const productsWithSales = await getProductsWithSales()
+  const livePrice = productsWithSales.find((p) => p.sku === sku)?.priceInCents ?? product.priceInCents
+
+  const supabase = await createClient()
+  const { data: newTotalData, error: rpcError } = await supabase.rpc("add_order_item", {
+    p_order_id: orderId,
+    p_sku: sku,
+    p_product_id: product.id,
+    p_product_name: product.name,
+    p_quantity: quantity,
+    p_unit_price_cents: livePrice,
+  })
+
+  if (rpcError) {
+    console.error("add_order_item RPC failed:", sanitizeError(rpcError))
+    throw new Error(translateRpcError(rpcError, {
+      ORDER_NOT_FOUND: "Поръчката не е намерена",
+      ORDER_NOT_COD: "Редакция на артикули е допустима само за наложен платеж",
+      ORDER_NOT_CONFIRMED: "Поръчката не е в статус „потвърдена\"",
+      ORDER_LOCKED_AFTER_SHIPMENT: "Товарителницата вече е генерирана — не може да се добавят артикули",
+      ORDER_ITEM_ALREADY_PRESENT: "Артикулът вече е в поръчката — използвайте „Редактирай\" за промяна на количеството",
+    }, "Грешка при добавяне на артикул"))
+  }
+
+  const newTotalCents = Number(newTotalData) || 0
+
+  // Audit emit. Reuse `order_items_changed` event type with `action='added'`
+  // discriminator — the renderer branches on the action field.
+  const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "order_items_changed",
+    p_payload: {
+      action: "added",
+      sku,
+      product_name: product.name,
+      quantity,
+      unit_price_cents: livePrice,
+      new_total_cents: newTotalCents,
+    },
+    p_actor: "admin",
+  })
+  if (auditErr) console.error("Failed to emit order_items_changed (added):", sanitizeError(auditErr))
+
+  return { success: true, newTotalCents, unitPriceCents: livePrice }
+}
+
+// ─── Remove a line item from an existing COD order ──────────────────────
+// Symmetric to addOrderItem. Restores the line's reserved inventory.
+// Cannot remove the last remaining line — admin should cancel the order
+// instead.
+export async function removeOrderItem(
+  orderId: string,
+  sku: string,
+  reason?: string,
+): Promise<{ success: true; newTotalCents: number; removedQuantity: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!sku) throw new Error("SKU е задължителен")
+
+  const trimmedReason = reason?.trim() ?? ""
+  if (trimmedReason.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+
+  // Capture the item shape pre-delete for the audit payload — after the
+  // RPC runs, the row is gone.
+  const { data: itemRow } = await supabase
+    .from("order_items")
+    .select("quantity, product_name, unit_price_cents")
+    .eq("order_id", orderId)
+    .eq("sku", sku)
+    .single()
+
+  const { data: newTotalData, error: rpcError } = await supabase.rpc("remove_order_item", {
+    p_order_id: orderId,
+    p_sku: sku,
+  })
+
+  if (rpcError) {
+    console.error("remove_order_item RPC failed:", sanitizeError(rpcError))
+    throw new Error(translateRpcError(rpcError, {
+      ORDER_NOT_FOUND: "Поръчката не е намерена",
+      ORDER_NOT_COD: "Редакция на артикули е допустима само за наложен платеж",
+      ORDER_NOT_CONFIRMED: "Поръчката не е в статус „потвърдена\"",
+      ORDER_LOCKED_AFTER_SHIPMENT: "Товарителницата вече е генерирана — не може да се премахват артикули",
+      ORDER_ITEM_NOT_FOUND: "Артикулът не е в поръчката",
+      CANNOT_REMOVE_LAST_ITEM: "Не може да се премахне последният артикул — анулирайте поръчката вместо това",
+    }, "Грешка при премахване на артикул"))
+  }
+
+  const newTotalCents = Number(newTotalData) || 0
+  const removedQuantity = (itemRow?.quantity as number | undefined) ?? 0
+  const productName = (itemRow?.product_name as string | undefined) ?? sku
+
+  // Audit emit
+  const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "order_items_changed",
+    p_payload: {
+      action: "removed",
+      sku,
+      product_name: productName,
+      removed_quantity: removedQuantity,
+      new_total_cents: newTotalCents,
+      reason: trimmedReason || null,
+    },
+    p_actor: "admin",
+  })
+  if (auditErr) console.error("Failed to emit order_items_changed (removed):", sanitizeError(auditErr))
+
+  // Optional admin_note for support context — same pattern as
+  // updateOrderDeliveryMethod. The audit row is structured but lives
+  // only in the timeline; the notes card is what support staff browse first.
+  if (trimmedReason) {
+    const noteText = `Премахнат артикул: ${productName} × ${removedQuantity}. ${trimmedReason}`
+    const { error: noteErr } = await supabase.rpc("add_admin_note", {
+      p_order_id: orderId,
+      p_text: noteText.length > 2000 ? noteText.slice(0, 2000) : noteText,
+    })
+    if (noteErr) console.error("Failed to append admin note for removal:", sanitizeError(noteErr))
+  }
+
+  return { success: true, newTotalCents, removedQuantity }
+}
+
 // ─── Email resends ──────────────────────────────────────────────────────────
 // Admin can manually resend transactional emails from the order detail page.
 // Common triggers: customer says "I didn't get the email", email landed in
@@ -2550,7 +2718,7 @@ export async function recordRefund(
   // default amounts and check sums against the order_items + existing
   // refund_items rows — the DB triggers are the last-line backstop.
   const itemsInput = data.items
-  let resolvedItems: Array<{ orderItemId: number; quantity: number; amountCents: number }> = []
+  const resolvedItems: Array<{ orderItemId: number; quantity: number; amountCents: number }> = []
   if (itemsInput !== undefined) {
     // Fetch order_items for this order — used to verify each orderItemId
     // belongs here, look up unit_price_cents for defaults, and check qty caps.
