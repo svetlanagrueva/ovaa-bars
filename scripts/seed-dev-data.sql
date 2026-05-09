@@ -126,14 +126,16 @@ begin
   insert into orders (id, created_at, confirmed_at, shipped_at, delivered_at,
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
-                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
+                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at,
+                      marketing_consent)
   values ('44444444-4444-4444-4444-444444444444',
           now() - interval '11 days', now() - interval '11 days',
           now() - interval '10 days 18 hours', now() - interval '10 days 12 hours',
           'delivered@seed.local', 'Светлана', 'Тодорова', '+359888000004',
           'Бургас', 'ул. Тестова 4', '8000',
           5140, 0, 'delivered', 'card', 'speedy-address',
-          'SEED-SP-4', now() - interval '11 days', 'pi_seed_4', now() - interval '11 days');
+          'SEED-SP-4', now() - interval '11 days', 'pi_seed_4', now() - interval '11 days',
+          true);
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
   values ('44444444-4444-4444-4444-444444444444', 1,
@@ -163,14 +165,16 @@ begin
   insert into orders (id, created_at, confirmed_at, shipped_at, delivered_at,
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
-                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
+                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at,
+                      marketing_consent)
   values ('66666666-6666-6666-6666-666666666666',
           now() - interval '4 days', now() - interval '4 days',
           now() - interval '3 days 18 hours', now() - interval '3 days 12 hours',
           'review-window@seed.local', 'Анна', 'Колева', '+359888000006',
           'Русе', 'ул. Тестова 6', '7000',
           2570, 0, 'delivered', 'card', 'speedy-address',
-          'SEED-SP-6', now() - interval '4 days', 'pi_seed_6', now() - interval '4 days');
+          'SEED-SP-6', now() - interval '4 days', 'pi_seed_6', now() - interval '4 days',
+          true);
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
   values ('66666666-6666-6666-6666-666666666666', 1,
@@ -183,14 +187,16 @@ begin
   insert into orders (id, created_at, confirmed_at, shipped_at, delivered_at,
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
-                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
+                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at,
+                      marketing_consent)
   values ('77777777-7777-7777-7777-777777777777',
           now() - interval '16 days', now() - interval '16 days',
           now() - interval '15 days 12 hours', now() - interval '15 days 6 hours',
           'past-window@seed.local', 'Никола', 'Маринов', '+359888000007',
           'Плевен', 'ул. Тестова 7', '5800',
           2570, 0, 'delivered', 'card', 'speedy-address',
-          'SEED-SP-7', now() - interval '16 days', 'pi_seed_7', now() - interval '16 days');
+          'SEED-SP-7', now() - interval '16 days', 'pi_seed_7', now() - interval '16 days',
+          true);
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
   values ('77777777-7777-7777-7777-777777777777', 1,
