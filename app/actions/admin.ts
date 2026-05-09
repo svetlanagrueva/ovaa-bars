@@ -5192,17 +5192,35 @@ export async function getBatchAllocationView(orderId: string): Promise<BatchAllo
     .eq("status", "active")
     .order("expiry_date", { ascending: true })
 
+  // Sum of THIS order's existing allocations per batch — needs to be added
+  // back to `batch_quantity_available` so the dropdown / FEFO compliance
+  // check treat the count as "available to THIS order". Without this,
+  // saving a FEFO-correct plan and reloading produces a moving-target
+  // available count that flips a previously-compliant plan into non-FEFO
+  // (e.g. saved 2 from NEAR with raw avail 3, reload shows avail 1, FEFO
+  // then says "1 from NEAR + 1 from next batch" — false flag).
+  const allocPerBatchThisOrder = new Map<string, number>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { product_batch_id: string; quantity: number }
+    allocPerBatchThisOrder.set(
+      row.product_batch_id,
+      (allocPerBatchThisOrder.get(row.product_batch_id) ?? 0) + row.quantity,
+    )
+  }
+
   const todayIso = new Date().toISOString().slice(0, 10)
   const batches: BatchAllocationViewBatch[] = []
   for (const b of rawBatches ?? []) {
     const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
     const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
+    const rawAvail = typeof avail === "number" ? avail : 0
+    const ownAlloc = allocPerBatchThisOrder.get(row.id) ?? 0
     batches.push({
       productBatchId: row.id,
       sku: row.sku,
       batchNumber: row.batch_number,
       expiryDate: row.expiry_date,
-      quantityAvailable: typeof avail === "number" ? avail : 0,
+      quantityAvailable: rawAvail + ownAlloc,
       isExpired: row.expiry_date < todayIso,
     })
   }
@@ -5395,17 +5413,40 @@ export async function saveBatchAllocation(
     }
   }
 
+  // Sum of THIS order's existing allocations per batch — added back to
+  // batch_quantity_available so the FEFO check treats availability as
+  // "available to THIS order". The save_batch_allocation RPC deletes the
+  // existing allocations and re-inserts atomically, so what's currently
+  // committed-to-this-order shouldn't reduce the pool we plan against.
+  // Without this, a previously-FEFO-correct save reloaded into the form
+  // would fail re-save because the same plan now reads as non-FEFO.
+  const orderItemIds = orderItems.map((oi) => oi.id)
+  const { data: existingThisOrder } = await supabase
+    .from("order_item_batches")
+    .select("product_batch_id, quantity")
+    .in("order_item_id", orderItemIds)
+  const allocPerBatchThisOrder = new Map<string, number>()
+  for (const a of existingThisOrder ?? []) {
+    const row = a as { product_batch_id: string; quantity: number }
+    allocPerBatchThisOrder.set(
+      row.product_batch_id,
+      (allocPerBatchThisOrder.get(row.product_batch_id) ?? 0) + row.quantity,
+    )
+  }
+
   // FEFO check needs availability per active+non-expired batch
   const fefoBatchesBySku = new Map<string, Array<{ id: string; expiryDate: string; createdAt: string; availableQty: number }>>()
   for (const b of batchById.values()) {
     if (b.status !== "active" || b.expiry_date < todayIso) continue
     const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: b.id })
+    const rawAvail = typeof avail === "number" ? avail : 0
+    const ownAlloc = allocPerBatchThisOrder.get(b.id) ?? 0
     if (!fefoBatchesBySku.has(b.sku)) fefoBatchesBySku.set(b.sku, [])
     fefoBatchesBySku.get(b.sku)!.push({
       id: b.id,
       expiryDate: b.expiry_date,
       createdAt: b.created_at,
-      availableQty: typeof avail === "number" ? avail : 0,
+      availableQty: rawAvail + ownAlloc,
     })
   }
 
