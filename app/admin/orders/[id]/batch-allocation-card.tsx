@@ -93,7 +93,6 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
     try {
       setLoading(true)
       setError("")
-      setSuccess("")
       const v = await getBatchAllocationView(orderId)
       setView(v)
       const seeded: LineState[] = v.lines.map((l) => ({
@@ -252,10 +251,11 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
     setSaving(true)
     try {
       const result = await saveBatchAllocation(orderId, payload)
-      setSuccess(`Запазени ${result.saved} реда`)
       onSaved?.()
-      // Reload to reflect server state (availability may have shifted)
-      void load(false)
+      // Reload first (availability may have shifted) so the success banner
+      // is set on top of the freshly-loaded state, not wiped by it.
+      await load(false)
+      setSuccess(`Запазени ${result.saved} реда. Разпределението е записано.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Грешка при запазване")
     } finally {
@@ -270,8 +270,8 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
     setSaving(true)
     try {
       const result = await clearBatchAllocation(orderId)
+      await load(true)
       if (result.cleared > 0) setSuccess(`Изтрити ${result.cleared} реда`)
-      void load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Грешка при изчистване")
     } finally {
