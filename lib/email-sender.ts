@@ -3,10 +3,13 @@ import { formatPrice } from "@/lib/products"
 import {
   buildOrderConfirmationEmail,
   buildDeliveryEmail,
+  buildAdminNewOrderEmail,
   buildWithdrawalReceivedEmail,
   buildWithdrawalApprovedEmail,
   buildWithdrawalRejectedEmail,
 } from "@/lib/email-template"
+import { getDeliveryLabel } from "@/lib/delivery"
+import { getBaseUrl } from "@/lib/constants"
 import { createClient } from "@/lib/supabase/server"
 import { requireEnv } from "@/lib/env"
 
@@ -183,35 +186,34 @@ export async function notifyAdminNewOrder(order: Record<string, unknown>, paymen
   const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
   if (!orderItems) return
 
-  const resend = getEmailClient()
-  const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-    .join("\n")
+  const orderId = order.id as string
+  const totalAmount = order.total_amount as number
+  const logisticsPartner = (order.logistics_partner as string | null) ?? ""
+  const adminUrl = `${getBaseUrl()}/admin/orders/${orderId}`
 
+  const { html, text } = buildAdminNewOrderEmail({
+    orderId,
+    firstName: (order.first_name as string) ?? "",
+    lastName: (order.last_name as string) ?? "",
+    customerEmail: (order.email as string) ?? "",
+    phone: (order.phone as string) ?? "",
+    city: (order.city as string) ?? "",
+    items: orderItems,
+    totalAmount,
+    paymentMethod: paymentMethod === "card" ? "card" : "cod",
+    deliveryLabel: logisticsPartner ? getDeliveryLabel(logisticsPartner) : "—",
+    adminUrl,
+  })
+
+  const resend = getEmailClient()
   resend.emails.send({
     from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
     to: process.env.ADMIN_EMAIL,
-    subject: `Нова поръчка #${(order.id as string).slice(0, 8)} — ${formatPrice(order.total_amount as number)}`,
-    text: `
-Нова поръчка!
-
-Поръчка: #${(order.id as string).slice(0, 8)}
-Клиент: ${order.first_name} ${order.last_name}
-Имейл: ${order.email}
-Телефон: ${order.phone}
-Град: ${order.city}
-Плащане: ${paymentMethod === "card" ? "Карта" : "Наложен платеж"}
-
-Продукти:
-${itemsList}
-
-Обща сума: ${formatPrice(order.total_amount as number)}
-
-Виж в админ панела:
-${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
-    `.trim(),
+    subject: `Нова поръчка #${orderId.slice(0, 8)} — ${formatPrice(totalAmount)}`,
+    html,
+    text,
   }).catch((err) => {
-    console.error(`Failed to send admin notification for order ${order.id}:`, err)
+    console.error(`Failed to send admin notification for order ${orderId}:`, err)
   })
 }
 

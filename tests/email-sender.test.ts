@@ -50,9 +50,14 @@ const mockBuildWithdrawalRejected = vi.fn<BuilderFn>(() => ({
   html: "<wd-rejected-html />",
   text: "wd-rejected-text",
 }))
+const mockBuildAdminNewOrder = vi.fn<BuilderFn>(() => ({
+  html: "<admin-new-order-html />",
+  text: "admin-new-order-text",
+}))
 vi.mock("@/lib/email-template", () => ({
   buildOrderConfirmationEmail: (input: unknown) => mockBuildOrderConfirmation(input),
   buildDeliveryEmail: (input: unknown) => mockBuildDelivery(input),
+  buildAdminNewOrderEmail: (input: unknown) => mockBuildAdminNewOrder(input),
   buildWithdrawalReceivedEmail: (input: unknown) => mockBuildWithdrawalReceived(input),
   buildWithdrawalApprovedEmail: (input: unknown) => mockBuildWithdrawalApproved(input),
   buildWithdrawalRejectedEmail: (input: unknown) => mockBuildWithdrawalRejected(input),
@@ -336,10 +341,11 @@ describe("sendDeliveryEmail", () => {
 // ── notifyAdminNewOrder ───────────────────────────────────────────────────
 
 describe("notifyAdminNewOrder", () => {
-  it("sends a Bulgarian-language admin alert with order details", async () => {
+  it("forwards order details + delivery label to the admin template builder", async () => {
     armOrderItemsLookup()
 
-    await notifyAdminNewOrder(sampleOrder, "card")
+    const orderWithLogistics = { ...sampleOrder, logistics_partner: "speedy-address" }
+    await notifyAdminNewOrder(orderWithLogistics, "card")
     await new Promise((r) => setTimeout(r, 0))
 
     expect(mockResendSend).toHaveBeenCalledTimes(1)
@@ -348,25 +354,45 @@ describe("notifyAdminNewOrder", () => {
     expect(call.from).toBe("Egg Origin <noreply@eggorigin.com>")
     expect(call.subject).toContain("Нова поръчка")
     expect(call.subject).toContain(VALID_ORDER_ID.slice(0, 8))
-    // Body is a Bulgarian text template — assert on key data presence,
-    // not exact wording, so future copy edits don't break tests.
-    expect(call.text).toContain("Иван")
-    expect(call.text).toContain("Иванов")
-    expect(call.text).toContain("customer@example.com")
-    expect(call.text).toContain("Карта")
-    expect(call.text).toContain("Тъмен Шоколад Кутия")
-    expect(call.text).toContain("/admin/orders/" + VALID_ORDER_ID)
+    expect(call.html).toBe("<admin-new-order-html />")
+    expect(call.text).toBe("admin-new-order-text")
+
+    // Per the documented mock strategy, assert on the data the sender
+    // hands to the builder rather than scraping its rendered output.
+    expect(mockBuildAdminNewOrder).toHaveBeenCalledWith(expect.objectContaining({
+      orderId: VALID_ORDER_ID,
+      firstName: "Иван",
+      lastName: "Иванов",
+      customerEmail: "customer@example.com",
+      paymentMethod: "card",
+      deliveryLabel: "Speedy до адрес",
+      adminUrl: expect.stringContaining(`/admin/orders/${VALID_ORDER_ID}`),
+      items: expect.arrayContaining([
+        expect.objectContaining({ productName: "Тъмен Шоколад Кутия", quantity: 2 }),
+      ]),
+    }))
   })
 
-  it("renders payment method as 'Наложен платеж' for cod orders", async () => {
+  it("passes paymentMethod='cod' for cash-on-delivery orders", async () => {
     armOrderItemsLookup()
 
     await notifyAdminNewOrder({ ...sampleOrder, payment_method: "cod" }, "cod")
     await new Promise((r) => setTimeout(r, 0))
 
-    const call = mockResendSend.mock.calls[0][0] as Record<string, string>
-    expect(call.text).toContain("Наложен платеж")
-    expect(call.text).not.toMatch(/Плащане:\s*Карта/)
+    expect(mockBuildAdminNewOrder).toHaveBeenCalledWith(expect.objectContaining({
+      paymentMethod: "cod",
+    }))
+  })
+
+  it("falls back to '—' for delivery label when logistics_partner is unset", async () => {
+    armOrderItemsLookup()
+
+    await notifyAdminNewOrder(sampleOrder, "card")
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(mockBuildAdminNewOrder).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryLabel: "—",
+    }))
   })
 
   it("early-returns when ADMIN_EMAIL is unset (no admin to notify)", async () => {
