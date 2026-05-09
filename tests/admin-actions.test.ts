@@ -580,7 +580,7 @@ describe("admin actions", () => {
     it("throws when RPC reports order not found", async () => {
       mockSupabase.rpc = vi.fn(() => Promise.resolve({
         data: null,
-        error: { message: "Order <uuid> not found" },
+        error: { message: "Order <uuid> not found", hint: "ORDER_NOT_FOUND" },
       }))
 
       const { addAdminNote } = await import("@/app/actions/admin")

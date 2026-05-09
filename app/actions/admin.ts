@@ -25,6 +25,7 @@ import {
 } from "@/lib/email-sender"
 import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 import { buildExpectedFefoPlan, isFefoCompliant } from "@/lib/batches/fefo"
+import { translateRpcError } from "@/lib/rpc-errors"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -1337,11 +1338,10 @@ export async function addAdminNote(orderId: string, note: string) {
   })
 
   if (error) {
-    if (error.message?.includes("not found")) {
-      throw new Error("Поръчката не е намерена")
-    }
     console.error("Failed to add admin note:", error)
-    throw new Error("Грешка при добавяне на бележка")
+    throw new Error(translateRpcError(error, {
+      ORDER_NOT_FOUND: "Поръчката не е намерена",
+    }, "Грешка при добавяне на бележка"))
   }
 
   return { success: true }
@@ -3185,10 +3185,9 @@ export async function completeWithdrawalNoReturn(
 
   if (error) {
     console.error("Failed to complete withdrawal (no-return path):", error)
-    if (error.message?.includes("refund_id is required")) {
-      throw new Error("За резолюция от тип 'refund' първо запишете възстановяване")
-    }
-    throw new Error("Заявката не може да бъде завършена в текущото състояние")
+    throw new Error(translateRpcError(error, {
+      WITHDRAWAL_REFUND_ID_REQUIRED: "За резолюция от тип 'refund' първо запишете възстановяване",
+    }, "Заявката не може да бъде завършена в текущото състояние"))
   }
 
   revalidateTag("withdrawals", "max")
@@ -4774,20 +4773,14 @@ export async function saveBatchAllocation(
   })
   if (rpcError) {
     console.error("save_batch_allocation RPC failed:", sanitizeError(rpcError))
-    const msg = rpcError.message ?? ""
-    if (msg.includes("locked") || msg.includes("tracking_number")) {
-      throw new Error("Партидите вече са заключени след генериране на товарителница")
-    }
-    if (msg.includes("must be confirmed")) {
-      throw new Error("Поръчката не е в статус „потвърдена\"")
-    }
-    if (msg.includes("availability")) {
-      throw new Error("Партидата няма достатъчна наличност")
-    }
-    if (msg.includes("ordered")) {
-      throw new Error("Разпределените количества не съвпадат с поръчаното")
-    }
-    throw new Error("Грешка при записване на разпределението")
+    throw new Error(translateRpcError(rpcError, {
+      BATCH_ALLOCATION_LOCKED: "Партидите вече са заключени след генериране на товарителница",
+      ORDER_NOT_CONFIRMED: "Поръчката не е в статус „потвърдена\"",
+      ORDER_NOT_FOUND: "Поръчката не е намерена",
+      BATCH_INSUFFICIENT_AVAILABILITY: "Партидата няма достатъчна наличност",
+      BATCH_ALLOCATION_SUM_MISMATCH: "Разпределените количества не съвпадат с поръчаното",
+      BATCH_NOT_ACTIVE: "Партидата не е активна",
+    }, "Грешка при записване на разпределението"))
   }
 
   // Audit: one batch_allocation_saved + per-row override events
@@ -4866,11 +4859,10 @@ export async function clearBatchAllocation(orderId: string): Promise<{ success: 
     .in("order_item_id", itemIds)
 
   if (delError) {
-    if (delError.message?.includes("after shipment generation")) {
-      throw new Error("Партидите вече са заключени след генериране на товарителница")
-    }
     console.error("clearBatchAllocation failed:", sanitizeError(delError))
-    throw new Error("Грешка при изчистване на разпределението")
+    throw new Error(translateRpcError(delError, {
+      BATCH_ALLOCATION_LOCKED: "Партидите вече са заключени след генериране на товарителница",
+    }, "Грешка при изчистване на разпределението"))
   }
 
   if ((count ?? 0) > 0) {
