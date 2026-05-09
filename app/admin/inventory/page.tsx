@@ -39,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { formatBgDate } from "@/lib/utils"
 
 const LOW_STOCK_THRESHOLD = 20
 
@@ -620,7 +621,7 @@ export default function AdminInventoryPage() {
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {entry.expiry_date
-                        ? new Date(entry.expiry_date).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })
+                        ? formatBgDate(entry.expiry_date)
                         : "—"}
                     </TableCell>
                   </TableRow>

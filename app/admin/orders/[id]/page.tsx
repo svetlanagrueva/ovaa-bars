@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { BatchAllocationCard } from "./batch-allocation-card"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
+import { formatBgDate, formatBgDateTime } from "@/lib/utils"
 
 export default function AdminOrderDetailPage({
   params,
@@ -480,10 +481,7 @@ export default function AdminOrderDetailPage({
       {order.payment_method === "cod" && order.status === "confirmed" && order.cod_confirmed_at && (
         <div className="mb-6 rounded-lg border border-green-300 bg-green-50 p-4 text-sm text-green-900">
           ✓ Обаждането е потвърдено на{" "}
-          {new Date(order.cod_confirmed_at).toLocaleDateString("bg-BG", {
-            day: "2-digit", month: "2-digit", year: "numeric",
-            hour: "2-digit", minute: "2-digit",
-          })}
+          {formatBgDateTime(order.cod_confirmed_at)}
           {order.cod_confirmed_by && order.cod_confirmed_by !== "admin" && (
             <span className="ml-1 text-green-900/70">от {order.cod_confirmed_by}</span>
           )}
@@ -656,7 +654,7 @@ export default function AdminOrderDetailPage({
             <CardTitle className="text-base">Детайли</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <div><span className="text-muted-foreground">Дата:</span> {new Date(order.created_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+            <div><span className="text-muted-foreground">Дата:</span> {formatBgDateTime(order.created_at)}</div>
             <div><span className="text-muted-foreground">Плащане:</span> {order.payment_method === "card" ? "Карта" : "Наложен платеж"}</div>
             <div><span className="text-muted-foreground">Доставка:</span> {getDeliveryLabel(order.logistics_partner)}</div>
             {order.econt_office_name && (
@@ -856,7 +854,7 @@ export default function AdminOrderDetailPage({
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
-              Плащането е получено на {new Date(order.seller_settled_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              Плащането е получено на {formatBgDateTime(order.seller_settled_at)}
             </div>
             {order.courier_ppp_ref && (
               <div><span className="text-muted-foreground">ППП референция:</span> <span className="font-mono">{order.courier_ppp_ref}</span></div>
@@ -886,7 +884,7 @@ export default function AdminOrderDetailPage({
           </CardHeader>
           <CardContent className="text-sm">
             <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-green-900">
-              Платено на {new Date(order.seller_settled_at).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              Платено на {formatBgDateTime(order.seller_settled_at)}
             </div>
           </CardContent>
         </Card>
@@ -1006,9 +1004,7 @@ export default function AdminOrderDetailPage({
                             Канал: {w.requested_via} · Имейл: {w.customer_email}
                           </div>
                           <div className="mt-0.5 text-xs text-muted-foreground">
-                            Подадена на {new Date(w.created_at).toLocaleDateString("bg-BG", {
-                              day: "2-digit", month: "2-digit", year: "numeric",
-                            })}
+                            Подадена на {formatBgDate(w.created_at)}
                             {w.refund_id && (
                               <> · Свързана с възстановяване <span className="font-mono">{w.refund_id.slice(0, 8)}</span></>
                             )}
@@ -1044,13 +1040,9 @@ export default function AdminOrderDetailPage({
                         <div className="mt-0.5 text-xs text-muted-foreground">
                           Претенция: {cmpDemandLabel[c.customer_demand] ?? c.customer_demand}
                           {" · "}
-                          Подадена на {new Date(c.reported_at).toLocaleDateString("bg-BG", {
-                            day: "2-digit", month: "2-digit", year: "numeric",
-                          })}
+                          Подадена на {formatBgDate(c.reported_at)}
                           {c.resolved_at && (
-                            <> · Приключена на {new Date(c.resolved_at).toLocaleDateString("bg-BG", {
-                              day: "2-digit", month: "2-digit", year: "numeric",
-                            })}</>
+                            <> · Приключена на {formatBgDate(c.resolved_at)}</>
                           )}
                         </div>
                         {c.resolution && (
@@ -1216,10 +1208,7 @@ export default function AdminOrderDetailPage({
                       {event.label}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {new Date(event.date!).toLocaleDateString("bg-BG", {
-                        day: "2-digit", month: "2-digit", year: "numeric",
-                        hour: "2-digit", minute: "2-digit",
-                      })}
+                      {formatBgDateTime(event.date!)}
                     </p>
                     {event.detail && (
                       <p className="mt-0.5 text-xs text-muted-foreground font-mono">{event.detail}</p>
@@ -1285,10 +1274,7 @@ export default function AdminOrderDetailPage({
                 <div key={i} className="rounded-md border border-border bg-secondary/50 px-3 py-2">
                   <p className="text-sm">{note.text}</p>
                   <p className="mt-1 text-[10px] text-muted-foreground">
-                    {new Date(note.created_at).toLocaleDateString("bg-BG", {
-                      day: "2-digit", month: "2-digit", year: "numeric",
-                      hour: "2-digit", minute: "2-digit",
-                    })}
+                    {formatBgDateTime(note.created_at)}
                   </p>
                 </div>
               ))}
@@ -1690,7 +1676,7 @@ export default function AdminOrderDetailPage({
                                           <td className="px-2 py-1.5 font-mono">{a.batchNumber}</td>
                                           <td className="px-2 py-1.5 text-right">{a.quantity}</td>
                                           <td className="px-2 py-1.5 text-muted-foreground">
-                                            {a.expiryDate ? new Date(a.expiryDate).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" }) : ""}
+                                            {a.expiryDate ? formatBgDate(a.expiryDate) : ""}
                                           </td>
                                         </tr>
                                       )),
@@ -3246,10 +3232,7 @@ function RefundRow({
             </span>
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
-            {new Date(refund.refunded_at).toLocaleDateString("bg-BG", {
-              day: "2-digit", month: "2-digit", year: "numeric",
-              hour: "2-digit", minute: "2-digit",
-            })}
+            {formatBgDateTime(refund.refunded_at)}
             {refund.stripe_refund_id && (
               <span className="ml-2 font-mono">{refund.stripe_refund_id}</span>
             )}
@@ -3488,10 +3471,7 @@ function InvoiceRow({
           {invoice.sent_at ? (
             <div>
               <span>Изпратен на клиента на:</span>{" "}
-              {new Date(invoice.sent_at).toLocaleDateString("bg-BG", {
-                day: "2-digit", month: "2-digit", year: "numeric",
-                hour: "2-digit", minute: "2-digit",
-              })}
+              {formatBgDateTime(invoice.sent_at)}
             </div>
           ) : (
             <Button

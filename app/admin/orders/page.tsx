@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { formatBgDateTime } from "@/lib/utils"
 
 const STATUS_LABELS: Record<string, string> = {
   all: "Всички",
@@ -289,13 +290,7 @@ function AdminOrdersPage() {
                     </Link>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(order.created_at).toLocaleDateString("bg-BG", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {formatBgDateTime(order.created_at)}
                   </TableCell>
                   <TableCell>
                     <div className="text-sm font-medium">{order.first_name} {order.last_name}</div>

@@ -27,6 +27,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { formatBgDateTime } from "@/lib/utils"
 
 const products = PRODUCTS.map((p) => ({ id: p.id, name: p.name, priceInCents: p.priceInCents }))
 
@@ -134,17 +135,11 @@ export default function AdminSalesPage() {
                       <Badge variant="destructive" className="text-xs">-{discount}%</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {new Date(sale.starts_at).toLocaleDateString("bg-BG", {
-                        day: "2-digit", month: "2-digit", year: "numeric",
-                        hour: "2-digit", minute: "2-digit",
-                      })}
+                      {formatBgDateTime(sale.starts_at)}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {sale.ends_at
-                        ? new Date(sale.ends_at).toLocaleDateString("bg-BG", {
-                            day: "2-digit", month: "2-digit", year: "numeric",
-                            hour: "2-digit", minute: "2-digit",
-                          })
+                        ? formatBgDateTime(sale.ends_at)
                         : "—"}
                     </TableCell>
                     <TableCell>

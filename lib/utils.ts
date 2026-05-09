@@ -7,7 +7,9 @@ export function cn(...inputs: ClassValue[]) {
 
 // Bulgarian-locale date formatters. Used across the admin UI; keep the
 // options aligned so the same date renders identically everywhere.
-export function formatBgDate(value: string | null | undefined): string {
+// Accepts string (ISO timestamp / date) or a Date instance — `new Date(d)`
+// where d is a Date returns a copy, so the wrapper is harmless.
+export function formatBgDate(value: string | Date | null | undefined): string {
   if (!value) return ""
   return new Date(value).toLocaleDateString("bg-BG", {
     day: "2-digit",
@@ -16,7 +18,7 @@ export function formatBgDate(value: string | null | undefined): string {
   })
 }
 
-export function formatBgDateTime(value: string | null | undefined): string {
+export function formatBgDateTime(value: string | Date | null | undefined): string {
   if (!value) return ""
   return new Date(value).toLocaleDateString("bg-BG", {
     day: "2-digit",

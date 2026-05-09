@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatBgDate } from "@/lib/utils"
 
 // Per-type status display. Withdrawals and complaints have different
 // status taxonomies; we render each row with its own type-aware mapping.
@@ -231,9 +232,7 @@ export default function AdminReturnsPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {new Date(r.created_at).toLocaleDateString("bg-BG", {
-                        day: "2-digit", month: "2-digit", year: "numeric",
-                      })}
+                      {formatBgDate(r.created_at)}
                     </TableCell>
                     <TableCell>
                       {isWithdrawal ? (
