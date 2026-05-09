@@ -5028,10 +5028,15 @@ export async function saveBatchAllocation(
       throw new Error(`Разпределените количества по партиди не съвпадат с количествата в поръчката (SKU ${item.sku}: разпределени ${total}, поръчани ${item.quantity}).`)
     }
 
-    const expected = buildExpectedFefoPlan({
-      orderedQty: item.quantity,
-      batches: fefoBatchesBySku.get(item.sku) ?? [],
-    }).allocations
+    // Quantity already covered by expired-override rows isn't subject to
+    // FEFO ordering — pulling expired stock IS the oldest-out choice and
+    // already raises its own override warning. We only FEFO-check the
+    // remaining quantity that has to come from non-expired stock.
+    const expiredOverrideQty = lineRows.reduce((s, r) => {
+      const batch = batchById.get(r.productBatchId)
+      return batch && batch.expiry_date < todayIso ? s + r.quantity : s
+    }, 0)
+    const remainingForFefo = item.quantity - expiredOverrideQty
 
     const activeNonExpiredIds = new Set((fefoBatchesBySku.get(item.sku) ?? []).map((b) => b.id))
     const saved = new Map<string, number>()
@@ -5041,11 +5046,18 @@ export async function saveBatchAllocation(
       }
     }
 
-    if (!isFefoCompliant(saved, expected)) {
-      allLinesCompliant = false
-      const hasReason = lineRows.some((r) => r.nonFefoReason && r.nonFefoReason.trim().length >= 20)
-      if (!hasReason) {
-        throw new Error(`Избрана е партида с по-късен срок при налична по-ранна за SKU ${item.sku}. Моля, въведете причина (поне 20 символа).`)
+    if (remainingForFefo > 0) {
+      const expected = buildExpectedFefoPlan({
+        orderedQty: remainingForFefo,
+        batches: fefoBatchesBySku.get(item.sku) ?? [],
+      }).allocations
+
+      if (!isFefoCompliant(saved, expected)) {
+        allLinesCompliant = false
+        const hasReason = lineRows.some((r) => r.nonFefoReason && r.nonFefoReason.trim().length >= 20)
+        if (!hasReason) {
+          throw new Error(`Избрана е партида с по-късен срок при налична по-ранна за SKU ${item.sku}. Моля, въведете причина (поне 20 символа).`)
+        }
       }
     }
   }
