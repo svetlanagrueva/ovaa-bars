@@ -202,12 +202,31 @@ Lives in `/admin/inventory` → "Изтегляне от пазара / реко
 - "Засегнати поръчки" card: table with columns поръчка / клиент / контакт / статус / бр. (calls `affected_orders_for_batch` RPC). "Изтегли CSV" button when populated. CSV: order id, status, name, email, phone, city, shipped_at, delivered_at, quantity_from_batch, tracking_number.
 - "Действия" card (active batches only): "Изтегли партидата от пазара" button → opens recall dialog with reason textarea (≥ 20 chars enforced both client-side and DB CHECK). Calls `recallBatch(id, reason)` server action. The DB trigger requires status flip + recalled_at + recalled_by + recall_reason in a single UPDATE; the server action fills all four.
 
-### Batch picker in shipment dialog
-When admin clicks "Генерирай товарителница":
-- Pre-shipment: `suggestBatchesForShipment(orderId)` returns FEFO defaults (per-SKU sums, earliest-expiring active batches with available quantity). Returns `BatchSuggestion[]` with `sku`, `quantity`, `suggestions: [{batch_id, batch_number, expiry_date, quantity}]`.
-- Dialog: per-SKU section with FEFO defaults pre-filled in qty inputs. Admin can adjust per-batch quantities or pick different active batches.
-- Sum-equality validation on submit: per-SKU sum across selected batches must match `order_items.quantity`.
-- Submit calls `confirmShipmentBatches(orderId, allocations)` which validates: order status (must be confirmable), per-SKU sum equality, all selected batches `active` and same SKU, no overcommit vs `batch_quantity_available`. Inserts `order_item_batches` rows in one transaction. The actual courier label generation is a separate step (or follows in the same dialog flow).
+### "Партиди" card (allocation as a fulfillment step, separate from courier-label generation)
+Lives on `/admin/orders/[id]` (component: `app/admin/orders/[id]/batch-allocation-card.tsx`). Visible only when `status='confirmed' AND tracking_number IS NULL` — once a tracking number lands, the lifecycle trigger on `order_item_batches` freezes the rows and the card hides.
+
+Flow:
+- On mount, `getBatchAllocationView(orderId)` returns saved rows + the full pool of active batches per SKU (expired flagged via `isExpired`). If no saved rows exist, the card seeds the form using `buildExpectedFefoPlan` from `lib/batches/fefo.ts`. The seed runs client-side from the same view payload (no extra RPC).
+- **Edit/Save lock UI**: card lands in view mode when there's a saved allocation — "Редактирай" enables, "Запази" disabled, all inputs/dropdowns/+Add/✕Remove disabled. Click "Редактирай" → form unlocks, "Запази" enables. Click "Запази" → save fires, form re-locks, success banner persists until the next edit. First-time visitors with no saved rows land in edit mode (FEFO seed is ready to save in one click).
+- Per-line UI: header shows ordered/allocated counter; rows are `<batch dropdown · qty input · ✕>`; "+ Добави партида" splits across batches; "Покажи изтекли партиди" toggle reveals expired batches in the dropdown (hidden by default). Selecting an expired batch surfaces a red override box (checkbox + reason textarea, ≥ 20 chars). A non-FEFO selection surfaces an amber reason textarea (≥ 20 chars, blocking).
+- Save: `saveBatchAllocation(orderId, rows)` validates per-line sum equality, FEFO compliance (compares against the expected plan from `isFefoCompliant`, requires non_fefo_reason on at least one row of a non-compliant line), expired-batch override + reason. Calls the `save_batch_allocation` RPC (atomic delete+insert under FOR UPDATE locks on the order + referenced batches). Emits `batch_allocation_saved` audit event with `{ fefo_compliant, has_expired_override, items: [...] }` payload, plus per-row `batch_allocation_overridden_fefo` / `batch_allocation_overridden_expired`.
+- Other action buttons: "Преизчисли по FEFO" reloads with a fresh FEFO seed (drops local edits) and forces edit mode. "Изтрий разпределението" calls `clearBatchAllocation(orderId)` (DELETE on order_item_batches + `batch_allocation_cleared` audit), drops to edit mode.
+
+### Shipment dialog — read-only allocation summary
+When admin clicks "Генерирай товарителница", the dialog calls `getBatchAllocation(orderId)` and renders a read-only table of saved allocations (SKU / батч № / qty / expiry). "Редактирай разпределението" link closes the dialog and scrolls to the `data-batch-allocation-card` container on the page. Submit just calls `generateShipment(orderId, form)` — there's no longer a `confirmShipmentBatches` step in the submit handler.
+
+`generateShipment` includes a precondition check: after acquiring the `tracking_number = '__generating__'` lock, it verifies per-SKU sum equality between `order_item_batches` and `order_items.quantity`. On mismatch it rolls back the lock and throws a friendly Bulgarian error (`"Преди да изпратите пратката към куриер, разпределете партидите за всички продукти в поръчката."`).
+
+### Cancel shipment
+After a shipment is generated, the order detail Actions card surfaces "Анулирай товарителницата" (visible when `status='confirmed' AND tracking_number IS NOT NULL AND tracking_number != '__generating__'`). Inline reason input (≥ 10 chars) + native `confirm()`. Calls `cancelShipment(orderId, reason)` which:
+- Atomically clears `tracking_number` with an `.eq("tracking_number", previousTrackingNumber)` guard (race-safe against concurrent retry / double-cancel)
+- Emits `batch_allocation_unlocked_after_shipment_cancelled` with `{ previous_tracking_number, reason }`
+- Returns `{ success, previousTrackingNumber }`
+
+Courier-side cancellation (calling Speedy/Econt to void the label) is **admin-managed externally** — the action is the internal half. Once `tracking_number` is null again, the lifecycle trigger releases the `order_item_batches` lock and the "Партиди" card re-renders.
+
+### Legacy `suggestBatchesForShipment` / `confirmShipmentBatches`
+Still exported from `app/actions/admin.ts` with their tests intact, but no longer called from any UI. Safe to remove in a follow-up cleanup commit.
 
 ## Email Notifications
 - Admin gets email on new orders (card and COD) if `ADMIN_EMAIL` env var is set
