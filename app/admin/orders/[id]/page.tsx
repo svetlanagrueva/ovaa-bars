@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { BatchAllocationCard } from "./batch-allocation-card"
+import { DeliveryMethodEditor } from "./delivery-method-editor"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 
 const STATUS_LABELS: Record<string, string> = {
@@ -684,6 +685,26 @@ export default function AdminOrderDetailPage({
             {order.tracking_number && (
               <div><span className="text-muted-foreground">Номер на товарителница:</span> <span className="font-mono">{order.tracking_number}</span></div>
             )}
+            <DeliveryMethodEditor
+              orderId={id}
+              status={order.status}
+              trackingNumber={order.tracking_number}
+              partner={order.logistics_partner}
+              city={order.city}
+              address={order.address}
+              postalCode={order.postal_code}
+              speedyOfficeId={order.speedy_office_id}
+              speedyOfficeName={order.speedy_office_name}
+              speedyOfficeAddress={order.speedy_office_address}
+              econtOfficeId={order.econt_office_id}
+              econtOfficeCode={order.econt_office_code}
+              econtOfficeName={order.econt_office_name}
+              econtOfficeAddress={order.econt_office_address}
+              onSaved={async () => {
+                const updated = await getOrder(id)
+                setOrder(updated)
+              }}
+            />
           </CardContent>
         </Card>
 
@@ -1133,6 +1154,22 @@ export default function AdminOrderDetailPage({
                     }
                     const list = fields.map((k) => labels[k] ?? k).join(", ")
                     return { label: "Редакция на данни на клиента", detail: list || undefined }
+                  }
+                  case "delivery_method_changed": {
+                    const partnerLabels: Record<string, string> = {
+                      "speedy-address": "Speedy адрес",
+                      "speedy-office": "Speedy офис",
+                      "econt-office": "Еконт офис",
+                    }
+                    const fromP = (p.from_partner as string | null) ?? "—"
+                    const toP = (p.to_partner as string | null) ?? "—"
+                    const fromLabel = partnerLabels[fromP] ?? fromP
+                    const toLabel = partnerLabels[toP] ?? toP
+                    const reason = p.reason as string | null | undefined
+                    const detail = [`${fromLabel} → ${toLabel}`, reason ? truncate(reason, 80) : null]
+                      .filter(Boolean)
+                      .join(" — ")
+                    return { label: "Промяна на метод за доставка", detail: detail || undefined }
                   }
                   case "email_resent": {
                     const t = p.email_type as string | undefined

@@ -1312,7 +1312,9 @@ begin
     'batch_allocation_overridden_fefo',
     'batch_allocation_overridden_expired',
     'batch_allocation_cleared',
-    'batch_allocation_unlocked_after_shipment_cancelled'
+    'batch_allocation_unlocked_after_shipment_cancelled',
+    -- Admin-driven delivery-method change on a confirmed/unshipped order
+    'delivery_method_changed'
   ) then
     raise exception 'Unknown outcome type: %', p_outcome_type;
   end if;

@@ -743,6 +743,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail> {
   const TIMELINE_EVENT_TYPES = [
     "order_items_changed",
     "contact_info_changed",
+    "delivery_method_changed",
     "email_resent",
     "status_force_override",
     "data_repair",
@@ -1707,6 +1708,233 @@ export async function updateOrderContact(
   }
 
   return { success: true }
+}
+
+// ─── Edit delivery method on a confirmed/unshipped order ─────────────────
+// Customer called and wants Econt office instead of Speedy address?
+// Admin can flip `logistics_partner` and the partner-specific office /
+// address fields without canceling the order, as long as no courier label
+// has been generated yet (`tracking_number IS NULL`). Audit emit captures
+// the from/to so История shows the change.
+//
+// Fee structure NOT recalculated — same precedent as edit_order_quantity.
+// Customer notification NOT sent — admin can append an admin_note via the
+// `reason` arg to communicate context internally. Both can ship as v2.
+//
+// The chk_delivery_fields_consistent CHECK requires partner-specific
+// office fields to match the partner — switching partners means setting
+// the new partner's fields AND nulling the old partner's fields in the
+// SAME UPDATE. That happens here, in one statement.
+
+export type LogisticsPartner = "econt-office" | "speedy-office" | "speedy-address"
+
+export interface UpdateOrderDeliveryMethodInput {
+  partner: LogisticsPartner
+  city: string
+  // speedy-address only:
+  address?: string
+  postalCode?: string
+  // speedy-office only:
+  speedyOfficeId?: number
+  speedyOfficeName?: string
+  speedyOfficeAddress?: string
+  // econt-office only:
+  econtOfficeId?: number
+  econtOfficeCode?: string
+  econtOfficeName?: string
+  econtOfficeAddress?: string
+  // Optional internal note explaining the change (also appended to admin_notes
+  // when supplied — the audit row is structured but not surfaced in the
+  // notes card, and the support team checks the notes card first).
+  reason?: string
+}
+
+export async function updateOrderDeliveryMethod(
+  orderId: string,
+  data: UpdateOrderDeliveryMethodInput,
+): Promise<{ success: true; fromPartner: string | null; toPartner: LogisticsPartner }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+
+  const validPartners: LogisticsPartner[] = ["econt-office", "speedy-office", "speedy-address"]
+  if (!validPartners.includes(data.partner)) {
+    throw new Error("Невалиден метод за доставка")
+  }
+  const city = data.city?.trim() ?? ""
+  if (!city) throw new Error("Градът е задължителен")
+  if (city.length > 100) throw new Error("Градът е твърде дълъг")
+
+  // Per-partner field validation. The DB CHECK is the backstop, but we
+  // surface friendlier errors here so the admin sees Bulgarian.
+  const trim = (v: string | undefined) => v?.trim() ?? ""
+  const update: Record<string, unknown> = {
+    logistics_partner: data.partner,
+    city,
+    // Default everything to null; specific branches re-set what's needed.
+    address: "",
+    postal_code: "",
+    speedy_office_id: null,
+    speedy_office_name: null,
+    speedy_office_address: null,
+    econt_office_id: null,
+    econt_office_code: null,
+    econt_office_name: null,
+    econt_office_address: null,
+  }
+
+  if (data.partner === "speedy-address") {
+    const address = trim(data.address)
+    const postalCode = trim(data.postalCode)
+    if (!address) throw new Error("Адресът е задължителен за доставка до адрес")
+    if (!postalCode) throw new Error("Пощенският код е задължителен за доставка до адрес")
+    if (address.length > 500) throw new Error("Адресът е твърде дълъг")
+    if (postalCode.length > 20) throw new Error("Невалиден пощенски код")
+    update.address = address
+    update.postal_code = postalCode
+  } else if (data.partner === "speedy-office") {
+    const officeName = trim(data.speedyOfficeName)
+    const officeAddress = trim(data.speedyOfficeAddress)
+    if (!data.speedyOfficeId || !Number.isInteger(data.speedyOfficeId)) {
+      throw new Error("Изберете офис на Speedy")
+    }
+    if (!officeName) throw new Error("Името на Speedy офиса е задължително")
+    if (!officeAddress) throw new Error("Адресът на Speedy офиса е задължителен")
+    update.speedy_office_id = data.speedyOfficeId
+    update.speedy_office_name = officeName
+    update.speedy_office_address = officeAddress
+  } else if (data.partner === "econt-office") {
+    const officeCode = trim(data.econtOfficeCode)
+    const officeName = trim(data.econtOfficeName)
+    const officeAddress = trim(data.econtOfficeAddress)
+    if (!data.econtOfficeId || !Number.isInteger(data.econtOfficeId)) {
+      throw new Error("Изберете офис на Еконт")
+    }
+    if (!officeCode) throw new Error("Кодът на Еконт офиса е задължителен")
+    if (!officeName) throw new Error("Името на Еконт офиса е задължително")
+    if (!officeAddress) throw new Error("Адресът на Еконт офиса е задължителен")
+    update.econt_office_id = data.econtOfficeId
+    update.econt_office_code = officeCode
+    update.econt_office_name = officeName
+    update.econt_office_address = officeAddress
+  }
+
+  const reason = data.reason?.trim() ?? ""
+  if (reason.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+
+  // Read current state for the audit payload + the no-op short-circuit.
+  // Ideally we'd combine read + conditional update in an RPC; the
+  // .eq("status", in (pending, confirmed)).is("tracking_number", null)
+  // race guard on the UPDATE below is still the source of truth.
+  const { data: before, error: readErr } = await supabase
+    .from("orders")
+    .select("logistics_partner, status, tracking_number, city, address, postal_code, speedy_office_id, speedy_office_name, speedy_office_address, econt_office_id, econt_office_code, econt_office_name, econt_office_address")
+    .eq("id", orderId)
+    .single()
+  if (readErr || !before) throw new Error("Поръчката не е намерена")
+
+  if (before.status !== "pending" && before.status !== "confirmed") {
+    throw new Error(
+      `Промяна на метод за доставка е възможна само за чакащи / потвърдени поръчки (текущ статус: ${before.status})`,
+    )
+  }
+  if (before.tracking_number) {
+    throw new Error(
+      "Не може да се промени методът след генериране на товарителница — анулирайте товарителницата първо",
+    )
+  }
+
+  // No-op detection: same partner + same partner-specific fields.
+  const sameAsBefore =
+    before.logistics_partner === data.partner &&
+    before.city === city &&
+    (data.partner !== "speedy-address" || (
+      before.address === update.address &&
+      before.postal_code === update.postal_code
+    )) &&
+    (data.partner !== "speedy-office" || (
+      before.speedy_office_id === update.speedy_office_id &&
+      before.speedy_office_name === update.speedy_office_name &&
+      before.speedy_office_address === update.speedy_office_address
+    )) &&
+    (data.partner !== "econt-office" || (
+      before.econt_office_id === update.econt_office_id &&
+      before.econt_office_code === update.econt_office_code &&
+      before.econt_office_name === update.econt_office_name &&
+      before.econt_office_address === update.econt_office_address
+    ))
+  if (sameAsBefore) throw new Error("Няма промяна за прилагане")
+
+  // Atomic UPDATE: sets new partner's fields and nulls the old partner's,
+  // so chk_delivery_fields_consistent passes mid-statement.
+  const { data: updated, error } = await supabase
+    .from("orders")
+    .update(update)
+    .eq("id", orderId)
+    .in("status", ["pending", "confirmed"])
+    .is("tracking_number", null)
+    .select("id")
+
+  if (error) {
+    console.error("Failed to update delivery method:", sanitizeError(error))
+    throw new Error("Грешка при промяна на метода за доставка")
+  }
+  if (!updated || updated.length === 0) {
+    // Race: status changed or tracking_number landed between the read and
+    // the UPDATE. Re-read for a specific error.
+    const { data: existing } = await supabase
+      .from("orders")
+      .select("status, tracking_number")
+      .eq("id", orderId)
+      .single()
+    if (!existing) throw new Error("Поръчката не е намерена")
+    if (existing.tracking_number) {
+      throw new Error("Между прочита и записа е генерирана товарителница — обновете страницата")
+    }
+    throw new Error(
+      `Редакцията е допустима само за чакащи / потвърдени поръчки (текущ статус: ${existing.status})`,
+    )
+  }
+
+  // Build the audit payload: from/to keyed by relevant partner fields only.
+  function partnerFields(partner: string | null, src: Record<string, unknown>) {
+    if (partner === "speedy-address") return { city: src.city, address: src.address, postal_code: src.postal_code }
+    if (partner === "speedy-office") return { city: src.city, office_id: src.speedy_office_id, office_name: src.speedy_office_name, office_address: src.speedy_office_address }
+    if (partner === "econt-office") return { city: src.city, office_id: src.econt_office_id, office_code: src.econt_office_code, office_name: src.econt_office_name, office_address: src.econt_office_address }
+    return { city: src.city }
+  }
+  const auditPayload = {
+    from_partner: before.logistics_partner ?? null,
+    to_partner: data.partner,
+    from: partnerFields(before.logistics_partner, before as Record<string, unknown>),
+    to: partnerFields(data.partner, update),
+    reason: reason || null,
+  }
+
+  const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "delivery_method_changed",
+    p_payload: auditPayload,
+    p_actor: "admin",
+  })
+  if (auditErr) {
+    console.error("Failed to emit delivery_method_changed:", sanitizeError(auditErr))
+  }
+
+  // If admin supplied a reason, also append it as an admin_note so support
+  // staff browsing the notes card see the context inline. The audit event
+  // is structured but lives only in the timeline.
+  if (reason) {
+    const noteText = `Метод за доставка: ${before.logistics_partner ?? "—"} → ${data.partner}. ${reason}`
+    const { error: noteErr } = await supabase.rpc("add_admin_note", {
+      p_order_id: orderId,
+      p_text: noteText.length > 2000 ? noteText.slice(0, 2000) : noteText,
+    })
+    if (noteErr) console.error("Failed to append admin note for delivery change:", sanitizeError(noteErr))
+  }
+
+  return { success: true, fromPartner: before.logistics_partner as string | null, toPartner: data.partner }
 }
 
 // COD-only, pre-ship-only. Delegates all the cross-table atomicity to the
