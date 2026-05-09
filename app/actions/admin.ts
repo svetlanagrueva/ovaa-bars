@@ -4665,6 +4665,105 @@ export async function getBatchAllocation(orderId: string): Promise<BatchAllocati
   })
 }
 
+export interface BatchAllocationViewBatch {
+  productBatchId: string
+  sku: string
+  batchNumber: string
+  expiryDate: string
+  quantityAvailable: number
+  isExpired: boolean
+}
+
+export interface BatchAllocationView {
+  lines: Array<{
+    orderItemId: number
+    sku: string
+    productName: string
+    orderedQuantity: number
+    saved: Array<{
+      productBatchId: string
+      quantity: number
+      nonFefoReason: string | null
+      expiredOverrideReason: string | null
+    }>
+  }>
+  batches: BatchAllocationViewBatch[]
+}
+
+// Single round-trip read for the order-detail "Партиди" card.
+// Returns: per-line ordered + saved allocation, plus the full pool of
+// active batches (expired included, flagged) for SKUs in the order.
+// The client computes the FEFO seed using lib/batches/fefo.ts.
+export async function getBatchAllocationView(orderId: string): Promise<BatchAllocationView> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  const { data: orderItems, error: itemsErr } = await supabase
+    .from("order_items")
+    .select("id, sku, product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (itemsErr || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: existingAllocs } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity, non_fefo_reason, expired_override_reason")
+    .in("order_item_id", itemIds)
+
+  const allocsByItem = new Map<number, Array<{ product_batch_id: string; quantity: number; non_fefo_reason: string | null; expired_override_reason: string | null }>>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { order_item_id: number; product_batch_id: string; quantity: number; non_fefo_reason: string | null; expired_override_reason: string | null }
+    if (!allocsByItem.has(row.order_item_id)) allocsByItem.set(row.order_item_id, [])
+    allocsByItem.get(row.order_item_id)!.push(row)
+  }
+
+  const skus = Array.from(new Set(orderItems.map((i) => i.sku)))
+  const { data: rawBatches } = await supabase
+    .from("product_batches")
+    .select("id, sku, batch_number, expiry_date, status")
+    .in("sku", skus)
+    .eq("status", "active")
+    .order("expiry_date", { ascending: true })
+
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const batches: BatchAllocationViewBatch[] = []
+  for (const b of rawBatches ?? []) {
+    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
+    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
+    batches.push({
+      productBatchId: row.id,
+      sku: row.sku,
+      batchNumber: row.batch_number,
+      expiryDate: row.expiry_date,
+      quantityAvailable: typeof avail === "number" ? avail : 0,
+      isExpired: row.expiry_date < todayIso,
+    })
+  }
+
+  return {
+    lines: orderItems.map((oi) => {
+      const item = oi as { id: number; sku: string; product_name: string; quantity: number }
+      const saved = (allocsByItem.get(item.id) ?? []).map((a) => ({
+        productBatchId: a.product_batch_id,
+        quantity: a.quantity,
+        nonFefoReason: a.non_fefo_reason,
+        expiredOverrideReason: a.expired_override_reason,
+      }))
+      return {
+        orderItemId: item.id,
+        sku: item.sku,
+        productName: item.product_name,
+        orderedQuantity: item.quantity,
+        saved,
+      }
+    }),
+    batches,
+  }
+}
+
 export async function autoAllocateFefo(orderId: string): Promise<FefoAutoSuggestion[]> {
   await requireAdmin()
   if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
