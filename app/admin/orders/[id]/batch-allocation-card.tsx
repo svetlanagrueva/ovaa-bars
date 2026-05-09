@@ -84,9 +84,19 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
   const [success, setSuccess] = useState("")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  // Lock pattern: form is read-only after a saved state lands. "Редактирай"
+  // unlocks it; "Запази" locks it again. Initial-load state is decided in load()
+  // based on whether the order has any saved allocation rows yet.
+  const [editMode, setEditMode] = useState(false)
 
   useEffect(() => {
-    void load(false)
+    void (async () => {
+      const v = await load(false)
+      // First-time visitors with no saved rows start in edit mode so they
+      // can save the FEFO seed without an extra click. Otherwise the form
+      // is locked until the admin clicks "Редактирай".
+      setEditMode(!v?.lines.some((l) => l.saved.length > 0))
+    })()
   }, [orderId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load(preferFefoSeed: boolean) {
@@ -105,8 +115,10 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
           : seedLineFromFefo(l, v.batches),
       }))
       setLines(seeded)
+      return v
     } catch (err) {
       setError(err instanceof Error ? err.message : "Грешка при зареждане")
+      return null
     } finally {
       setLoading(false)
     }
@@ -190,7 +202,8 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
 
   async function handleAutoFefo() {
     setSuccess("")
-    void load(true)
+    await load(true)
+    setEditMode(true)
   }
 
   async function handleSave() {
@@ -252,9 +265,8 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
     try {
       const result = await saveBatchAllocation(orderId, payload)
       onSaved?.()
-      // Reload first (availability may have shifted) so the success banner
-      // is set on top of the freshly-loaded state, not wiped by it.
       await load(false)
+      setEditMode(false)
       setSuccess(`Запазени ${result.saved} реда. Разпределението е записано.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Грешка при запазване")
@@ -271,6 +283,7 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
     try {
       const result = await clearBatchAllocation(orderId)
       await load(true)
+      setEditMode(true)
       if (result.cleared > 0) setSuccess(`Изтрити ${result.cleared} реда`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Грешка при изчистване")
@@ -297,10 +310,10 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void handleAutoFefo()} disabled={saving}>
+          <Button variant="outline" size="sm" onClick={() => void handleAutoFefo()} disabled={saving || !editMode}>
             {hasAnySaved ? "Преизчисли по FEFO" : "Автоматично разпредели по FEFO"}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => void handleClear()} disabled={saving}>
+          <Button variant="ghost" size="sm" onClick={() => void handleClear()} disabled={saving || !editMode}>
             Изтрий разпределението
           </Button>
           <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -334,7 +347,8 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                       <select
                         value={row.productBatchId}
                         onChange={(e) => updateRow(line.orderItemId, idx, { productBatchId: e.target.value, allowExpiredOverride: false, expiredOverrideReason: "" })}
-                        className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                        disabled={!editMode}
+                        className="h-8 rounded-md border border-border bg-background px-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <option value="">— избери партида —</option>
                         {skuOptions.map((b) => (
@@ -350,13 +364,15 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                         max={batch ? batch.quantityAvailable : undefined}
                         value={row.quantity}
                         onChange={(e) => updateRow(line.orderItemId, idx, { quantity: e.target.value })}
+                        disabled={!editMode}
                         className="h-8 w-20 text-xs"
                         placeholder="бр."
                       />
                       <button
                         type="button"
                         onClick={() => removeRow(line.orderItemId, idx)}
-                        className="text-muted-foreground hover:text-red-700 px-1"
+                        disabled={!editMode}
+                        className="text-muted-foreground hover:text-red-700 px-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground"
                         aria-label="Премахни ред"
                       >
                         ✕
@@ -369,6 +385,7 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                             type="checkbox"
                             checked={row.allowExpiredOverride}
                             onChange={(e) => updateRow(line.orderItemId, idx, { allowExpiredOverride: e.target.checked })}
+                            disabled={!editMode}
                           />
                           <span className="text-red-900">Разбирам, че партидата е с изтекъл срок</span>
                         </label>
@@ -378,6 +395,7 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                             onChange={(e) => updateRow(line.orderItemId, idx, { expiredOverrideReason: e.target.value })}
                             placeholder="Причина за използване на изтекла партида (поне 20 символа)…"
                             rows={2}
+                            disabled={!editMode}
                             className="text-xs"
                           />
                         )}
@@ -391,6 +409,7 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                 variant="ghost"
                 size="sm"
                 onClick={() => addRow(line.orderItemId)}
+                disabled={!editMode}
                 className="text-xs"
               >
                 + Добави партида
@@ -406,6 +425,7 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                     onChange={(e) => updateRow(line.orderItemId, 0, { nonFefoReason: e.target.value })}
                     placeholder="Причина за отклонение от FEFO (поне 20 символа)…"
                     rows={2}
+                    disabled={!editMode}
                     className="text-xs"
                   />
                 </div>
@@ -415,7 +435,14 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
         })}
 
         <div className="flex gap-2 pt-2">
-          <Button onClick={() => void handleSave()} disabled={saving}>
+          <Button
+            variant="outline"
+            onClick={() => { setEditMode(true); setSuccess("") }}
+            disabled={editMode || saving}
+          >
+            Редактирай
+          </Button>
+          <Button onClick={() => void handleSave()} disabled={!editMode || saving}>
             {saving ? "Записване…" : "Запази разпределението"}
           </Button>
         </div>
