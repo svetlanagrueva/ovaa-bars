@@ -7,22 +7,7 @@ import { getDashboardStats, type DashboardStats } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: "Чакаща",
-  confirmed: "Потвърдена",
-  shipped: "Изпратена",
-  delivered: "Доставена",
-  cancelled: "Отказана",
-}
-
-const STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  pending: "outline",
-  confirmed: "default",
-  shipped: "secondary",
-  delivered: "secondary",
-  cancelled: "destructive",
-}
+import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT } from "@/lib/orders"
 
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -201,8 +186,8 @@ export default function AdminDashboardPage() {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-medium">{formatPrice(order.total_amount)}</span>
-                    <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>
-                      {STATUS_LABELS[order.status] || order.status}
+                    <Badge variant={ORDER_STATUS_BADGE_VARIANT[order.status] || "outline"}>
+                      {ORDER_STATUS_LABELS[order.status] || order.status}
                     </Badge>
                   </div>
                 </Link>

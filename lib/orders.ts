@@ -94,3 +94,23 @@ export function getFinancialStatusLabel(order: {
   if (status === "paid" && order.payment_method === "cod") return "Уредена"
   return FINANCIAL_STATUS_LABELS[status]
 }
+
+// Lifecycle-status labels + Badge variants for orders. Used by the dashboard
+// recent-orders block, the orders list, and any future place that renders an
+// order's status — keep these as the single source of truth so a status-name
+// rename only touches this file.
+export const ORDER_STATUS_LABELS: Record<string, string> = {
+  pending: "Чакаща",
+  confirmed: "Потвърдена",
+  shipped: "Изпратена",
+  delivered: "Доставена",
+  cancelled: "Отказана",
+}
+
+export const ORDER_STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  pending: "outline",
+  confirmed: "default",
+  shipped: "secondary",
+  delivered: "secondary",
+  cancelled: "destructive",
+}

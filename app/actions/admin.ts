@@ -729,8 +729,7 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
 export async function getOrder(orderId: string): Promise<OrderDetail> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) {
+  if (!UUID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -899,8 +898,7 @@ export async function updateOrderStatus(
 ) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) {
+  if (!UUID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -1048,8 +1046,7 @@ export interface ShipmentDisplayInfo {
 export async function getShipmentDefaults(orderId: string): Promise<{ form: ShipmentFormData; display: ShipmentDisplayInfo }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -1107,8 +1104,7 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
 export async function generateShipment(orderId: string, form: ShipmentFormData): Promise<{ trackingNumber: string }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
   if (!form.weight || form.weight < 0.1 || form.weight > 50) throw new Error("Теглото трябва да е между 0.1 и 50 кг")
   if (!form.recipientName.trim()) throw new Error("Името на получателя е задължително")
   if (!form.recipientPhone.trim()) throw new Error("Телефонът на получателя е задължителен")
@@ -1325,8 +1321,7 @@ export async function cancelShipment(
 export async function addAdminNote(orderId: string, note: string) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const trimmed = note.trim()
   if (!trimmed) throw new Error("Бележката е празна")
@@ -1363,8 +1358,7 @@ export async function setInvoiceNumber(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
+  if (!UUID_REGEX.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const trimmed = invoiceNumber.trim()
   if (!trimmed || trimmed.length > 50) throw new Error("Невалиден номер на фактура")
@@ -1406,8 +1400,7 @@ export async function setInvoiceNumber(
 export async function markInvoiceSent(invoiceId: string): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
+  if (!UUID_REGEX.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -1441,8 +1434,7 @@ export async function recordCodSettlement(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   if (data.courierPppRef && data.courierPppRef.length > 100) {
     throw new Error("ППП референцията е твърде дълга")
@@ -1524,8 +1516,7 @@ export async function recordCodSettlement(
 export async function markCodConfirmed(orderId: string): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
 
@@ -1607,8 +1598,7 @@ export async function updateOrderContact(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   // Per-field validation. Only fields that were actually provided are
   // validated; undefined values pass through untouched. The client is
@@ -1723,8 +1713,7 @@ export async function updateOrderQuantity(
 ): Promise<{ success: true; newTotalCents: number }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   if (!sku || typeof sku !== "string") throw new Error("SKU е задължителен")
   const validSkus = PRODUCTS.map((p) => p.sku)
@@ -1857,8 +1846,7 @@ export async function resendOrderConfirmationEmail(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -1892,8 +1880,7 @@ export async function resendShippingEmail(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -1923,8 +1910,7 @@ export async function resendDeliveryEmail(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -2023,9 +2009,8 @@ export async function recordRefund(
 ): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
-  if (!uuidRegex.test(data.clientIdempotencyKey)) {
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(data.clientIdempotencyKey)) {
     throw new Error("Невалиден idempotency key")
   }
 
@@ -2300,7 +2285,7 @@ export async function recordRefund(
   // goods_received; never completed/rejected).
   const withdrawalIdForLink = data.withdrawalId?.trim() || null
   if (withdrawalIdForLink) {
-    if (!uuidRegex.test(withdrawalIdForLink)) {
+    if (!UUID_REGEX.test(withdrawalIdForLink)) {
       throw new Error("Невалиден формат на заявка за връщане")
     }
     const { data: wd, error: wdError } = await supabase
@@ -2539,8 +2524,7 @@ export async function updateRefundAnnotation(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(refundId)) throw new Error("Невалиден формат на възстановяване")
+  if (!UUID_REGEX.test(refundId)) throw new Error("Невалиден формат на възстановяване")
 
   const updatePayload: Record<string, unknown> = {}
 
@@ -2635,8 +2619,7 @@ export async function recordOrderOutcome(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   if (!OUTCOME_TYPES.includes(data.outcomeType)) {
     throw new Error("Невалиден тип събитие")
@@ -2752,8 +2735,7 @@ export async function recordComplaint(
 ): Promise<{ success: true; complaintRef: string }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   // Validate defect description
   const trimmedDefect = data.defectDescription?.trim()
@@ -2904,8 +2886,7 @@ export async function getComplaints(
 export async function getOrderComplaints(orderId: string): Promise<Complaint[]> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -3471,8 +3452,7 @@ export async function createSale(data: {
 export async function endSale(saleId: string) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(saleId)) throw new Error("Invalid sale ID")
+  if (!UUID_REGEX.test(saleId)) throw new Error("Invalid sale ID")
 
   const supabase = await createClient()
 
@@ -3596,8 +3576,7 @@ export async function createPromoCode(input: {
 export async function deactivatePromoCode(promoId: string) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(promoId)) throw new Error("Invalid promo code ID")
+  if (!UUID_REGEX.test(promoId)) throw new Error("Invalid promo code ID")
 
   const supabase = await createClient()
 
@@ -3974,13 +3953,12 @@ export async function recordStockMovement(data: {
   // Validate orderId — allowed on return_in (sellable return) and damaged
   // (damaged return). On other movement types, order_id wouldn't have
   // meaningful semantics under the current reference_type rules.
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const shortIdRegex = /^[0-9a-f]{8}$/i
   let resolvedOrderId: string | undefined = data.orderId?.trim() || undefined
   if (resolvedOrderId && data.type !== "return_in" && data.type !== "damaged") {
     throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
-  if (resolvedOrderId && !uuidRegex.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
+  if (resolvedOrderId && !UUID_REGEX.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
     throw new Error("Невалиден формат на поръчка (очаква се UUID или 8-знаков префикс)")
   }
 
@@ -4321,21 +4299,18 @@ export async function getProductBatches(params?: {
     throw new Error("Грешка при зареждане на партидите")
   }
 
-  // Compute available quantity per batch via the helper RPC. Could be done
-  // in a single SQL with a lateral join; per-batch RPC keeps the logic in
-  // one place and the call count is bounded by total batches (small).
+  // Compute available quantity per batch via the helper RPC. Issued in
+  // parallel; the call count is bounded by total batches (small) so a
+  // SQL lateral join isn't worth the schema change.
   const batches = (data ?? []) as ProductBatch[]
-  const results: ProductBatchWithAvailability[] = []
-  for (const b of batches) {
-    const { data: qty, error: qtyError } = await supabase.rpc("batch_quantity_available", {
-      p_batch_id: b.id,
-    })
-    if (qtyError) {
-      console.error(`Failed to compute availability for batch ${b.id}:`, qtyError)
-    }
-    results.push({ ...b, quantity_available: typeof qty === "number" ? qty : 0 })
-  }
-  return results
+  const availabilities = await Promise.all(
+    batches.map(async (b) => {
+      const { data: qty, error: qtyError } = await supabase.rpc("batch_quantity_available", { p_batch_id: b.id })
+      if (qtyError) console.error(`Failed to compute availability for batch ${b.id}:`, qtyError)
+      return typeof qty === "number" ? qty : 0
+    }),
+  )
+  return batches.map((b, i) => ({ ...b, quantity_available: availabilities[i] }))
 }
 
 export async function getProductBatch(id: string): Promise<ProductBatchWithAvailability> {
@@ -4534,19 +4509,18 @@ export async function getBatchAllocationView(orderId: string): Promise<BatchAllo
     .order("expiry_date", { ascending: true })
 
   const todayIso = new Date().toISOString().slice(0, 10)
-  const batches: BatchAllocationViewBatch[] = []
-  for (const b of rawBatches ?? []) {
-    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
-    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
-    batches.push({
-      productBatchId: row.id,
-      sku: row.sku,
-      batchNumber: row.batch_number,
-      expiryDate: row.expiry_date,
-      quantityAvailable: typeof avail === "number" ? avail : 0,
-      isExpired: row.expiry_date < todayIso,
-    })
-  }
+  const rawBatchRows = (rawBatches ?? []) as Array<{ id: string; sku: string; batch_number: string; expiry_date: string; status: string }>
+  const availabilities = await Promise.all(
+    rawBatchRows.map((b) => supabase.rpc("batch_quantity_available", { p_batch_id: b.id })),
+  )
+  const batches: BatchAllocationViewBatch[] = rawBatchRows.map((row, i) => ({
+    productBatchId: row.id,
+    sku: row.sku,
+    batchNumber: row.batch_number,
+    expiryDate: row.expiry_date,
+    quantityAvailable: typeof availabilities[i].data === "number" ? availabilities[i].data : 0,
+    isExpired: row.expiry_date < todayIso,
+  }))
 
   return {
     lines: orderItems.map((oi) => {
@@ -4598,12 +4572,13 @@ export async function autoAllocateFefo(orderId: string): Promise<FefoAutoSuggest
     batchesBySku.get(row.sku)!.push(row)
   }
 
-  const availByBatch = new Map<string, number>()
-  for (const b of batches ?? []) {
-    const row = b as { id: string }
-    const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
-    availByBatch.set(row.id, typeof qty === "number" ? qty : 0)
-  }
+  const batchRows = (batches ?? []) as Array<{ id: string }>
+  const availResults = await Promise.all(
+    batchRows.map((b) => supabase.rpc("batch_quantity_available", { p_batch_id: b.id })),
+  )
+  const availByBatch = new Map<string, number>(
+    batchRows.map((b, i) => [b.id, typeof availResults[i].data === "number" ? availResults[i].data : 0]),
+  )
 
   // Drawdown across lines that share batches (e.g., two lines of the same SKU)
   const drawdown = new Map<string, number>()
@@ -4736,19 +4711,23 @@ export async function saveBatchAllocation(
     }
   }
 
-  // FEFO check needs availability per active+non-expired batch
+  // FEFO check needs availability per active+non-expired batch — fetched in parallel.
+  const fefoCandidates = Array.from(batchById.values()).filter(
+    (b) => b.status === "active" && b.expiry_date >= todayIso,
+  )
+  const fefoAvailabilities = await Promise.all(
+    fefoCandidates.map((b) => supabase.rpc("batch_quantity_available", { p_batch_id: b.id })),
+  )
   const fefoBatchesBySku = new Map<string, Array<{ id: string; expiryDate: string; createdAt: string; availableQty: number }>>()
-  for (const b of batchById.values()) {
-    if (b.status !== "active" || b.expiry_date < todayIso) continue
-    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: b.id })
+  fefoCandidates.forEach((b, i) => {
     if (!fefoBatchesBySku.has(b.sku)) fefoBatchesBySku.set(b.sku, [])
     fefoBatchesBySku.get(b.sku)!.push({
       id: b.id,
       expiryDate: b.expiry_date,
       createdAt: b.created_at,
-      availableQty: typeof avail === "number" ? avail : 0,
+      availableQty: typeof fefoAvailabilities[i].data === "number" ? fefoAvailabilities[i].data : 0,
     })
-  }
+  })
 
   const rowsByItem = new Map<number, SaveBatchAllocationRow[]>()
   for (const r of rows) {
@@ -4845,24 +4824,30 @@ export async function saveBatchAllocation(
   })
   if (auditErr) console.error("Failed to emit batch_allocation_saved:", sanitizeError(auditErr))
 
+  // Per-row override events fire in parallel — they're independent and the
+  // sequential `await` chain was N round-trips of pure latency. The
+  // Supabase query builder is thenable so `await Promise.all(...)` works
+  // even though the elements aren't Promise subclasses.
+  const overrideCalls: Array<PromiseLike<unknown>> = []
   for (const r of rows) {
     if (r.nonFefoReason && r.nonFefoReason.trim().length >= 20) {
-      await supabase.rpc("record_order_outcome", {
+      overrideCalls.push(supabase.rpc("record_order_outcome", {
         p_order_id: orderId,
         p_outcome_type: "batch_allocation_overridden_fefo",
         p_payload: { order_item_id: r.orderItemId, product_batch_id: r.productBatchId, reason: r.nonFefoReason },
         p_actor: "admin",
-      })
+      }))
     }
     if (r.allowExpiredOverride && r.expiredOverrideReason && r.expiredOverrideReason.trim().length >= 20) {
-      await supabase.rpc("record_order_outcome", {
+      overrideCalls.push(supabase.rpc("record_order_outcome", {
         p_order_id: orderId,
         p_outcome_type: "batch_allocation_overridden_expired",
         p_payload: { order_item_id: r.orderItemId, product_batch_id: r.productBatchId, reason: r.expiredOverrideReason },
         p_actor: "admin",
-      })
+      }))
     }
   }
+  if (overrideCalls.length > 0) await Promise.all(overrideCalls)
 
   revalidateTag("product-batches", "max")
   return { success: true, saved: rows.length }

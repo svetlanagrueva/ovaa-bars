@@ -14,6 +14,7 @@ import {
   type SaveBatchAllocationRow,
 } from "@/app/actions/admin"
 import { buildExpectedFefoPlan, isFefoCompliant } from "@/lib/batches/fefo"
+import { formatBgDate } from "@/lib/utils"
 
 interface RowState {
   productBatchId: string
@@ -29,11 +30,6 @@ interface LineState {
   productName: string
   orderedQuantity: number
   rows: RowState[]
-}
-
-function formatExpiry(iso: string): string {
-  if (!iso) return ""
-  return new Date(iso).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })
 }
 
 function seedLineFromFefo(
@@ -353,7 +349,7 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
                         <option value="">— избери партида —</option>
                         {skuOptions.map((b) => (
                           <option key={b.productBatchId} value={b.productBatchId}>
-                            {b.batchNumber} · изт. {formatExpiry(b.expiryDate)} · налични {b.quantityAvailable}
+                            {b.batchNumber} · изт. {formatBgDate(b.expiryDate)} · налични {b.quantityAvailable}
                             {b.isExpired ? " · ИЗТЕКЛА" : ""}
                           </option>
                         ))}

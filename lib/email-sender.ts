@@ -189,7 +189,7 @@ export async function notifyAdminNewOrder(order: Record<string, unknown>, paymen
     .join("\n")
 
   resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+    from: requireEnv("EMAIL_FROM"),
     to: process.env.ADMIN_EMAIL,
     subject: `Нова поръчка #${(order.id as string).slice(0, 8)} — ${formatPrice(order.total_amount as number)}`,
     text: `

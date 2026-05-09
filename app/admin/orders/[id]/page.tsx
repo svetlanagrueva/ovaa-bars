@@ -4,7 +4,7 @@ import { useEffect, useState, use } from "react"
 import Link from "next/link"
 import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, cancelShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
-import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS } from "@/lib/orders"
+import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,22 +15,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
 import { BatchAllocationCard } from "./batch-allocation-card"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: "Чакаща",
-  confirmed: "Потвърдена",
-  shipped: "Изпратена",
-  delivered: "Доставена",
-  cancelled: "Отказана",
-}
-
-const STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  pending: "outline",
-  confirmed: "default",
-  shipped: "secondary",
-  delivered: "secondary",
-  cancelled: "destructive",
-}
 
 export default function AdminOrderDetailPage({
   params,
@@ -317,8 +301,8 @@ export default function AdminOrderDetailPage({
 
       <div className="mb-6 flex items-center gap-3">
         <h1 className="text-2xl font-bold">Поръчка #{order.id.slice(0, 8)}</h1>
-        <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>
-          {STATUS_LABELS[order.status] || order.status}
+        <Badge variant={ORDER_STATUS_BADGE_VARIANT[order.status] || "outline"}>
+          {ORDER_STATUS_LABELS[order.status] || order.status}
         </Badge>
         {/* Exception flows: refund / complaint / outcome live behind this
             dropdown so the main panel stays focused on routine actions
