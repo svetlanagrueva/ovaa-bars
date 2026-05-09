@@ -1841,9 +1841,61 @@ async function emitEmailResentAudit(
   }
 }
 
-export async function resendOrderConfirmationEmail(
-  orderId: string,
-): Promise<{ success: true }> {
+// Dispatch table for the three customer email-resend admin actions. The
+// scaffolding (auth + UUID + load order + audit + return) is shared in
+// `resendOrderEmail`; each entry encodes the bits that vary:
+//   - `gate(order)`: returns a Bulgarian error message string when the
+//     order isn't in a sendable state, or null when it is.
+//   - `send(order)`: actually fires the underlying email helper.
+type ResendKind = "order_confirmation" | "shipping" | "delivery"
+
+interface ResendSpec {
+  gate: (order: Record<string, unknown>) => string | null
+  send: (order: Record<string, unknown>) => Promise<void>
+}
+
+const RESEND_SPECS: Record<ResendKind, ResendSpec> = {
+  order_confirmation: {
+    // Don't resend for pending orders — they haven't been confirmed yet, so
+    // the "order confirmation" wording would be wrong (no receipt URL for
+    // card, no COD acceptance).
+    gate: (order) => {
+      if (order.status === "pending") {
+        return "Потвърждение на поръчка се изпраща след потвърждение на плащането"
+      }
+      if (order.status === "cancelled" || order.status === "expired") {
+        return `Не може да се изпрати потвърждение за ${order.status === "cancelled" ? "отказана" : "изтекла"} поръчка`
+      }
+      return null
+    },
+    send: (order) => sendOrderConfirmationEmail(order),
+  },
+  shipping: {
+    // Shipping email is only meaningful once a tracking number is assigned.
+    // The '__generating__' placeholder is a distinct not-yet-ready state —
+    // refuse it explicitly so the rare edge case isn't silently suppressed.
+    gate: (order) => {
+      if (!order.tracking_number || order.tracking_number === "__generating__") {
+        return "Пратката още не е генерирана — няма номер за изпращане"
+      }
+      return null
+    },
+    send: (order) => sendShippingEmail(order, order.tracking_number as string),
+  },
+  delivery: {
+    gate: (order) => {
+      if (order.status !== "delivered") {
+        return `Потвърждение за доставка се изпраща само за доставени поръчки (текущ статус: ${order.status})`
+      }
+      return null
+    },
+    // force: true bypasses delivery_email_sent_at; sendDeliveryEmail's
+    // own .is(..., null) guard preserves the original first-sent time.
+    send: (order) => sendDeliveryEmail(order, { force: true }),
+  },
+}
+
+async function resendOrderEmail(orderId: string, kind: ResendKind): Promise<{ success: true }> {
   await requireAdmin()
 
   if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
@@ -1857,83 +1909,26 @@ export async function resendOrderConfirmationEmail(
 
   if (error || !order) throw new Error("Поръчката не е намерена")
 
-  // Don't resend for pending orders — they haven't been confirmed yet, so the
-  // "order confirmation" wording would be wrong (no receipt URL for card,
-  // no COD acceptance).
-  if (order.status === "pending") {
-    throw new Error("Потвърждение на поръчка се изпраща след потвърждение на плащането")
-  }
-  if (order.status === "cancelled" || order.status === "expired") {
-    throw new Error(
-      `Не може да се изпрати потвърждение за ${order.status === "cancelled" ? "отказана" : "изтекла"} поръчка`,
-    )
-  }
+  const spec = RESEND_SPECS[kind]
+  const gateError = spec.gate(order as Record<string, unknown>)
+  if (gateError) throw new Error(gateError)
 
-  await sendOrderConfirmationEmail(order as Record<string, unknown>)
-  await emitEmailResentAudit(supabase, orderId, "order_confirmation")
+  await spec.send(order as Record<string, unknown>)
+  await emitEmailResentAudit(supabase, orderId, kind)
 
   return { success: true }
 }
 
-export async function resendShippingEmail(
-  orderId: string,
-): Promise<{ success: true }> {
-  await requireAdmin()
-
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
-
-  const supabase = await createClient()
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  if (error || !order) throw new Error("Поръчката не е намерена")
-
-  // Shipping email is only meaningful once a tracking number is assigned.
-  // status='shipped' implies tracking_number was set (generate-shipment
-  // atomically moves the status), but the placeholder value is a distinct
-  // not-yet-ready state — rare edge case, refuse it explicitly.
-  if (!order.tracking_number || order.tracking_number === "__generating__") {
-    throw new Error("Пратката още не е генерирана — няма номер за изпращане")
-  }
-
-  await sendShippingEmail(order as Record<string, unknown>, order.tracking_number as string)
-  await emitEmailResentAudit(supabase, orderId, "shipping")
-
-  return { success: true }
+export function resendOrderConfirmationEmail(orderId: string): Promise<{ success: true }> {
+  return resendOrderEmail(orderId, "order_confirmation")
 }
 
-export async function resendDeliveryEmail(
-  orderId: string,
-): Promise<{ success: true }> {
-  await requireAdmin()
+export function resendShippingEmail(orderId: string): Promise<{ success: true }> {
+  return resendOrderEmail(orderId, "shipping")
+}
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
-
-  const supabase = await createClient()
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  if (error || !order) throw new Error("Поръчката не е намерена")
-
-  if (order.status !== "delivered") {
-    throw new Error(
-      `Потвърждение за доставка се изпраща само за доставени поръчки (текущ статус: ${order.status})`,
-    )
-  }
-
-  // force: true bypasses the delivery_email_sent_at early-return so the email
-  // actually fires. The timestamp update inside sendDeliveryEmail keeps its
-  // .is(..., null) guard, so the original first-sent time is preserved.
-  await sendDeliveryEmail(order as Record<string, unknown>, { force: true })
-  await emitEmailResentAudit(supabase, orderId, "delivery")
-
-  return { success: true }
+export function resendDeliveryEmail(orderId: string): Promise<{ success: true }> {
+  return resendOrderEmail(orderId, "delivery")
 }
 
 // ─── Refund tracking ─────────────────────────────────────────────────────────
