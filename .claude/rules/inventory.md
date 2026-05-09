@@ -158,7 +158,6 @@ Migration `20260429123326_batch_traceability.sql` adds two tables:
 - `saveBatchAllocation(orderId, rows)` (TS, in `app/actions/admin.ts`) does input + FEFO-compliance + expired-override validation, then calls the `save_batch_allocation` RPC for the atomic delete+insert under `FOR UPDATE` locks on the parent order and the referenced product_batches. Re-validates inside the transaction: order status='confirmed', tracking_number IS NULL, per-SKU sum equality with `order_items.quantity`, all selected batches `active`, no overcommit vs `batch_quantity_available` (DELETE happens before the availability check so the order's prior allocation isn't double-counted).
 - The "Генерирай товарителница" dialog now shows a read-only allocation summary; submit just calls `generateShipment` which has a precondition check (per-SKU sum equality) and rolls back the `__generating__` lock with a friendly Bulgarian error on mismatch.
 - Inventory is NOT moved here — `inventory_log` already recorded `order_out` at order creation. The batch table is accounting-of-allocation, decoupled from sellable count.
-- Legacy `suggestBatchesForShipment` and `confirmShipmentBatches` server actions are still exported for test compatibility but no UI calls them.
 
 **Recall workflow** (admin clicks "Изтегли партидата от пазара"):
 - `recallBatch(batchId, reason)` validates `reason ≥ 20 chars`, sets `status='recalled'`, `recalled_at=now()`, `recalled_by`, `recall_reason` in one UPDATE (the trigger requires all three together).

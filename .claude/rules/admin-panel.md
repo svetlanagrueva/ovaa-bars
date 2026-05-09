@@ -225,8 +225,6 @@ After a shipment is generated, the order detail Actions card surfaces "Анул�
 
 Courier-side cancellation (calling Speedy/Econt to void the label) is **admin-managed externally** — the action is the internal half. Once `tracking_number` is null again, the lifecycle trigger releases the `order_item_batches` lock and the "Партиди" card re-renders.
 
-### Legacy `suggestBatchesForShipment` / `confirmShipmentBatches`
-Still exported from `app/actions/admin.ts` with their tests intact, but no longer called from any UI. Safe to remove in a follow-up cleanup commit.
 
 ## Email Notifications
 - Admin gets email on new orders (card and COD) if `ADMIN_EMAIL` env var is set
