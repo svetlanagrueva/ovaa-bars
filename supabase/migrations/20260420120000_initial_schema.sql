@@ -606,16 +606,30 @@ create table if not exists product_batches (
 -- this batch". Fully immutable post-insert — allocation is locked at ship
 -- time.
 create table if not exists order_item_batches (
-  id                uuid primary key default gen_random_uuid(),
-  order_item_id     bigint not null references order_items(id) on delete cascade,
-  product_batch_id  uuid not null references product_batches(id) on delete restrict,
-  quantity          integer not null check (quantity > 0),
-  confirmed_at      timestamptz not null default now(),
-  confirmed_by      text not null default 'admin',
+  id                      uuid primary key default gen_random_uuid(),
+  order_item_id           bigint not null references order_items(id) on delete cascade,
+  product_batch_id        uuid not null references product_batches(id) on delete restrict,
+  quantity                integer not null check (quantity > 0),
+  confirmed_at            timestamptz not null default now(),
+  confirmed_by            text not null default 'admin',
+  -- Reasons populated when admin overrides default selection rules:
+  --   non_fefo_reason         — FEFO winner was passed over (audit trail).
+  --   expired_override_reason — an expired batch was deliberately allocated.
+  -- App layer gates which is required when; DB enforces length only.
+  non_fefo_reason         text,
+  expired_override_reason text,
 
   -- One row per (order_item, batch). Multiple batches per item supported
   -- via separate rows; combining lines avoids ambiguous totals.
-  unique (order_item_id, product_batch_id)
+  unique (order_item_id, product_batch_id),
+  constraint chk_non_fefo_reason_length check (
+    non_fefo_reason is null
+    or char_length(non_fefo_reason) between 20 and 1000
+  ),
+  constraint chk_expired_override_reason_length check (
+    expired_override_reason is null
+    or char_length(expired_override_reason) between 20 and 1000
+  )
 );
 
 -- ─── email_unsubscribes ─────────────────────────────────────────────────────
@@ -1291,7 +1305,14 @@ begin
     'withdrawal_goods_received',
     'withdrawal_rejected',
     'withdrawal_completed',
-    'withdrawal_status_force_override'
+    'withdrawal_status_force_override',
+    -- Batch allocation events (emitted by saveBatchAllocation /
+    -- clearBatchAllocation / cancelShipment server actions)
+    'batch_allocation_saved',
+    'batch_allocation_overridden_fefo',
+    'batch_allocation_overridden_expired',
+    'batch_allocation_cleared',
+    'batch_allocation_unlocked_after_shipment_cancelled'
   ) then
     raise exception 'Unknown outcome type: %', p_outcome_type;
   end if;
@@ -2236,16 +2257,42 @@ begin
 end;
 $$;
 
--- ─── Order item batches: fully immutable post-insert ────────────────────────
--- Allocation is locked at ship time. Mistakes corrected by reversing entries
--- (out of MVP — for now manual data repair).
-create or replace function raise_order_item_batches_immutable()
+-- ─── Order item batches: status-conditional immutability ────────────────────
+-- Lifecycle: rows are mutable while the parent order's tracking_number is
+-- NULL (admin still composing the allocation). The moment a tracking
+-- number lands — including the '__generating__' placeholder set during
+-- courier-label generation — the rows lock to prevent edits racing with
+-- a label that's being written. Cancelling a real shipment (clearing
+-- tracking_number back to NULL) re-opens edits; the unlock event is
+-- emitted by the cancelShipment server action.
+create or replace function enforce_order_item_batches_locked_after_shipment()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
+declare
+  v_order_item_id   bigint;
+  v_tracking_number text;
 begin
-  raise exception 'order_item_batches is immutable post-insert; % is not permitted. Allocation is locked at ship time.', tg_op;
+  v_order_item_id := case
+    when tg_op = 'DELETE' then old.order_item_id
+    else new.order_item_id
+  end;
+
+  select o.tracking_number
+  into v_tracking_number
+  from public.orders o
+  join public.order_items oi on oi.order_id = o.id
+  where oi.id = v_order_item_id;
+
+  if v_tracking_number is not null then
+    raise exception 'Cannot modify batch allocation after shipment generation (tracking_number is set)';
+  end if;
+
+  return case
+    when tg_op = 'DELETE' then old
+    else new
+  end;
 end;
 $$;
 
@@ -2372,6 +2419,122 @@ as $$
            o.city, o.shipped_at, o.delivered_at, o.tracking_number
   order by o.shipped_at desc nulls last, o.created_at desc;
 $$;
+
+-- ─── Batch helpers: save_batch_allocation RPC ───────────────────────────────
+-- Atomic delete+insert for the order's batch allocation rows, with row
+-- locks on the parent order and referenced product_batches. Re-validates
+-- sum equality and per-batch availability inside the transaction so the
+-- order's own previous allocation isn't double-counted (DELETE before
+-- availability check) and concurrent saves on the same batch serialize.
+-- App layer pre-validates FEFO compliance + expired-override reasons for
+-- friendly errors; the RPC is the safety net.
+create or replace function public.save_batch_allocation(
+  p_order_id    uuid,
+  p_allocations jsonb
+)
+returns void
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_status   text;
+  v_tracking text;
+  v_avail    integer;
+  rec        record;
+begin
+  -- 1. Lock parent order, assert preconditions
+  select status, tracking_number into v_status, v_tracking
+  from public.orders where id = p_order_id for update;
+
+  if not found then
+    raise exception 'Order not found';
+  end if;
+  if v_status <> 'confirmed' then
+    raise exception 'Order status is %, must be confirmed to allocate batches', v_status;
+  end if;
+  if v_tracking is not null then
+    raise exception 'Allocation is locked (tracking_number is set)';
+  end if;
+
+  -- 2. Lock referenced product_batches so concurrent saves serialize on
+  --    the batch row (prevents two orders over-drawing the same batch)
+  perform 1
+  from public.product_batches
+  where id in (
+    select distinct (a->>'product_batch_id')::uuid
+    from jsonb_array_elements(p_allocations) a
+  )
+  for update;
+
+  -- 3. DELETE existing allocation rows for this order — releases their
+  --    contribution to batch_quantity_available before we re-validate
+  delete from public.order_item_batches
+  where order_item_id in (
+    select id from public.order_items where order_id = p_order_id
+  );
+
+  -- 4. Per-batch validation: status='active' + availability
+  for rec in
+    select
+      (a->>'product_batch_id')::uuid                  as batch_id,
+      sum((a->>'quantity')::integer)::integer         as requested
+    from jsonb_array_elements(p_allocations) a
+    group by 1
+  loop
+    if not exists (
+      select 1 from public.product_batches
+      where id = rec.batch_id and status = 'active'
+    ) then
+      raise exception 'Batch % is not active', rec.batch_id;
+    end if;
+
+    select public.batch_quantity_available(rec.batch_id) into v_avail;
+    if rec.requested > v_avail then
+      raise exception 'Batch % availability % less than requested %',
+        rec.batch_id, v_avail, rec.requested;
+    end if;
+  end loop;
+
+  -- 5. Per-line sum equality (allocated == ordered)
+  for rec in
+    with incoming as (
+      select
+        (a->>'order_item_id')::bigint           as order_item_id,
+        sum((a->>'quantity')::integer)::integer as total_qty
+      from jsonb_array_elements(p_allocations) a
+      group by 1
+    )
+    select
+      oi.id, oi.sku,
+      oi.quantity                          as ordered,
+      coalesce(i.total_qty, 0)::integer    as allocated
+    from public.order_items oi
+    left join incoming i on i.order_item_id = oi.id
+    where oi.order_id = p_order_id
+  loop
+    if rec.allocated <> rec.ordered then
+      raise exception 'SKU %: allocated % but ordered %', rec.sku, rec.allocated, rec.ordered;
+    end if;
+  end loop;
+
+  -- 6. INSERT new rows. Existing triggers backstop SKU consistency and
+  --    the lifecycle lock (the lifecycle one is a no-op here since we
+  --    already asserted tracking_number IS NULL with the FOR UPDATE lock).
+  insert into public.order_item_batches (
+    order_item_id, product_batch_id, quantity, confirmed_by,
+    non_fefo_reason, expired_override_reason
+  )
+  select
+    (a->>'order_item_id')::bigint,
+    (a->>'product_batch_id')::uuid,
+    (a->>'quantity')::integer,
+    coalesce(current_setting('app.actor', true), 'admin'),
+    nullif(a->>'non_fefo_reason', ''),
+    nullif(a->>'expired_override_reason', '')
+  from jsonb_array_elements(p_allocations) a;
+end;
+$$;
+
 
 -- ─── Marketing: claim_marketing_emails RPC ──────────────────────────────────
 -- Single function: reclaim stale → insert candidates → claim work. Items
@@ -2626,15 +2789,10 @@ create trigger trg_product_batches_immutable_delete
   for each row execute function raise_product_batches_immutable_delete();
 
 -- order_item_batches
-drop trigger if exists trg_order_item_batches_immutable_update on order_item_batches;
-create trigger trg_order_item_batches_immutable_update
-  before update on order_item_batches
-  for each row execute function raise_order_item_batches_immutable();
-
-drop trigger if exists trg_order_item_batches_immutable_delete on order_item_batches;
-create trigger trg_order_item_batches_immutable_delete
-  before delete on order_item_batches
-  for each row execute function raise_order_item_batches_immutable();
+drop trigger if exists trg_order_item_batches_locked on order_item_batches;
+create trigger trg_order_item_batches_locked
+  before insert or update or delete on order_item_batches
+  for each row execute function enforce_order_item_batches_locked_after_shipment();
 
 drop trigger if exists trg_order_item_batches_sku_consistency on order_item_batches;
 create trigger trg_order_item_batches_sku_consistency

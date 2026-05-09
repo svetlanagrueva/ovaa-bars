@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, suggestBatchesForShipment, confirmShipmentBatches, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchSuggestion } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, cancelShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
+import { BatchAllocationCard } from "./batch-allocation-card"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 
 const STATUS_LABELS: Record<string, string> = {
@@ -42,13 +43,13 @@ export default function AdminOrderDetailPage({
   const [error, setError] = useState("")
   const [trackingNumber, setTrackingNumber] = useState("")
   const [cancellationReason, setCancellationReason] = useState("")
+  const [cancelShipmentReason, setCancelShipmentReason] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
   const [shipmentForm, setShipmentForm] = useState<ShipmentFormData | null>(null)
-  // Batch traceability — populated when shipment dialog opens. allocations
-  // is keyed by order_item_id; default = FEFO suggestion (admin can override).
-  const [batchSuggestions, setBatchSuggestions] = useState<BatchSuggestion[]>([])
-  const [batchAllocations, setBatchAllocations] = useState<Record<number, Array<{ productBatchId: string; quantity: string }>>>({})
+  // Batch traceability — populated when shipment dialog opens.
+  // Read-only summary of what was saved via the "Партиди" card.
+  const [savedAllocationLines, setSavedAllocationLines] = useState<BatchAllocationLine[]>([])
   const [shipmentDisplay, setShipmentDisplay] = useState<ShipmentDisplayInfo | null>(null)
   const [shipmentOpen, setShipmentOpen] = useState(false)
   const [shipmentLoading, setShipmentLoading] = useState(false)
@@ -1312,6 +1313,13 @@ export default function AdminOrderDetailPage({
         </CardContent>
       </Card>
 
+      {/* Batch allocation — visible only while the order is editable */}
+      {order.status === "confirmed" && !order.tracking_number && (
+        <div data-batch-allocation-card>
+          <BatchAllocationCard orderId={id} />
+        </div>
+      )}
+
       {/* Actions */}
       <Card className="mt-6">
         <CardHeader>
@@ -1354,26 +1362,13 @@ export default function AdminOrderDetailPage({
                           }
                           setActionError("")
                           try {
-                            const [{ form, display }, suggestions] = await Promise.all([
+                            const [{ form, display }, lines] = await Promise.all([
                               getShipmentDefaults(id),
-                              suggestBatchesForShipment(id),
+                              getBatchAllocation(id),
                             ])
                             setShipmentForm(form)
                             setShipmentDisplay(display)
-                            setBatchSuggestions(suggestions)
-                            // Initialize allocations from FEFO suggestion: each
-                            // line gets its suggested rows with the suggested qty.
-                            // Admin can edit before confirming.
-                            const initialAllocs: Record<number, Array<{ productBatchId: string; quantity: string }>> = {}
-                            for (const s of suggestions) {
-                              if (s.suggestions.length > 0) {
-                                initialAllocs[s.orderItemId] = s.suggestions.map((b) => ({
-                                  productBatchId: b.productBatchId,
-                                  quantity: String(b.suggestedQuantity),
-                                }))
-                              }
-                            }
-                            setBatchAllocations(initialAllocs)
+                            setSavedAllocationLines(lines)
                             setSelectedOfficeNumericId(
                               display.courier === "speedy" ? order.speedy_office_id : order.econt_office_id
                             )
@@ -1667,88 +1662,70 @@ export default function AdminOrderDetailPage({
                         </div>
                       </div>
 
-                      {/* ── Batch traceability — per-line allocation ─────────── */}
-                      {batchSuggestions.length > 0 && (
-                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+                      {/* ── Batch allocation — read-only summary ─────────────── */}
+                      {savedAllocationLines.length > 0 && (
+                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
                           <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-medium">Партиди (проследяване)</h4>
-                            <span className="text-[11px] text-muted-foreground">FEFO предложение — може да се промени</span>
+                            <h4 className="text-sm font-medium">Партиди за изпращане</h4>
+                            <a
+                              href="#"
+                              className="text-xs text-muted-foreground hover:text-foreground"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                setShipmentOpen(false)
+                                document.querySelector("[data-batch-allocation-card]")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                              }}
+                            >
+                              Редактирай разпределението
+                            </a>
                           </div>
-                          {batchSuggestions.map((sug) => {
-                            const lineAllocs = batchAllocations[sug.orderItemId] ?? []
-                            const allocatedQty = lineAllocs.reduce((s, a) => s + (parseInt(a.quantity, 10) || 0), 0)
-                            const remaining = sug.orderedQuantity - allocatedQty
-                            const allBatches = sug.suggestions
-                            return (
-                              <div key={sug.orderItemId} className="rounded-md border border-border/60 bg-background p-3 text-xs">
-                                <div className="flex items-center justify-between">
-                                  <div>
-                                    <span className="font-medium text-foreground">{sug.productName}</span>
-                                    <span className="ml-2 text-muted-foreground">{sug.orderedQuantity} бр.</span>
-                                  </div>
-                                  <span className={`text-[11px] ${remaining === 0 ? "text-green-700" : "text-amber-700"}`}>
-                                    {allocatedQty}/{sug.orderedQuantity} разпределени
-                                  </span>
-                                </div>
-                                {sug.shortfall > 0 && allBatches.length === 0 && (
-                                  <p className="mt-2 rounded-md border border-red-300 bg-red-50 p-2 text-[11px] text-red-900">
-                                    Няма активни партиди за този SKU. Добавете нова партида в Склад преди да изпратите.
-                                  </p>
+                          <div className="overflow-hidden rounded-md border border-border/60 bg-background text-xs">
+                            <table className="w-full">
+                              <thead className="bg-muted/30 text-[11px] text-muted-foreground">
+                                <tr>
+                                  <th className="px-2 py-1.5 text-left">Артикул</th>
+                                  <th className="px-2 py-1.5 text-left">Партида</th>
+                                  <th className="px-2 py-1.5 text-right">Бр.</th>
+                                  <th className="px-2 py-1.5 text-left">Срок</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {savedAllocationLines.flatMap((line) =>
+                                  line.allocations.length === 0
+                                    ? [(
+                                        <tr key={`${line.orderItemId}-empty`} className="border-t border-border/60">
+                                          <td className="px-2 py-1.5 font-medium">{line.productName}</td>
+                                          <td className="px-2 py-1.5 text-amber-700" colSpan={3}>
+                                            Няма разпределени партиди
+                                          </td>
+                                        </tr>
+                                      )]
+                                    : line.allocations.map((a, idx) => (
+                                        <tr key={`${line.orderItemId}-${a.productBatchId}`} className="border-t border-border/60">
+                                          <td className="px-2 py-1.5">{idx === 0 ? line.productName : ""}</td>
+                                          <td className="px-2 py-1.5 font-mono">{a.batchNumber}</td>
+                                          <td className="px-2 py-1.5 text-right">{a.quantity}</td>
+                                          <td className="px-2 py-1.5 text-muted-foreground">
+                                            {a.expiryDate ? new Date(a.expiryDate).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" }) : ""}
+                                          </td>
+                                        </tr>
+                                      )),
                                 )}
-                                {allBatches.length > 0 && (
-                                  <div className="mt-2 space-y-1">
-                                    {allBatches.map((b) => {
-                                      const alloc = lineAllocs.find((a) => a.productBatchId === b.productBatchId)
-                                      return (
-                                        <div key={b.productBatchId} className="grid grid-cols-[1fr_auto] gap-2 items-center">
-                                          <div className="truncate">
-                                            <span className="font-mono">{b.batchNumber}</span>
-                                            <span className="ml-2 text-muted-foreground">
-                                              изт. {new Date(b.expiryDate).toLocaleDateString("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" })}
-                                              {" · "}налични {b.quantityAvailable}
-                                            </span>
-                                          </div>
-                                          <Input
-                                            type="number"
-                                            min={0}
-                                            max={b.quantityAvailable}
-                                            value={alloc?.quantity ?? "0"}
-                                            onChange={(e) => {
-                                              const newVal = e.target.value
-                                              setBatchAllocations((prev) => {
-                                                const next = { ...prev }
-                                                const lineList = next[sug.orderItemId] ? [...next[sug.orderItemId]] : []
-                                                const existingIdx = lineList.findIndex((x) => x.productBatchId === b.productBatchId)
-                                                if (existingIdx >= 0) {
-                                                  lineList[existingIdx] = { ...lineList[existingIdx], quantity: newVal }
-                                                } else {
-                                                  lineList.push({ productBatchId: b.productBatchId, quantity: newVal })
-                                                }
-                                                next[sug.orderItemId] = lineList
-                                                return next
-                                              })
-                                            }}
-                                            className="h-7 w-20 text-xs"
-                                          />
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
                       )}
 
                       <div className="flex gap-2 pt-2">
                         <Button
                           disabled={shipmentLoading || officePickerError || (() => {
-                            // Block submit if any line's allocations don't sum to ordered qty
-                            for (const sug of batchSuggestions) {
-                              const lineAllocs = batchAllocations[sug.orderItemId] ?? []
-                              const allocatedQty = lineAllocs.reduce((s, a) => s + (parseInt(a.quantity, 10) || 0), 0)
-                              if (allocatedQty !== sug.orderedQuantity) return true
+                            // Block submit if any line's saved allocation doesn't sum to ordered qty.
+                            // The server's generateShipment precondition is the source of truth, but
+                            // the disabled state gives instant UX feedback.
+                            for (const line of savedAllocationLines) {
+                              const total = line.allocations.reduce((s, a) => s + a.quantity, 0)
+                              if (total !== line.orderedQuantity) return true
                             }
                             return false
                           })()}
@@ -1756,27 +1733,6 @@ export default function AdminOrderDetailPage({
                             setShipmentLoading(true)
                             setActionError("")
                             try {
-                              // Step 1: persist batch allocations (locks them at ship time).
-                              // Skips if no batches in the system (legacy/empty state).
-                              if (batchSuggestions.length > 0) {
-                                const flatAllocs: Array<{ orderItemId: number; productBatchId: string; quantity: number }> = []
-                                for (const [orderItemIdStr, lineList] of Object.entries(batchAllocations)) {
-                                  for (const a of lineList) {
-                                    const qty = parseInt(a.quantity, 10)
-                                    if (Number.isInteger(qty) && qty > 0) {
-                                      flatAllocs.push({
-                                        orderItemId: parseInt(orderItemIdStr, 10),
-                                        productBatchId: a.productBatchId,
-                                        quantity: qty,
-                                      })
-                                    }
-                                  }
-                                }
-                                if (flatAllocs.length > 0) {
-                                  await confirmShipmentBatches(id, flatAllocs)
-                                }
-                              }
-                              // Step 2: only after allocations land, generate the courier label.
                               const { trackingNumber: tn } = await generateShipment(id, shipmentForm)
                               setTrackingNumber(tn)
                               setShipmentOpen(false)
@@ -1801,6 +1757,43 @@ export default function AdminOrderDetailPage({
                     </div>
                   )}
                 </>
+              )}
+              {order.tracking_number && order.tracking_number !== "__generating__" && (
+                <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Анулирай товарителницата</span>
+                    <span className="font-mono text-xs">{order.tracking_number}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Изчиства номера на товарителницата вътрешно — анулирайте етикета и при куриера отделно. След това партидите могат да се преразпределят.
+                  </p>
+                  <Input
+                    placeholder="Причина за анулиране (поне 10 символа)..."
+                    value={cancelShipmentReason}
+                    onChange={(e) => setCancelShipmentReason(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={actionLoading || cancelShipmentReason.trim().length < 10}
+                    onClick={async () => {
+                      if (!confirm("Анулиране на товарителницата? Партидите ще станат редактируеми отново.")) return
+                      setActionError("")
+                      setActionLoading(true)
+                      try {
+                        await cancelShipment(id, cancelShipmentReason.trim())
+                        setCancelShipmentReason("")
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка при анулиране на товарителницата")
+                      } finally {
+                        setActionLoading(false)
+                      }
+                    }}
+                  >
+                    {actionLoading ? "Обработка..." : "Анулирай"}
+                  </Button>
+                </div>
               )}
               <div className="flex items-end gap-3">
                 <div className="flex-1">

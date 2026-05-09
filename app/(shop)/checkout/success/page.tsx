@@ -111,7 +111,7 @@ export default function CheckoutSuccessPage() {
 
         <div className="mt-8 space-y-4">
           <p className="text-sm text-muted-foreground">
-            Очаквайте доставка в рамките на 2 работни дни.
+            Очаквайте доставка в рамките на 3 работни дни.
           </p>
           <Button asChild size="lg" className="h-11 w-full gap-2 rounded-full bg-primary px-6 text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:w-auto">
             <Link href="/products">

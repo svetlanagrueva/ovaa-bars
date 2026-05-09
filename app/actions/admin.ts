@@ -24,6 +24,7 @@ import {
   sendWithdrawalRejectedEmail,
 } from "@/lib/email-sender"
 import { autoCreateCreditNoteRow } from "@/lib/credit-note"
+import { buildExpectedFefoPlan, isFefoCompliant } from "@/lib/batches/fefo"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -1135,6 +1136,43 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
     throw new Error("Не може да се генерира товарителница в момента. Опитайте отново.")
   }
 
+  // Allocation precondition: with the lock held, every order_item must have
+  // batch allocations summing to its ordered quantity. The lifecycle trigger
+  // freezes order_item_batches as soon as tracking_number is set (above), so
+  // checking here is race-safe.
+  {
+    const { data: items } = await supabase
+      .from("order_items")
+      .select("id, sku, quantity")
+      .eq("order_id", orderId)
+    const itemIdsForCheck = (items ?? []).map((i) => (i as { id: number }).id)
+    const { data: allocsForCheck } = itemIdsForCheck.length > 0
+      ? await supabase
+          .from("order_item_batches")
+          .select("order_item_id, quantity")
+          .in("order_item_id", itemIdsForCheck)
+      : { data: [] as Array<{ order_item_id: number; quantity: number }> }
+
+    const allocSum = new Map<number, number>()
+    for (const a of allocsForCheck ?? []) {
+      const row = a as { order_item_id: number; quantity: number }
+      allocSum.set(row.order_item_id, (allocSum.get(row.order_item_id) ?? 0) + row.quantity)
+    }
+    for (const it of items ?? []) {
+      const item = it as { id: number; sku: string; quantity: number }
+      const allocated = allocSum.get(item.id) ?? 0
+      if (allocated !== item.quantity) {
+        await supabase.from("orders").update({ tracking_number: null }).eq("id", orderId).eq("tracking_number", "__generating__")
+        if (allocated === 0) {
+          throw new Error("Преди да изпратите пратката към куриер, разпределете партидите за всички продукти в поръчката.")
+        }
+        throw new Error(
+          `Разпределените количества по партиди не съвпадат с количествата в поръчката (SKU ${item.sku}: разпределени ${allocated} от ${item.quantity}). Моля, проверете секцията „Партиди".`,
+        )
+      }
+    }
+  }
+
   const order = locked
 
   // Use courier/delivery type from the order, not from the form (prevent tampering)
@@ -1214,6 +1252,74 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
   }
 
   return { trackingNumber }
+}
+
+// Cancel an issued shipment label (status still 'confirmed', tracking_number
+// is a real value). Clears tracking_number so the lifecycle trigger releases
+// the order_item_batches lock and the admin can re-allocate / re-generate.
+//
+// The courier-side cancellation/void is admin-managed (call the courier or
+// use their dashboard). This action is the internal half: free the lock and
+// record the unlock event so the audit trail captures the moment.
+export async function cancelShipment(
+  orderId: string,
+  reason: string,
+): Promise<{ success: true; previousTrackingNumber: string }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const trimmed = reason?.trim() ?? ""
+  if (trimmed.length < 10) throw new Error("Причината трябва да е поне 10 символа")
+  if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+
+  const { data: order, error: readErr } = await supabase
+    .from("orders")
+    .select("id, status, tracking_number")
+    .eq("id", orderId)
+    .single()
+  if (readErr || !order) throw new Error("Поръчката не е намерена")
+  if (order.status !== "confirmed") {
+    throw new Error(`Анулиране на товарителница е възможно само за потвърдени поръчки (текущ статус: ${order.status})`)
+  }
+  if (!order.tracking_number) throw new Error("Поръчката няма генерирана товарителница")
+  if (order.tracking_number === "__generating__") {
+    throw new Error("Товарителницата се генерира в момента — изчакайте резултата")
+  }
+
+  const previousTrackingNumber = order.tracking_number as string
+
+  // Atomic guard: only clear if the tracking number is still what we read.
+  // Prevents racing against a concurrent generateShipment retry / another
+  // cancelShipment / a manual DB edit.
+  const { data: cleared, error: clearErr } = await supabase
+    .from("orders")
+    .update({ tracking_number: null })
+    .eq("id", orderId)
+    .eq("tracking_number", previousTrackingNumber)
+    .select("id")
+    .single()
+  if (clearErr || !cleared) {
+    throw new Error("Не може да се анулира товарителницата в момента — обновете страницата и опитайте отново")
+  }
+
+  const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "batch_allocation_unlocked_after_shipment_cancelled",
+    p_payload: {
+      order_id: orderId,
+      previous_tracking_number: previousTrackingNumber,
+      reason: trimmed,
+    },
+    p_actor: "admin",
+  })
+  if (auditErr) {
+    console.error("Failed to emit batch_allocation_unlocked_after_shipment_cancelled:", sanitizeError(auditErr))
+  }
+
+  revalidateTag("product-batches", "max")
+  return { success: true, previousTrackingNumber }
 }
 
 export async function addAdminNote(orderId: string, note: string) {
@@ -4510,6 +4616,557 @@ export async function confirmShipmentBatches(
 
   revalidateTag("product-batches", "max")
   return { success: true, inserted: count ?? toInsert.length }
+}
+
+// ─── Batch allocation lifecycle (admin-driven) ──────────────────────────────
+// Allocation is split from shipment generation:
+//   1. Admin opens the order detail "Партиди" card (confirmed + no tracking)
+//   2. Auto-FEFO seeds the form; admin reviews / overrides; saves
+//   3. Admin generates the courier label — the existing rows are now locked
+//      by the lifecycle trigger in 20260509120000
+//
+// The save path goes through `save_batch_allocation` RPC for atomic
+// delete+insert under FOR UPDATE locks (orders + product_batches). FEFO
+// compliance and expired-batch override are app-validated for friendly
+// errors; the RPC is the safety net for sum equality + availability +
+// concurrent-save races.
+
+export interface BatchAllocationLine {
+  orderItemId: number
+  sku: string
+  productName: string
+  orderedQuantity: number
+  allocations: Array<{
+    productBatchId: string
+    batchNumber: string
+    expiryDate: string
+    quantity: number
+    nonFefoReason: string | null
+    expiredOverrideReason: string | null
+  }>
+}
+
+export interface FefoAutoSuggestion {
+  orderItemId: number
+  sku: string
+  productName: string
+  orderedQuantity: number
+  allocations: Array<{
+    productBatchId: string
+    batchNumber: string
+    expiryDate: string
+    quantity: number
+    quantityAvailable: number
+  }>
+  shortfall: number
+}
+
+export interface SaveBatchAllocationRow {
+  orderItemId: number
+  productBatchId: string
+  quantity: number
+  nonFefoReason?: string
+  allowExpiredOverride?: boolean
+  expiredOverrideReason?: string
+}
+
+export async function getBatchAllocation(orderId: string): Promise<BatchAllocationLine[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  const { data: orderItems, error: itemsError } = await supabase
+    .from("order_items")
+    .select("id, sku, product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (itemsError || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: allocs, error: allocError } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity, non_fefo_reason, expired_override_reason")
+    .in("order_item_id", itemIds)
+  if (allocError) throw new Error("Грешка при зареждане на разпределенията")
+
+  const referencedBatchIds = Array.from(new Set((allocs ?? []).map((a) => (a as { product_batch_id: string }).product_batch_id)))
+  const batchById = new Map<string, { batch_number: string; expiry_date: string }>()
+  if (referencedBatchIds.length > 0) {
+    const { data: batches } = await supabase
+      .from("product_batches")
+      .select("id, batch_number, expiry_date")
+      .in("id", referencedBatchIds)
+    for (const b of batches ?? []) {
+      const row = b as { id: string; batch_number: string; expiry_date: string }
+      batchById.set(row.id, { batch_number: row.batch_number, expiry_date: row.expiry_date })
+    }
+  }
+
+  const allocsByItem = new Map<number, Array<{ product_batch_id: string; quantity: number; non_fefo_reason: string | null; expired_override_reason: string | null }>>()
+  for (const a of allocs ?? []) {
+    const row = a as { order_item_id: number; product_batch_id: string; quantity: number; non_fefo_reason: string | null; expired_override_reason: string | null }
+    if (!allocsByItem.has(row.order_item_id)) allocsByItem.set(row.order_item_id, [])
+    allocsByItem.get(row.order_item_id)!.push(row)
+  }
+
+  return orderItems.map((oi) => {
+    const item = oi as { id: number; sku: string; product_name: string; quantity: number }
+    const lineAllocs = allocsByItem.get(item.id) ?? []
+    return {
+      orderItemId: item.id,
+      sku: item.sku,
+      productName: item.product_name,
+      orderedQuantity: item.quantity,
+      allocations: lineAllocs.map((a) => {
+        const meta = batchById.get(a.product_batch_id)
+        return {
+          productBatchId: a.product_batch_id,
+          batchNumber: meta?.batch_number ?? "?",
+          expiryDate: meta?.expiry_date ?? "",
+          quantity: a.quantity,
+          nonFefoReason: a.non_fefo_reason,
+          expiredOverrideReason: a.expired_override_reason,
+        }
+      }),
+    }
+  })
+}
+
+export interface BatchAllocationViewBatch {
+  productBatchId: string
+  sku: string
+  batchNumber: string
+  expiryDate: string
+  quantityAvailable: number
+  isExpired: boolean
+}
+
+export interface BatchAllocationView {
+  lines: Array<{
+    orderItemId: number
+    sku: string
+    productName: string
+    orderedQuantity: number
+    saved: Array<{
+      productBatchId: string
+      quantity: number
+      nonFefoReason: string | null
+      expiredOverrideReason: string | null
+    }>
+  }>
+  batches: BatchAllocationViewBatch[]
+}
+
+// Single round-trip read for the order-detail "Партиди" card.
+// Returns: per-line ordered + saved allocation, plus the full pool of
+// active batches (expired included, flagged) for SKUs in the order.
+// The client computes the FEFO seed using lib/batches/fefo.ts.
+export async function getBatchAllocationView(orderId: string): Promise<BatchAllocationView> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  const { data: orderItems, error: itemsErr } = await supabase
+    .from("order_items")
+    .select("id, sku, product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (itemsErr || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+
+  const itemIds = orderItems.map((i) => i.id)
+  const { data: existingAllocs } = await supabase
+    .from("order_item_batches")
+    .select("order_item_id, product_batch_id, quantity, non_fefo_reason, expired_override_reason")
+    .in("order_item_id", itemIds)
+
+  const allocsByItem = new Map<number, Array<{ product_batch_id: string; quantity: number; non_fefo_reason: string | null; expired_override_reason: string | null }>>()
+  for (const a of existingAllocs ?? []) {
+    const row = a as { order_item_id: number; product_batch_id: string; quantity: number; non_fefo_reason: string | null; expired_override_reason: string | null }
+    if (!allocsByItem.has(row.order_item_id)) allocsByItem.set(row.order_item_id, [])
+    allocsByItem.get(row.order_item_id)!.push(row)
+  }
+
+  const skus = Array.from(new Set(orderItems.map((i) => i.sku)))
+  const { data: rawBatches } = await supabase
+    .from("product_batches")
+    .select("id, sku, batch_number, expiry_date, status")
+    .in("sku", skus)
+    .eq("status", "active")
+    .order("expiry_date", { ascending: true })
+
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const batches: BatchAllocationViewBatch[] = []
+  for (const b of rawBatches ?? []) {
+    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
+    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
+    batches.push({
+      productBatchId: row.id,
+      sku: row.sku,
+      batchNumber: row.batch_number,
+      expiryDate: row.expiry_date,
+      quantityAvailable: typeof avail === "number" ? avail : 0,
+      isExpired: row.expiry_date < todayIso,
+    })
+  }
+
+  return {
+    lines: orderItems.map((oi) => {
+      const item = oi as { id: number; sku: string; product_name: string; quantity: number }
+      const saved = (allocsByItem.get(item.id) ?? []).map((a) => ({
+        productBatchId: a.product_batch_id,
+        quantity: a.quantity,
+        nonFefoReason: a.non_fefo_reason,
+        expiredOverrideReason: a.expired_override_reason,
+      }))
+      return {
+        orderItemId: item.id,
+        sku: item.sku,
+        productName: item.product_name,
+        orderedQuantity: item.quantity,
+        saved,
+      }
+    }),
+    batches,
+  }
+}
+
+export async function autoAllocateFefo(orderId: string): Promise<FefoAutoSuggestion[]> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  const { data: orderItems, error } = await supabase
+    .from("order_items")
+    .select("id, sku, product_name, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (error || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const skus = Array.from(new Set(orderItems.map((i) => i.sku)))
+  const { data: batches } = await supabase
+    .from("product_batches")
+    .select("id, sku, batch_number, expiry_date, created_at")
+    .in("sku", skus)
+    .eq("status", "active")
+    .gte("expiry_date", todayIso)
+
+  const batchesBySku = new Map<string, Array<{ id: string; batch_number: string; expiry_date: string; created_at: string }>>()
+  for (const b of batches ?? []) {
+    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; created_at: string }
+    if (!batchesBySku.has(row.sku)) batchesBySku.set(row.sku, [])
+    batchesBySku.get(row.sku)!.push(row)
+  }
+
+  const availByBatch = new Map<string, number>()
+  for (const b of batches ?? []) {
+    const row = b as { id: string }
+    const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
+    availByBatch.set(row.id, typeof qty === "number" ? qty : 0)
+  }
+
+  // Drawdown across lines that share batches (e.g., two lines of the same SKU)
+  const drawdown = new Map<string, number>()
+  const result: FefoAutoSuggestion[] = []
+
+  for (const item of orderItems) {
+    const oi = item as { id: number; sku: string; product_name: string; quantity: number }
+    const skuBatches = batchesBySku.get(oi.sku) ?? []
+    const batchInput = skuBatches.map((b) => ({
+      id: b.id,
+      expiryDate: b.expiry_date,
+      createdAt: b.created_at,
+      availableQty: Math.max(0, (availByBatch.get(b.id) ?? 0) - (drawdown.get(b.id) ?? 0)),
+    }))
+
+    const plan = buildExpectedFefoPlan({ orderedQty: oi.quantity, batches: batchInput })
+
+    const allocations: FefoAutoSuggestion["allocations"] = []
+    for (const [batchId, qty] of plan.allocations) {
+      const batch = skuBatches.find((b) => b.id === batchId)!
+      allocations.push({
+        productBatchId: batchId,
+        batchNumber: batch.batch_number,
+        expiryDate: batch.expiry_date,
+        quantity: qty,
+        quantityAvailable: availByBatch.get(batchId) ?? 0,
+      })
+      drawdown.set(batchId, (drawdown.get(batchId) ?? 0) + qty)
+    }
+
+    result.push({
+      orderItemId: oi.id,
+      sku: oi.sku,
+      productName: oi.product_name,
+      orderedQuantity: oi.quantity,
+      allocations,
+      shortfall: plan.remainingQty,
+    })
+  }
+
+  return result
+}
+
+export async function saveBatchAllocation(
+  orderId: string,
+  rows: SaveBatchAllocationRow[],
+): Promise<{ success: true; saved: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("Не са предоставени разпределения")
+  }
+
+  // Input shape validation
+  const seen = new Set<string>()
+  for (const r of rows) {
+    if (!Number.isInteger(r.orderItemId) || r.orderItemId <= 0) {
+      throw new Error("Невалиден артикул в поръчката")
+    }
+    if (!UUID_REGEX.test(r.productBatchId)) {
+      throw new Error("Невалиден формат на партида")
+    }
+    if (!Number.isInteger(r.quantity) || r.quantity < 1) {
+      throw new Error("Количеството трябва да е положително цяло число")
+    }
+    const key = `${r.orderItemId}-${r.productBatchId}`
+    if (seen.has(key)) {
+      throw new Error("Дублирано разпределение за един и същ артикул и партида")
+    }
+    seen.add(key)
+    if (r.allowExpiredOverride) {
+      const reason = r.expiredOverrideReason?.trim() ?? ""
+      if (reason.length < 20 || reason.length > 1000) {
+        throw new Error("Партидата е с изтекъл срок. За да продължите, потвърдете отказа от срока и въведете причина (поне 20 символа).")
+      }
+    } else if (r.expiredOverrideReason) {
+      throw new Error("Не може да се запише причина за изтекъл срок без потвърден отказ от срока")
+    }
+    if (r.nonFefoReason) {
+      const reason = r.nonFefoReason.trim()
+      if (reason.length < 20 || reason.length > 1000) {
+        throw new Error("Причината за отклонение от FEFO трябва да е между 20 и 1000 символа")
+      }
+    }
+  }
+
+  const supabase = await createClient()
+
+  const { data: orderItems, error: itemsError } = await supabase
+    .from("order_items")
+    .select("id, sku, quantity")
+    .eq("order_id", orderId)
+    .order("line_no", { ascending: true })
+  if (itemsError || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+
+  const itemMap = new Map<number, { id: number; sku: string; quantity: number }>()
+  for (const oi of orderItems) {
+    itemMap.set(oi.id, oi as { id: number; sku: string; quantity: number })
+  }
+  for (const r of rows) {
+    if (!itemMap.has(r.orderItemId)) {
+      throw new Error(`Артикул ${r.orderItemId} не принадлежи на тази поръчка`)
+    }
+  }
+
+  // Load referenced batches + same-SKU active+non-expired set (for FEFO check)
+  const referencedBatchIds = Array.from(new Set(rows.map((r) => r.productBatchId)))
+  const skus = Array.from(new Set(orderItems.map((oi) => oi.sku)))
+  const { data: skuBatches } = await supabase
+    .from("product_batches")
+    .select("id, sku, batch_number, expiry_date, created_at, status")
+    .in("sku", skus)
+
+  const batchById = new Map<string, { id: string; sku: string; batch_number: string; expiry_date: string; created_at: string; status: string }>()
+  for (const b of skuBatches ?? []) {
+    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; created_at: string; status: string }
+    batchById.set(row.id, row)
+  }
+  for (const id of referencedBatchIds) {
+    if (!batchById.has(id)) throw new Error(`Партидата ${id} не е намерена`)
+  }
+
+  const todayIso = new Date().toISOString().slice(0, 10)
+
+  // Per-row expired-batch override gate
+  for (const r of rows) {
+    const batch = batchById.get(r.productBatchId)!
+    if (batch.expiry_date < todayIso && !r.allowExpiredOverride) {
+      throw new Error(`Партида ${batch.batch_number} е с изтекъл срок. За да продължите, потвърдете отказа от срока и въведете причина (поне 20 символа).`)
+    }
+  }
+
+  // FEFO check needs availability per active+non-expired batch
+  const fefoBatchesBySku = new Map<string, Array<{ id: string; expiryDate: string; createdAt: string; availableQty: number }>>()
+  for (const b of batchById.values()) {
+    if (b.status !== "active" || b.expiry_date < todayIso) continue
+    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: b.id })
+    if (!fefoBatchesBySku.has(b.sku)) fefoBatchesBySku.set(b.sku, [])
+    fefoBatchesBySku.get(b.sku)!.push({
+      id: b.id,
+      expiryDate: b.expiry_date,
+      createdAt: b.created_at,
+      availableQty: typeof avail === "number" ? avail : 0,
+    })
+  }
+
+  const rowsByItem = new Map<number, SaveBatchAllocationRow[]>()
+  for (const r of rows) {
+    if (!rowsByItem.has(r.orderItemId)) rowsByItem.set(r.orderItemId, [])
+    rowsByItem.get(r.orderItemId)!.push(r)
+  }
+
+  // Per-line: sum equality + FEFO compliance (or non-FEFO reason on at least one row)
+  let allLinesCompliant = true
+  for (const [orderItemId, lineRows] of rowsByItem) {
+    const item = itemMap.get(orderItemId)!
+    const total = lineRows.reduce((sum, r) => sum + r.quantity, 0)
+    if (total !== item.quantity) {
+      throw new Error(`Разпределените количества по партиди не съвпадат с количествата в поръчката (SKU ${item.sku}: разпределени ${total}, поръчани ${item.quantity}).`)
+    }
+
+    const expected = buildExpectedFefoPlan({
+      orderedQty: item.quantity,
+      batches: fefoBatchesBySku.get(item.sku) ?? [],
+    }).allocations
+
+    const activeNonExpiredIds = new Set((fefoBatchesBySku.get(item.sku) ?? []).map((b) => b.id))
+    const saved = new Map<string, number>()
+    for (const r of lineRows) {
+      if (activeNonExpiredIds.has(r.productBatchId)) {
+        saved.set(r.productBatchId, (saved.get(r.productBatchId) ?? 0) + r.quantity)
+      }
+    }
+
+    if (!isFefoCompliant(saved, expected)) {
+      allLinesCompliant = false
+      const hasReason = lineRows.some((r) => r.nonFefoReason && r.nonFefoReason.trim().length >= 20)
+      if (!hasReason) {
+        throw new Error(`Избрана е партида с по-късен срок при налична по-ранна за SKU ${item.sku}. Моля, въведете причина (поне 20 символа).`)
+      }
+    }
+  }
+
+  // RPC: atomic delete + insert with FOR UPDATE locks + sum/availability re-check
+  const { error: rpcError } = await supabase.rpc("save_batch_allocation", {
+    p_order_id: orderId,
+    p_allocations: rows.map((r) => ({
+      order_item_id: r.orderItemId,
+      product_batch_id: r.productBatchId,
+      quantity: r.quantity,
+      non_fefo_reason: r.nonFefoReason ?? null,
+      expired_override_reason: r.expiredOverrideReason ?? null,
+    })),
+  })
+  if (rpcError) {
+    console.error("save_batch_allocation RPC failed:", sanitizeError(rpcError))
+    const msg = rpcError.message ?? ""
+    if (msg.includes("locked") || msg.includes("tracking_number")) {
+      throw new Error("Партидите вече са заключени след генериране на товарителница")
+    }
+    if (msg.includes("must be confirmed")) {
+      throw new Error("Поръчката не е в статус „потвърдена\"")
+    }
+    if (msg.includes("availability")) {
+      throw new Error("Партидата няма достатъчна наличност")
+    }
+    if (msg.includes("ordered")) {
+      throw new Error("Разпределените количества не съвпадат с поръчаното")
+    }
+    throw new Error("Грешка при записване на разпределението")
+  }
+
+  // Audit: one batch_allocation_saved + per-row override events
+  const hasExpiredOverride = rows.some((r) => r.allowExpiredOverride === true)
+  const payload = {
+    order_id: orderId,
+    fefo_compliant: allLinesCompliant,
+    has_expired_override: hasExpiredOverride,
+    items: Array.from(rowsByItem.entries()).map(([orderItemId, lineRows]) => {
+      const item = itemMap.get(orderItemId)!
+      return {
+        order_item_id: orderItemId,
+        sku: item.sku,
+        ordered_qty: item.quantity,
+        allocations: lineRows.map((r) => ({
+          product_batch_id: r.productBatchId,
+          qty: r.quantity,
+          expiry_date: batchById.get(r.productBatchId)!.expiry_date,
+        })),
+      }
+    }),
+  }
+
+  const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "batch_allocation_saved",
+    p_payload: payload,
+    p_actor: "admin",
+  })
+  if (auditErr) console.error("Failed to emit batch_allocation_saved:", sanitizeError(auditErr))
+
+  for (const r of rows) {
+    if (r.nonFefoReason && r.nonFefoReason.trim().length >= 20) {
+      await supabase.rpc("record_order_outcome", {
+        p_order_id: orderId,
+        p_outcome_type: "batch_allocation_overridden_fefo",
+        p_payload: { order_item_id: r.orderItemId, product_batch_id: r.productBatchId, reason: r.nonFefoReason },
+        p_actor: "admin",
+      })
+    }
+    if (r.allowExpiredOverride && r.expiredOverrideReason && r.expiredOverrideReason.trim().length >= 20) {
+      await supabase.rpc("record_order_outcome", {
+        p_order_id: orderId,
+        p_outcome_type: "batch_allocation_overridden_expired",
+        p_payload: { order_item_id: r.orderItemId, product_batch_id: r.productBatchId, reason: r.expiredOverrideReason },
+        p_actor: "admin",
+      })
+    }
+  }
+
+  revalidateTag("product-batches", "max")
+  return { success: true, saved: rows.length }
+}
+
+export async function clearBatchAllocation(orderId: string): Promise<{ success: true; cleared: number }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const supabase = await createClient()
+
+  const { data: orderItems, error: itemsErr } = await supabase
+    .from("order_items").select("id").eq("order_id", orderId)
+  if (itemsErr || !orderItems) throw new Error("Грешка при зареждане на артикулите")
+  const itemIds = orderItems.map((i) => i.id)
+  if (itemIds.length === 0) return { success: true, cleared: 0 }
+
+  const { error: delError, count } = await supabase
+    .from("order_item_batches")
+    .delete({ count: "exact" })
+    .in("order_item_id", itemIds)
+
+  if (delError) {
+    if (delError.message?.includes("after shipment generation")) {
+      throw new Error("Партидите вече са заключени след генериране на товарителница")
+    }
+    console.error("clearBatchAllocation failed:", sanitizeError(delError))
+    throw new Error("Грешка при изчистване на разпределението")
+  }
+
+  if ((count ?? 0) > 0) {
+    await supabase.rpc("record_order_outcome", {
+      p_order_id: orderId,
+      p_outcome_type: "batch_allocation_cleared",
+      p_payload: { order_id: orderId, cleared_count: count ?? 0 },
+      p_actor: "admin",
+    })
+  }
+
+  revalidateTag("product-batches", "max")
+  return { success: true, cleared: count ?? 0 }
 }
 
 // Recall a batch. Forward transition only (active → recalled). DB trigger
