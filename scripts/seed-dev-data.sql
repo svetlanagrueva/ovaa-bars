@@ -46,6 +46,24 @@ begin
 end;
 $$;
 
+-- Two more batches for EGO-DC-12 only — exercise the override paths in the
+-- "Партиди" card without bloating the seed for every SKU.
+--
+-- Near-expiry: 3 units, expires in 5 days. FEFO will pick this first;
+--              admin sees a tight expiry next to the FEFO suggestion.
+-- Expired:     2 units, expired 30 days ago. Hidden from the dropdown
+--              by default; revealed via "Покажи изтекли партиди" + the
+--              red override checkbox + reason ≥ 20 chars.
+insert into product_batches (sku, batch_number, expiry_date, status, created_by)
+values ('EGO-DC-12', 'SEED-NEAR-EGO-DC-12', current_date + interval '5 days', 'active', 'seed');
+insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by)
+values ('EGO-DC-12', 'batch_in', 3, 'SEED-NEAR-EGO-DC-12', current_date + interval '5 days', 'seed');
+
+insert into product_batches (sku, batch_number, expiry_date, status, created_by)
+values ('EGO-DC-12', 'SEED-EXPIRED-EGO-DC-12', current_date - interval '30 days', 'active', 'seed');
+insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by)
+values ('EGO-DC-12', 'batch_in', 2, 'SEED-EXPIRED-EGO-DC-12', current_date - interval '30 days', 'seed');
+
 -- ── 2. Orders: 5 in different statuses, made ~10 days ago ─────────────
 -- Stock-deducting orders use reserve_inventory RPC for correct
 -- inventory_log + inventory_current bookkeeping.
@@ -139,6 +157,46 @@ begin
 
   perform reserve_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0005-0005-0005-000000000005');
   perform restore_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0005-0005-0005-000000000005');
+
+  -- ─ Order 6: delivered ~3.5 days ago — review_request cron window ───
+  -- (delivered_at >= now - 4d AND delivered_at < now - 3d)
+  insert into orders (id, created_at, confirmed_at, shipped_at, delivered_at,
+                      email, first_name, last_name, phone, city, address, postal_code,
+                      total_amount, shipping_fee, status, payment_method, logistics_partner,
+                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
+  values ('aaaaaaaa-0006-0006-0006-000000000006',
+          now() - interval '4 days', now() - interval '4 days',
+          now() - interval '3 days 18 hours', now() - interval '3 days 12 hours',
+          'review-window@seed.local', 'Анна', 'Колева', '+359888000006',
+          'Русе', 'ул. Тестова 6', '7000',
+          2570, 0, 'delivered', 'card', 'speedy-address',
+          'SEED-SP-6', now() - interval '4 days', 'pi_seed_6', now() - interval '4 days');
+
+  insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
+  values ('aaaaaaaa-0006-0006-0006-000000000006', 1,
+          'egg-origin-white-chocolate-raspberry-box', 'EGO-WCR-12', 'Бял Шоколад с Малини Кутия', 1, 2570);
+
+  perform reserve_inventory('EGO-WCR-12', 1, 'aaaaaaaa-0006-0006-0006-000000000006');
+
+  -- ─ Order 7: delivered ~15 days ago — outside BOTH cron windows ─────
+  -- Verifies the cron correctly skips orders past the cross_sell window.
+  insert into orders (id, created_at, confirmed_at, shipped_at, delivered_at,
+                      email, first_name, last_name, phone, city, address, postal_code,
+                      total_amount, shipping_fee, status, payment_method, logistics_partner,
+                      tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
+  values ('aaaaaaaa-0007-0007-0007-000000000007',
+          now() - interval '16 days', now() - interval '16 days',
+          now() - interval '15 days 12 hours', now() - interval '15 days 6 hours',
+          'past-window@seed.local', 'Никола', 'Маринов', '+359888000007',
+          'Плевен', 'ул. Тестова 7', '5800',
+          2570, 0, 'delivered', 'card', 'speedy-address',
+          'SEED-SP-7', now() - interval '16 days', 'pi_seed_7', now() - interval '16 days');
+
+  insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
+  values ('aaaaaaaa-0007-0007-0007-000000000007', 1,
+          'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
+
+  perform reserve_inventory('EGO-MIX-12', 1, 'aaaaaaaa-0007-0007-0007-000000000007');
 end;
 $$;
 
@@ -152,14 +210,25 @@ commit;
 
 -- ──────────────────────────────────────────────────────────────────────
 -- Net inventory after seed:
---   EGO-DC-12:   10 in − 1 (order 2) − 2 (order 4) = 7 sellable
---   EGO-WCR-12:  10 in − 1 (order 3)               = 9 sellable
---   EGO-MIX-12:  10 in − 1 (order 2) − 1 (order 5 reserved+restored = 0) = 9 sellable
+--   EGO-DC-12:   5+5+3+2 in − 1 (order 2) − 2 (order 4)               = 12 sellable
+--                  (3 of those expire in 5 days; 2 are already expired)
+--   EGO-WCR-12:  10 in − 1 (order 3) − 1 (order 6)                    = 8 sellable
+--   EGO-MIX-12:  10 in − 1 (order 2) − 0 (order 5 reserved+restored) − 1 (order 7) = 8 sellable
 --
 -- Test customers (all use *@seed.local so they're easy to filter):
---   pending@seed.local      — order 1, just placed
---   confirmed@seed.local    — order 2, COD, awaiting shipment
---   shipped@seed.local      — order 3, in transit
---   delivered@seed.local    — order 4, in cross_sell email window
---   cancelled@seed.local    — order 5, admin cancelled
+--   pending@seed.local        — order 1, just placed
+--   confirmed@seed.local      — order 2, COD, awaiting shipment
+--   shipped@seed.local        — order 3, in transit
+--   delivered@seed.local      — order 4, in cross_sell email window (~10.5d ago)
+--   cancelled@seed.local      — order 5, admin cancelled
+--   review-window@seed.local  — order 6, in review_request window (~3.5d ago)
+--   past-window@seed.local    — order 7, outside both cron windows (~15d ago)
+--
+-- Batch testing (EGO-DC-12 has the variety):
+--   SEED-A-EGO-DC-12       — 5 units, +60 days expiry (FEFO winner)
+--   SEED-B-EGO-DC-12       — 5 units, +180 days expiry
+--   SEED-NEAR-EGO-DC-12    — 3 units, +5 days expiry (near-expiry — earlier
+--                              than SEED-A so this is the actual FEFO winner)
+--   SEED-EXPIRED-EGO-DC-12 — 2 units, -30 days expiry (expired —
+--                              hidden until "Покажи изтекли партиди" toggled)
 -- ──────────────────────────────────────────────────────────────────────
