@@ -226,6 +226,89 @@ describe("saveBatchAllocation — DB-driven flows", () => {
   })
 })
 
+describe("cancelShipment", () => {
+  it("rejects invalid order ID", async () => {
+    const { cancelShipment } = await import("@/app/actions/admin")
+    await expect(cancelShipment("not-a-uuid", "valid reason here")).rejects.toThrow("Невалиден формат на поръчка")
+  })
+
+  it("rejects too-short reason", async () => {
+    const { cancelShipment } = await import("@/app/actions/admin")
+    await expect(cancelShipment(VALID_ORDER_ID, "short")).rejects.toThrow("поне 10")
+  })
+
+  it("rejects when order status isn't 'confirmed'", async () => {
+    mockSupabase.single = vi.fn(() => Promise.resolve({
+      data: { id: VALID_ORDER_ID, status: "shipped", tracking_number: "SP123456" }, error: null,
+    }))
+    const { cancelShipment } = await import("@/app/actions/admin")
+    await expect(cancelShipment(VALID_ORDER_ID, "valid reason here")).rejects.toThrow("потвърдени")
+  })
+
+  it("rejects when tracking_number is null", async () => {
+    mockSupabase.single = vi.fn(() => Promise.resolve({
+      data: { id: VALID_ORDER_ID, status: "confirmed", tracking_number: null }, error: null,
+    }))
+    const { cancelShipment } = await import("@/app/actions/admin")
+    await expect(cancelShipment(VALID_ORDER_ID, "valid reason here")).rejects.toThrow("няма генерирана")
+  })
+
+  it("rejects when tracking_number is the __generating__ placeholder", async () => {
+    mockSupabase.single = vi.fn(() => Promise.resolve({
+      data: { id: VALID_ORDER_ID, status: "confirmed", tracking_number: "__generating__" }, error: null,
+    }))
+    const { cancelShipment } = await import("@/app/actions/admin")
+    await expect(cancelShipment(VALID_ORDER_ID, "valid reason here")).rejects.toThrow(/генерира/)
+  })
+
+  it("happy path: clears tracking_number and emits unlock audit event", async () => {
+    // Initial read returns a real tracking number
+    mockSupabase.single = vi.fn(() => Promise.resolve({
+      data: { id: VALID_ORDER_ID, status: "confirmed", tracking_number: "SP123456" }, error: null,
+    }))
+    // The conditional UPDATE returns the row indicating success.
+    // The action chains .update().eq().eq().select().single(), so the chained
+    // chain mock's `.single` is what gets awaited.
+    const updateChain = {
+      eq: vi.fn(() => updateChain),
+      select: vi.fn(() => updateChain),
+      single: vi.fn(() => Promise.resolve({ data: { id: VALID_ORDER_ID }, error: null })),
+    }
+    mockSupabase.update = vi.fn(() => updateChain) as never
+
+    const { cancelShipment } = await import("@/app/actions/admin")
+    const result = await cancelShipment(VALID_ORDER_ID, "wrong recipient address, regenerating")
+
+    expect(result).toEqual({ success: true, previousTrackingNumber: "SP123456" })
+    expect(mockSupabase.update).toHaveBeenCalledWith(expect.objectContaining({ tracking_number: null }))
+    expect(mockSupabase.rpc).toHaveBeenCalledWith(
+      "record_order_outcome",
+      expect.objectContaining({
+        p_outcome_type: "batch_allocation_unlocked_after_shipment_cancelled",
+        p_payload: expect.objectContaining({
+          previous_tracking_number: "SP123456",
+          reason: "wrong recipient address, regenerating",
+        }),
+      }),
+    )
+  })
+
+  it("rejects when the conditional UPDATE finds no row (race with another writer)", async () => {
+    mockSupabase.single = vi.fn(() => Promise.resolve({
+      data: { id: VALID_ORDER_ID, status: "confirmed", tracking_number: "SP123456" }, error: null,
+    }))
+    const updateChain = {
+      eq: vi.fn(() => updateChain),
+      select: vi.fn(() => updateChain),
+      single: vi.fn(() => Promise.resolve({ data: null, error: null })),
+    }
+    mockSupabase.update = vi.fn(() => updateChain) as never
+
+    const { cancelShipment } = await import("@/app/actions/admin")
+    await expect(cancelShipment(VALID_ORDER_ID, "valid reason here")).rejects.toThrow("обновете страницата")
+  })
+})
+
 describe("clearBatchAllocation", () => {
   it("rejects invalid order ID", async () => {
     const { clearBatchAllocation } = await import("@/app/actions/admin")

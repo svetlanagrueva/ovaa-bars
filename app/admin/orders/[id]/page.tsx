@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
+import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, cancelShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
@@ -43,6 +43,7 @@ export default function AdminOrderDetailPage({
   const [error, setError] = useState("")
   const [trackingNumber, setTrackingNumber] = useState("")
   const [cancellationReason, setCancellationReason] = useState("")
+  const [cancelShipmentReason, setCancelShipmentReason] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState("")
   const [shipmentForm, setShipmentForm] = useState<ShipmentFormData | null>(null)
@@ -1756,6 +1757,43 @@ export default function AdminOrderDetailPage({
                     </div>
                   )}
                 </>
+              )}
+              {order.tracking_number && order.tracking_number !== "__generating__" && (
+                <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Анулирай товарителницата</span>
+                    <span className="font-mono text-xs">{order.tracking_number}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Изчиства номера на товарителницата вътрешно — анулирайте етикета и при куриера отделно. След това партидите могат да се преразпределят.
+                  </p>
+                  <Input
+                    placeholder="Причина за анулиране (поне 10 символа)..."
+                    value={cancelShipmentReason}
+                    onChange={(e) => setCancelShipmentReason(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={actionLoading || cancelShipmentReason.trim().length < 10}
+                    onClick={async () => {
+                      if (!confirm("Анулиране на товарителницата? Партидите ще станат редактируеми отново.")) return
+                      setActionError("")
+                      setActionLoading(true)
+                      try {
+                        await cancelShipment(id, cancelShipmentReason.trim())
+                        setCancelShipmentReason("")
+                        const updated = await getOrder(id)
+                        setOrder(updated)
+                      } catch (err) {
+                        setActionError(err instanceof Error ? err.message : "Грешка при анулиране на товарителницата")
+                      } finally {
+                        setActionLoading(false)
+                      }
+                    }}
+                  >
+                    {actionLoading ? "Обработка..." : "Анулирай"}
+                  </Button>
+                </div>
               )}
               <div className="flex items-end gap-3">
                 <div className="flex-1">

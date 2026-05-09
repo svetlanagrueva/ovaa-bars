@@ -1254,6 +1254,74 @@ export async function generateShipment(orderId: string, form: ShipmentFormData):
   return { trackingNumber }
 }
 
+// Cancel an issued shipment label (status still 'confirmed', tracking_number
+// is a real value). Clears tracking_number so the lifecycle trigger releases
+// the order_item_batches lock and the admin can re-allocate / re-generate.
+//
+// The courier-side cancellation/void is admin-managed (call the courier or
+// use their dashboard). This action is the internal half: free the lock and
+// record the unlock event so the audit trail captures the moment.
+export async function cancelShipment(
+  orderId: string,
+  reason: string,
+): Promise<{ success: true; previousTrackingNumber: string }> {
+  await requireAdmin()
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+
+  const trimmed = reason?.trim() ?? ""
+  if (trimmed.length < 10) throw new Error("Причината трябва да е поне 10 символа")
+  if (trimmed.length > 1000) throw new Error("Причината е твърде дълга")
+
+  const supabase = await createClient()
+
+  const { data: order, error: readErr } = await supabase
+    .from("orders")
+    .select("id, status, tracking_number")
+    .eq("id", orderId)
+    .single()
+  if (readErr || !order) throw new Error("Поръчката не е намерена")
+  if (order.status !== "confirmed") {
+    throw new Error(`Анулиране на товарителница е възможно само за потвърдени поръчки (текущ статус: ${order.status})`)
+  }
+  if (!order.tracking_number) throw new Error("Поръчката няма генерирана товарителница")
+  if (order.tracking_number === "__generating__") {
+    throw new Error("Товарителницата се генерира в момента — изчакайте резултата")
+  }
+
+  const previousTrackingNumber = order.tracking_number as string
+
+  // Atomic guard: only clear if the tracking number is still what we read.
+  // Prevents racing against a concurrent generateShipment retry / another
+  // cancelShipment / a manual DB edit.
+  const { data: cleared, error: clearErr } = await supabase
+    .from("orders")
+    .update({ tracking_number: null })
+    .eq("id", orderId)
+    .eq("tracking_number", previousTrackingNumber)
+    .select("id")
+    .single()
+  if (clearErr || !cleared) {
+    throw new Error("Не може да се анулира товарителницата в момента — обновете страницата и опитайте отново")
+  }
+
+  const { error: auditErr } = await supabase.rpc("record_order_outcome", {
+    p_order_id: orderId,
+    p_outcome_type: "batch_allocation_unlocked_after_shipment_cancelled",
+    p_payload: {
+      order_id: orderId,
+      previous_tracking_number: previousTrackingNumber,
+      reason: trimmed,
+    },
+    p_actor: "admin",
+  })
+  if (auditErr) {
+    console.error("Failed to emit batch_allocation_unlocked_after_shipment_cancelled:", sanitizeError(auditErr))
+  }
+
+  revalidateTag("product-batches", "max")
+  return { success: true, previousTrackingNumber }
+}
+
 export async function addAdminNote(orderId: string, note: string) {
   await requireAdmin()
 
