@@ -25,6 +25,7 @@ import {
 } from "@/lib/email-sender"
 import { autoCreateCreditNoteRow } from "@/lib/credit-note"
 import { buildExpectedFefoPlan, isFefoCompliant } from "@/lib/batches/fefo"
+import { translateRpcError } from "@/lib/rpc-errors"
 
 // Rate limiting (in-memory, best-effort in serverless)
 const MAX_LOGIN_ATTEMPTS = 5
@@ -729,8 +730,7 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
 export async function getOrder(orderId: string): Promise<OrderDetail> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) {
+  if (!UUID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -899,8 +899,7 @@ export async function updateOrderStatus(
 ) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) {
+  if (!UUID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -1048,8 +1047,7 @@ export interface ShipmentDisplayInfo {
 export async function getShipmentDefaults(orderId: string): Promise<{ form: ShipmentFormData; display: ShipmentDisplayInfo }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -1107,8 +1105,7 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
 export async function generateShipment(orderId: string, form: ShipmentFormData): Promise<{ trackingNumber: string }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
   if (!form.weight || form.weight < 0.1 || form.weight > 50) throw new Error("Теглото трябва да е между 0.1 и 50 кг")
   if (!form.recipientName.trim()) throw new Error("Името на получателя е задължително")
   if (!form.recipientPhone.trim()) throw new Error("Телефонът на получателя е задължителен")
@@ -1325,8 +1322,7 @@ export async function cancelShipment(
 export async function addAdminNote(orderId: string, note: string) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const trimmed = note.trim()
   if (!trimmed) throw new Error("Бележката е празна")
@@ -1342,11 +1338,10 @@ export async function addAdminNote(orderId: string, note: string) {
   })
 
   if (error) {
-    if (error.message?.includes("not found")) {
-      throw new Error("Поръчката не е намерена")
-    }
     console.error("Failed to add admin note:", error)
-    throw new Error("Грешка при добавяне на бележка")
+    throw new Error(translateRpcError(error, {
+      ORDER_NOT_FOUND: "Поръчката не е намерена",
+    }, "Грешка при добавяне на бележка"))
   }
 
   return { success: true }
@@ -1363,8 +1358,7 @@ export async function setInvoiceNumber(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
+  if (!UUID_REGEX.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const trimmed = invoiceNumber.trim()
   if (!trimmed || trimmed.length > 50) throw new Error("Невалиден номер на фактура")
@@ -1406,8 +1400,7 @@ export async function setInvoiceNumber(
 export async function markInvoiceSent(invoiceId: string): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(invoiceId)) throw new Error("Invalid invoice ID")
+  if (!UUID_REGEX.test(invoiceId)) throw new Error("Invalid invoice ID")
 
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -1441,8 +1434,7 @@ export async function recordCodSettlement(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   if (data.courierPppRef && data.courierPppRef.length > 100) {
     throw new Error("ППП референцията е твърде дълга")
@@ -1524,8 +1516,7 @@ export async function recordCodSettlement(
 export async function markCodConfirmed(orderId: string): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
 
@@ -1607,8 +1598,7 @@ export async function updateOrderContact(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   // Per-field validation. Only fields that were actually provided are
   // validated; undefined values pass through untouched. The client is
@@ -1723,8 +1713,7 @@ export async function updateOrderQuantity(
 ): Promise<{ success: true; newTotalCents: number }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   if (!sku || typeof sku !== "string") throw new Error("SKU е задължителен")
   const validSkus = PRODUCTS.map((p) => p.sku)
@@ -1852,13 +1841,64 @@ async function emitEmailResentAudit(
   }
 }
 
-export async function resendOrderConfirmationEmail(
-  orderId: string,
-): Promise<{ success: true }> {
+// Dispatch table for the three customer email-resend admin actions. The
+// scaffolding (auth + UUID + load order + audit + return) is shared in
+// `resendOrderEmail`; each entry encodes the bits that vary:
+//   - `gate(order)`: returns a Bulgarian error message string when the
+//     order isn't in a sendable state, or null when it is.
+//   - `send(order)`: actually fires the underlying email helper.
+type ResendKind = "order_confirmation" | "shipping" | "delivery"
+
+interface ResendSpec {
+  gate: (order: Record<string, unknown>) => string | null
+  send: (order: Record<string, unknown>) => Promise<void>
+}
+
+const RESEND_SPECS: Record<ResendKind, ResendSpec> = {
+  order_confirmation: {
+    // Don't resend for pending orders — they haven't been confirmed yet, so
+    // the "order confirmation" wording would be wrong (no receipt URL for
+    // card, no COD acceptance).
+    gate: (order) => {
+      if (order.status === "pending") {
+        return "Потвърждение на поръчка се изпраща след потвърждение на плащането"
+      }
+      if (order.status === "cancelled" || order.status === "expired") {
+        return `Не може да се изпрати потвърждение за ${order.status === "cancelled" ? "отказана" : "изтекла"} поръчка`
+      }
+      return null
+    },
+    send: (order) => sendOrderConfirmationEmail(order),
+  },
+  shipping: {
+    // Shipping email is only meaningful once a tracking number is assigned.
+    // The '__generating__' placeholder is a distinct not-yet-ready state —
+    // refuse it explicitly so the rare edge case isn't silently suppressed.
+    gate: (order) => {
+      if (!order.tracking_number || order.tracking_number === "__generating__") {
+        return "Пратката още не е генерирана — няма номер за изпращане"
+      }
+      return null
+    },
+    send: (order) => sendShippingEmail(order, order.tracking_number as string),
+  },
+  delivery: {
+    gate: (order) => {
+      if (order.status !== "delivered") {
+        return `Потвърждение за доставка се изпраща само за доставени поръчки (текущ статус: ${order.status})`
+      }
+      return null
+    },
+    // force: true bypasses delivery_email_sent_at; sendDeliveryEmail's
+    // own .is(..., null) guard preserves the original first-sent time.
+    send: (order) => sendDeliveryEmail(order, { force: true }),
+  },
+}
+
+async function resendOrderEmail(orderId: string, kind: ResendKind): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -1869,85 +1909,30 @@ export async function resendOrderConfirmationEmail(
 
   if (error || !order) throw new Error("Поръчката не е намерена")
 
-  // Don't resend for pending orders — they haven't been confirmed yet, so the
-  // "order confirmation" wording would be wrong (no receipt URL for card,
-  // no COD acceptance).
-  if (order.status === "pending") {
-    throw new Error("Потвърждение на поръчка се изпраща след потвърждение на плащането")
-  }
-  if (order.status === "cancelled" || order.status === "expired") {
-    throw new Error(
-      `Не може да се изпрати потвърждение за ${order.status === "cancelled" ? "отказана" : "изтекла"} поръчка`,
-    )
-  }
+  const spec = RESEND_SPECS[kind]
+  const gateError = spec.gate(order as Record<string, unknown>)
+  if (gateError) throw new Error(gateError)
 
-  await sendOrderConfirmationEmail(order as Record<string, unknown>)
-  await emitEmailResentAudit(supabase, orderId, "order_confirmation")
+  await spec.send(order as Record<string, unknown>)
+  await emitEmailResentAudit(supabase, orderId, kind)
 
   return { success: true }
 }
 
-export async function resendShippingEmail(
-  orderId: string,
-): Promise<{ success: true }> {
-  await requireAdmin()
-
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
-
-  const supabase = await createClient()
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  if (error || !order) throw new Error("Поръчката не е намерена")
-
-  // Shipping email is only meaningful once a tracking number is assigned.
-  // status='shipped' implies tracking_number was set (generate-shipment
-  // atomically moves the status), but the placeholder value is a distinct
-  // not-yet-ready state — rare edge case, refuse it explicitly.
-  if (!order.tracking_number || order.tracking_number === "__generating__") {
-    throw new Error("Пратката още не е генерирана — няма номер за изпращане")
-  }
-
-  await sendShippingEmail(order as Record<string, unknown>, order.tracking_number as string)
-  await emitEmailResentAudit(supabase, orderId, "shipping")
-
-  return { success: true }
+// Thin async wrappers around `resendOrderEmail`. Must be `async function` —
+// Next.js's "use server" directive rejects sync functions even when they
+// return a Promise, so the obvious `return resendOrderEmail(...)` form
+// triggers a build error.
+export async function resendOrderConfirmationEmail(orderId: string): Promise<{ success: true }> {
+  return resendOrderEmail(orderId, "order_confirmation")
 }
 
-export async function resendDeliveryEmail(
-  orderId: string,
-): Promise<{ success: true }> {
-  await requireAdmin()
+export async function resendShippingEmail(orderId: string): Promise<{ success: true }> {
+  return resendOrderEmail(orderId, "shipping")
+}
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Invalid order ID")
-
-  const supabase = await createClient()
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  if (error || !order) throw new Error("Поръчката не е намерена")
-
-  if (order.status !== "delivered") {
-    throw new Error(
-      `Потвърждение за доставка се изпраща само за доставени поръчки (текущ статус: ${order.status})`,
-    )
-  }
-
-  // force: true bypasses the delivery_email_sent_at early-return so the email
-  // actually fires. The timestamp update inside sendDeliveryEmail keeps its
-  // .is(..., null) guard, so the original first-sent time is preserved.
-  await sendDeliveryEmail(order as Record<string, unknown>, { force: true })
-  await emitEmailResentAudit(supabase, orderId, "delivery")
-
-  return { success: true }
+export async function resendDeliveryEmail(orderId: string): Promise<{ success: true }> {
+  return resendOrderEmail(orderId, "delivery")
 }
 
 // ─── Refund tracking ─────────────────────────────────────────────────────────
@@ -2023,9 +2008,8 @@ export async function recordRefund(
 ): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
-  if (!uuidRegex.test(data.clientIdempotencyKey)) {
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(data.clientIdempotencyKey)) {
     throw new Error("Невалиден idempotency key")
   }
 
@@ -2300,7 +2284,7 @@ export async function recordRefund(
   // goods_received; never completed/rejected).
   const withdrawalIdForLink = data.withdrawalId?.trim() || null
   if (withdrawalIdForLink) {
-    if (!uuidRegex.test(withdrawalIdForLink)) {
+    if (!UUID_REGEX.test(withdrawalIdForLink)) {
       throw new Error("Невалиден формат на заявка за връщане")
     }
     const { data: wd, error: wdError } = await supabase
@@ -2539,8 +2523,7 @@ export async function updateRefundAnnotation(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(refundId)) throw new Error("Невалиден формат на възстановяване")
+  if (!UUID_REGEX.test(refundId)) throw new Error("Невалиден формат на възстановяване")
 
   const updatePayload: Record<string, unknown> = {}
 
@@ -2635,8 +2618,7 @@ export async function recordOrderOutcome(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   if (!OUTCOME_TYPES.includes(data.outcomeType)) {
     throw new Error("Невалиден тип събитие")
@@ -2752,8 +2734,7 @@ export async function recordComplaint(
 ): Promise<{ success: true; complaintRef: string }> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   // Validate defect description
   const trimmedDefect = data.defectDescription?.trim()
@@ -2904,8 +2885,7 @@ export async function getComplaints(
 export async function getOrderComplaints(orderId: string): Promise<Complaint[]> {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -3209,10 +3189,9 @@ export async function completeWithdrawalNoReturn(
 
   if (error) {
     console.error("Failed to complete withdrawal (no-return path):", error)
-    if (error.message?.includes("refund_id is required")) {
-      throw new Error("За резолюция от тип 'refund' първо запишете възстановяване")
-    }
-    throw new Error("Заявката не може да бъде завършена в текущото състояние")
+    throw new Error(translateRpcError(error, {
+      WITHDRAWAL_REFUND_ID_REQUIRED: "За резолюция от тип 'refund' първо запишете възстановяване",
+    }, "Заявката не може да бъде завършена в текущото състояние"))
   }
 
   revalidateTag("withdrawals", "max")
@@ -3471,8 +3450,7 @@ export async function createSale(data: {
 export async function endSale(saleId: string) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(saleId)) throw new Error("Invalid sale ID")
+  if (!UUID_REGEX.test(saleId)) throw new Error("Invalid sale ID")
 
   const supabase = await createClient()
 
@@ -3596,8 +3574,7 @@ export async function createPromoCode(input: {
 export async function deactivatePromoCode(promoId: string) {
   await requireAdmin()
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(promoId)) throw new Error("Invalid promo code ID")
+  if (!UUID_REGEX.test(promoId)) throw new Error("Invalid promo code ID")
 
   const supabase = await createClient()
 
@@ -3688,23 +3665,6 @@ export interface OrderItemBatch {
   quantity: number
   confirmed_at: string
   confirmed_by: string
-}
-
-export interface BatchSuggestion {
-  orderItemId: number
-  sku: string
-  productName: string
-  orderedQuantity: number
-  alreadyAllocated: number
-  remainingToAllocate: number
-  suggestions: Array<{
-    productBatchId: string
-    batchNumber: string
-    expiryDate: string
-    quantityAvailable: number
-    suggestedQuantity: number
-  }>
-  shortfall: number  // positive when active batches can't cover the order
 }
 
 export interface BatchAffectedOrder {
@@ -3991,13 +3951,12 @@ export async function recordStockMovement(data: {
   // Validate orderId — allowed on return_in (sellable return) and damaged
   // (damaged return). On other movement types, order_id wouldn't have
   // meaningful semantics under the current reference_type rules.
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const shortIdRegex = /^[0-9a-f]{8}$/i
   let resolvedOrderId: string | undefined = data.orderId?.trim() || undefined
   if (resolvedOrderId && data.type !== "return_in" && data.type !== "damaged") {
     throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
-  if (resolvedOrderId && !uuidRegex.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
+  if (resolvedOrderId && !UUID_REGEX.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
     throw new Error("Невалиден формат на поръчка (очаква се UUID или 8-знаков префикс)")
   }
 
@@ -4338,21 +4297,18 @@ export async function getProductBatches(params?: {
     throw new Error("Грешка при зареждане на партидите")
   }
 
-  // Compute available quantity per batch via the helper RPC. Could be done
-  // in a single SQL with a lateral join; per-batch RPC keeps the logic in
-  // one place and the call count is bounded by total batches (small).
+  // Compute available quantity per batch via the helper RPC. Issued in
+  // parallel; the call count is bounded by total batches (small) so a
+  // SQL lateral join isn't worth the schema change.
   const batches = (data ?? []) as ProductBatch[]
-  const results: ProductBatchWithAvailability[] = []
-  for (const b of batches) {
-    const { data: qty, error: qtyError } = await supabase.rpc("batch_quantity_available", {
-      p_batch_id: b.id,
-    })
-    if (qtyError) {
-      console.error(`Failed to compute availability for batch ${b.id}:`, qtyError)
-    }
-    results.push({ ...b, quantity_available: typeof qty === "number" ? qty : 0 })
-  }
-  return results
+  const availabilities = await Promise.all(
+    batches.map(async (b) => {
+      const { data: qty, error: qtyError } = await supabase.rpc("batch_quantity_available", { p_batch_id: b.id })
+      if (qtyError) console.error(`Failed to compute availability for batch ${b.id}:`, qtyError)
+      return typeof qty === "number" ? qty : 0
+    }),
+  )
+  return batches.map((b, i) => ({ ...b, quantity_available: availabilities[i] }))
 }
 
 export async function getProductBatch(id: string): Promise<ProductBatchWithAvailability> {
@@ -4370,252 +4326,6 @@ export async function getProductBatch(id: string): Promise<ProductBatchWithAvail
 
   const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: id })
   return { ...(data as ProductBatch), quantity_available: typeof qty === "number" ? qty : 0 }
-}
-
-// FEFO suggestion. For each order_item that hasn't been fully allocated
-// yet, list active batches ordered by expiry_date ASC and greedily allocate.
-// If active batches don't cover the order, the result includes a shortfall
-// the admin must resolve (block allocation, receive new stock, recall, etc.).
-export async function suggestBatchesForShipment(orderId: string): Promise<BatchSuggestion[]> {
-  await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
-
-  const supabase = await createClient()
-
-  // Order items + product names
-  const { data: orderItems, error: itemsError } = await supabase
-    .from("order_items")
-    .select("id, sku, product_name, quantity")
-    .eq("order_id", orderId)
-    .order("line_no", { ascending: true })
-  if (itemsError || !orderItems) {
-    throw new Error("Грешка при зареждане на артикулите по поръчката")
-  }
-
-  // Existing allocations (idempotent — admin reopens dialog after partial save)
-  const itemIds = orderItems.map((i) => i.id)
-  const { data: existingAllocs } = await supabase
-    .from("order_item_batches")
-    .select("order_item_id, product_batch_id, quantity")
-    .in("order_item_id", itemIds)
-  const allocByItem = new Map<number, number>()
-  for (const a of existingAllocs ?? []) {
-    const row = a as { order_item_id: number; quantity: number }
-    allocByItem.set(row.order_item_id, (allocByItem.get(row.order_item_id) ?? 0) + row.quantity)
-  }
-
-  // Active batches per SKU. Fetch once for all distinct SKUs in this order.
-  const skus = Array.from(new Set(orderItems.map((i) => i.sku)))
-  const { data: batches } = await supabase
-    .from("product_batches")
-    .select("id, sku, batch_number, expiry_date, status")
-    .in("sku", skus)
-    .eq("status", "active")
-    .order("expiry_date", { ascending: true })
-  const batchesBySku = new Map<string, Array<{ id: string; sku: string; batch_number: string; expiry_date: string }>>()
-  for (const b of batches ?? []) {
-    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
-    if (!batchesBySku.has(row.sku)) batchesBySku.set(row.sku, [])
-    batchesBySku.get(row.sku)!.push(row)
-  }
-
-  // Compute available qty per relevant batch via RPC
-  const allBatchIds = (batches ?? []).map((b) => (b as { id: string }).id)
-  const availByBatch = new Map<string, number>()
-  for (const bid of allBatchIds) {
-    const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: bid })
-    availByBatch.set(bid, typeof qty === "number" ? qty : 0)
-  }
-
-  // Build suggestions per order_item
-  const suggestions: BatchSuggestion[] = []
-  // Track running drawdown across items in case two items share a SKU/batch.
-  const runningDrawdown = new Map<string, number>()
-
-  for (const item of orderItems) {
-    const oi = item as { id: number; sku: string; product_name: string; quantity: number }
-    const alreadyAllocated = allocByItem.get(oi.id) ?? 0
-    const remaining = oi.quantity - alreadyAllocated
-    const itemSuggestion: BatchSuggestion = {
-      orderItemId: oi.id,
-      sku: oi.sku,
-      productName: oi.product_name,
-      orderedQuantity: oi.quantity,
-      alreadyAllocated,
-      remainingToAllocate: remaining,
-      suggestions: [],
-      shortfall: 0,
-    }
-
-    if (remaining <= 0) {
-      suggestions.push(itemSuggestion)
-      continue
-    }
-
-    let need = remaining
-    for (const b of batchesBySku.get(oi.sku) ?? []) {
-      if (need <= 0) break
-      const available = (availByBatch.get(b.id) ?? 0) - (runningDrawdown.get(b.id) ?? 0)
-      if (available <= 0) continue
-      const take = Math.min(need, available)
-      itemSuggestion.suggestions.push({
-        productBatchId: b.id,
-        batchNumber: b.batch_number,
-        expiryDate: b.expiry_date,
-        quantityAvailable: available,
-        suggestedQuantity: take,
-      })
-      runningDrawdown.set(b.id, (runningDrawdown.get(b.id) ?? 0) + take)
-      need -= take
-    }
-
-    itemSuggestion.shortfall = Math.max(0, need)
-    suggestions.push(itemSuggestion)
-  }
-
-  return suggestions
-}
-
-// Persist allocations. Strict guards (mirroring DB triggers but with friendly
-// error messages):
-//   - sum per item == ordered quantity (full allocation, not partial)
-//   - all selected batches are active
-//   - SKU consistency (DB trigger is the backstop)
-//   - no allocation for an order whose status doesn't allow shipping
-//
-// Idempotency: if all items already have full allocation, returns success
-// without inserting anything (admin reopened the dialog and re-confirmed).
-export async function confirmShipmentBatches(
-  orderId: string,
-  allocations: Array<{
-    orderItemId: number
-    productBatchId: string
-    quantity: number
-  }>,
-): Promise<{ success: true; inserted: number }> {
-  await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
-
-  if (!Array.isArray(allocations)) {
-    throw new Error("Невалидни алокации")
-  }
-
-  const supabase = await createClient()
-
-  // Order must be in a shippable status (confirmed). Reject otherwise.
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .select("id, status")
-    .eq("id", orderId)
-    .single()
-  if (orderError || !order) throw new Error("Поръчката не е намерена")
-  if (order.status !== "confirmed") {
-    throw new Error(`Алокирането на партиди е възможно само за потвърдени поръчки (текущ статус: ${order.status})`)
-  }
-
-  // Order items
-  const { data: orderItems, error: itemsError } = await supabase
-    .from("order_items")
-    .select("id, sku, quantity")
-    .eq("order_id", orderId)
-  if (itemsError || !orderItems) throw new Error("Грешка при зареждане на артикулите")
-  const itemMap = new Map(orderItems.map((i) => [i.id, i as { id: number; sku: string; quantity: number }]))
-
-  // Existing allocations (for idempotency)
-  const itemIds = orderItems.map((i) => i.id)
-  const { data: existingAllocs, error: existingError } = await supabase
-    .from("order_item_batches")
-    .select("order_item_id, product_batch_id, quantity")
-    .in("order_item_id", itemIds)
-  if (existingError) throw new Error("Грешка при проверка на съществуващи алокации")
-  const existingPairs = new Set(
-    (existingAllocs ?? []).map((a) => `${(a as { order_item_id: number }).order_item_id}-${(a as { product_batch_id: string }).product_batch_id}`),
-  )
-  const existingByItem = new Map<number, number>()
-  for (const a of existingAllocs ?? []) {
-    const row = a as { order_item_id: number; quantity: number }
-    existingByItem.set(row.order_item_id, (existingByItem.get(row.order_item_id) ?? 0) + row.quantity)
-  }
-
-  // Validate input shape + filter out duplicates that already exist
-  const toInsert: Array<{ order_item_id: number; product_batch_id: string; quantity: number }> = []
-  const incomingByItem = new Map<number, number>()
-  const seenPairs = new Set<string>()
-  for (const a of allocations) {
-    if (!Number.isInteger(a.orderItemId) || a.orderItemId <= 0) {
-      throw new Error("Невалиден артикул в поръчката")
-    }
-    if (!UUID_REGEX.test(a.productBatchId)) {
-      throw new Error("Невалиден формат на партида")
-    }
-    if (!Number.isInteger(a.quantity) || a.quantity < 1) {
-      throw new Error("Количеството трябва да е положително цяло число")
-    }
-    if (!itemMap.has(a.orderItemId)) {
-      throw new Error(`Артикул ${a.orderItemId} не принадлежи на тази поръчка`)
-    }
-    const pairKey = `${a.orderItemId}-${a.productBatchId}`
-    if (seenPairs.has(pairKey)) {
-      throw new Error("Един и същ артикул-партида е посочен повече от веднъж")
-    }
-    seenPairs.add(pairKey)
-    incomingByItem.set(a.orderItemId, (incomingByItem.get(a.orderItemId) ?? 0) + a.quantity)
-    if (!existingPairs.has(pairKey)) {
-      toInsert.push({
-        order_item_id: a.orderItemId,
-        product_batch_id: a.productBatchId,
-        quantity: a.quantity,
-      })
-    }
-  }
-
-  // Per-item: existing + incoming must equal ordered quantity exactly.
-  // Partial allocations are not allowed at shipment time (DB has no equality
-  // constraint; this is the place to enforce it).
-  for (const [itemId, item] of itemMap) {
-    const totalAllocated = (existingByItem.get(itemId) ?? 0) + (incomingByItem.get(itemId) ?? 0)
-    if (totalAllocated !== item.quantity) {
-      throw new Error(
-        `Алокираното количество за SKU ${item.sku} (${totalAllocated}) трябва да съвпадне с поръчаното (${item.quantity})`,
-      )
-    }
-  }
-
-  if (toInsert.length === 0) {
-    return { success: true, inserted: 0 } // idempotent — already fully allocated
-  }
-
-  // Validate target batches: must exist, must be active, sku must match item.
-  const targetBatchIds = Array.from(new Set(toInsert.map((r) => r.product_batch_id)))
-  const { data: targetBatches, error: batchesError } = await supabase
-    .from("product_batches")
-    .select("id, sku, status, batch_number")
-    .in("id", targetBatchIds)
-  if (batchesError) throw new Error("Грешка при проверка на партидите")
-  const batchMap = new Map((targetBatches ?? []).map((b) => [(b as { id: string }).id, b as { id: string; sku: string; status: string; batch_number: string }]))
-  for (const r of toInsert) {
-    const b = batchMap.get(r.product_batch_id)
-    if (!b) throw new Error(`Партидата ${r.product_batch_id} не е намерена`)
-    if (b.status !== "active") {
-      throw new Error(`Партида ${b.batch_number} не е активна (статус: ${b.status}); не може да се ползва за изпращане`)
-    }
-    const item = itemMap.get(r.order_item_id)!
-    if (b.sku !== item.sku) {
-      throw new Error(`Партида ${b.batch_number} (SKU ${b.sku}) не съвпада със SKU на артикула (${item.sku})`)
-    }
-  }
-
-  // Insert. The DB triggers (sku consistency, immutable) are the backstop.
-  const { error: insertError, count } = await supabase
-    .from("order_item_batches")
-    .insert(toInsert, { count: "exact" })
-  if (insertError) {
-    console.error("Failed to insert order_item_batches:", insertError)
-    throw new Error("Грешка при записване на алокациите на партиди")
-  }
-
-  revalidateTag("product-batches", "max")
-  return { success: true, inserted: count ?? toInsert.length }
 }
 
 // ─── Batch allocation lifecycle (admin-driven) ──────────────────────────────
@@ -4797,19 +4507,18 @@ export async function getBatchAllocationView(orderId: string): Promise<BatchAllo
     .order("expiry_date", { ascending: true })
 
   const todayIso = new Date().toISOString().slice(0, 10)
-  const batches: BatchAllocationViewBatch[] = []
-  for (const b of rawBatches ?? []) {
-    const row = b as { id: string; sku: string; batch_number: string; expiry_date: string; status: string }
-    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
-    batches.push({
-      productBatchId: row.id,
-      sku: row.sku,
-      batchNumber: row.batch_number,
-      expiryDate: row.expiry_date,
-      quantityAvailable: typeof avail === "number" ? avail : 0,
-      isExpired: row.expiry_date < todayIso,
-    })
-  }
+  const rawBatchRows = (rawBatches ?? []) as Array<{ id: string; sku: string; batch_number: string; expiry_date: string; status: string }>
+  const availabilities = await Promise.all(
+    rawBatchRows.map((b) => supabase.rpc("batch_quantity_available", { p_batch_id: b.id })),
+  )
+  const batches: BatchAllocationViewBatch[] = rawBatchRows.map((row, i) => ({
+    productBatchId: row.id,
+    sku: row.sku,
+    batchNumber: row.batch_number,
+    expiryDate: row.expiry_date,
+    quantityAvailable: typeof availabilities[i].data === "number" ? availabilities[i].data : 0,
+    isExpired: row.expiry_date < todayIso,
+  }))
 
   return {
     lines: orderItems.map((oi) => {
@@ -4861,12 +4570,13 @@ export async function autoAllocateFefo(orderId: string): Promise<FefoAutoSuggest
     batchesBySku.get(row.sku)!.push(row)
   }
 
-  const availByBatch = new Map<string, number>()
-  for (const b of batches ?? []) {
-    const row = b as { id: string }
-    const { data: qty } = await supabase.rpc("batch_quantity_available", { p_batch_id: row.id })
-    availByBatch.set(row.id, typeof qty === "number" ? qty : 0)
-  }
+  const batchRows = (batches ?? []) as Array<{ id: string }>
+  const availResults = await Promise.all(
+    batchRows.map((b) => supabase.rpc("batch_quantity_available", { p_batch_id: b.id })),
+  )
+  const availByBatch = new Map<string, number>(
+    batchRows.map((b, i) => [b.id, typeof availResults[i].data === "number" ? availResults[i].data : 0]),
+  )
 
   // Drawdown across lines that share batches (e.g., two lines of the same SKU)
   const drawdown = new Map<string, number>()
@@ -4999,19 +4709,23 @@ export async function saveBatchAllocation(
     }
   }
 
-  // FEFO check needs availability per active+non-expired batch
+  // FEFO check needs availability per active+non-expired batch — fetched in parallel.
+  const fefoCandidates = Array.from(batchById.values()).filter(
+    (b) => b.status === "active" && b.expiry_date >= todayIso,
+  )
+  const fefoAvailabilities = await Promise.all(
+    fefoCandidates.map((b) => supabase.rpc("batch_quantity_available", { p_batch_id: b.id })),
+  )
   const fefoBatchesBySku = new Map<string, Array<{ id: string; expiryDate: string; createdAt: string; availableQty: number }>>()
-  for (const b of batchById.values()) {
-    if (b.status !== "active" || b.expiry_date < todayIso) continue
-    const { data: avail } = await supabase.rpc("batch_quantity_available", { p_batch_id: b.id })
+  fefoCandidates.forEach((b, i) => {
     if (!fefoBatchesBySku.has(b.sku)) fefoBatchesBySku.set(b.sku, [])
     fefoBatchesBySku.get(b.sku)!.push({
       id: b.id,
       expiryDate: b.expiry_date,
       createdAt: b.created_at,
-      availableQty: typeof avail === "number" ? avail : 0,
+      availableQty: typeof fefoAvailabilities[i].data === "number" ? fefoAvailabilities[i].data : 0,
     })
-  }
+  })
 
   const rowsByItem = new Map<number, SaveBatchAllocationRow[]>()
   for (const r of rows) {
@@ -5063,20 +4777,14 @@ export async function saveBatchAllocation(
   })
   if (rpcError) {
     console.error("save_batch_allocation RPC failed:", sanitizeError(rpcError))
-    const msg = rpcError.message ?? ""
-    if (msg.includes("locked") || msg.includes("tracking_number")) {
-      throw new Error("Партидите вече са заключени след генериране на товарителница")
-    }
-    if (msg.includes("must be confirmed")) {
-      throw new Error("Поръчката не е в статус „потвърдена\"")
-    }
-    if (msg.includes("availability")) {
-      throw new Error("Партидата няма достатъчна наличност")
-    }
-    if (msg.includes("ordered")) {
-      throw new Error("Разпределените количества не съвпадат с поръчаното")
-    }
-    throw new Error("Грешка при записване на разпределението")
+    throw new Error(translateRpcError(rpcError, {
+      BATCH_ALLOCATION_LOCKED: "Партидите вече са заключени след генериране на товарителница",
+      ORDER_NOT_CONFIRMED: "Поръчката не е в статус „потвърдена\"",
+      ORDER_NOT_FOUND: "Поръчката не е намерена",
+      BATCH_INSUFFICIENT_AVAILABILITY: "Партидата няма достатъчна наличност",
+      BATCH_ALLOCATION_SUM_MISMATCH: "Разпределените количества не съвпадат с поръчаното",
+      BATCH_NOT_ACTIVE: "Партидата не е активна",
+    }, "Грешка при записване на разпределението"))
   }
 
   // Audit: one batch_allocation_saved + per-row override events
@@ -5108,24 +4816,30 @@ export async function saveBatchAllocation(
   })
   if (auditErr) console.error("Failed to emit batch_allocation_saved:", sanitizeError(auditErr))
 
+  // Per-row override events fire in parallel — they're independent and the
+  // sequential `await` chain was N round-trips of pure latency. The
+  // Supabase query builder is thenable so `await Promise.all(...)` works
+  // even though the elements aren't Promise subclasses.
+  const overrideCalls: Array<PromiseLike<unknown>> = []
   for (const r of rows) {
     if (r.nonFefoReason && r.nonFefoReason.trim().length >= 20) {
-      await supabase.rpc("record_order_outcome", {
+      overrideCalls.push(supabase.rpc("record_order_outcome", {
         p_order_id: orderId,
         p_outcome_type: "batch_allocation_overridden_fefo",
         p_payload: { order_item_id: r.orderItemId, product_batch_id: r.productBatchId, reason: r.nonFefoReason },
         p_actor: "admin",
-      })
+      }))
     }
     if (r.allowExpiredOverride && r.expiredOverrideReason && r.expiredOverrideReason.trim().length >= 20) {
-      await supabase.rpc("record_order_outcome", {
+      overrideCalls.push(supabase.rpc("record_order_outcome", {
         p_order_id: orderId,
         p_outcome_type: "batch_allocation_overridden_expired",
         p_payload: { order_item_id: r.orderItemId, product_batch_id: r.productBatchId, reason: r.expiredOverrideReason },
         p_actor: "admin",
-      })
+      }))
     }
   }
+  if (overrideCalls.length > 0) await Promise.all(overrideCalls)
 
   revalidateTag("product-batches", "max")
   return { success: true, saved: rows.length }
@@ -5149,11 +4863,10 @@ export async function clearBatchAllocation(orderId: string): Promise<{ success: 
     .in("order_item_id", itemIds)
 
   if (delError) {
-    if (delError.message?.includes("after shipment generation")) {
-      throw new Error("Партидите вече са заключени след генериране на товарителница")
-    }
     console.error("clearBatchAllocation failed:", sanitizeError(delError))
-    throw new Error("Грешка при изчистване на разпределението")
+    throw new Error(translateRpcError(delError, {
+      BATCH_ALLOCATION_LOCKED: "Партидите вече са заключени след генериране на товарителница",
+    }, "Грешка при изчистване на разпределението"))
   }
 
   if ((count ?? 0) > 0) {

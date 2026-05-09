@@ -6,7 +6,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Search, Download } from "lucide-react"
 import { getOrders, getAllOrders, type OrderSummary } from "@/app/actions/admin"
-import { getFinancialStatus, getFinancialStatusLabel } from "@/lib/orders"
+import { getFinancialStatus, getFinancialStatusLabel, ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT } from "@/lib/orders"
 import { formatPrice } from "@/lib/products"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { formatBgDateTime } from "@/lib/utils"
 
 const STATUS_LABELS: Record<string, string> = {
   all: "Всички",
@@ -30,21 +31,10 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Отказани",
 }
 
-const STATUS_BADGE_LABELS: Record<string, string> = {
-  pending: "Чакаща",
-  confirmed: "Потвърдена",
-  shipped: "Изпратена",
-  delivered: "Доставена",
-  cancelled: "Отказана",
-}
-
-const STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  pending: "outline",
-  confirmed: "default",
-  shipped: "secondary",
-  delivered: "secondary",
-  cancelled: "destructive",
-}
+// Status badge labels + variants are imported from lib/orders so the
+// dashboard and the orders list share one source of truth. STATUS_LABELS
+// above stays local — it's the *filter* labels (includes "Всички") not
+// the badge labels.
 
 const PAYMENT_LABELS: Record<string, string> = {
   card: "Карта",
@@ -154,7 +144,7 @@ function AdminOrdersPage() {
           o.tracking_number || "",
           o.shipped_at ? new Date(o.shipped_at).toLocaleDateString("bg-BG") : "",
           o.delivered_at ? new Date(o.delivered_at).toLocaleDateString("bg-BG") : "",
-          STATUS_BADGE_LABELS[o.status] || o.status,
+          ORDER_STATUS_LABELS[o.status] || o.status,
           invoiceStateLabel[o.invoiceState],
           o.invoice?.invoice_number || "",
           o.invoice?.invoice_date ? new Date(o.invoice.invoice_date).toLocaleDateString("bg-BG") : "",
@@ -300,13 +290,7 @@ function AdminOrdersPage() {
                     </Link>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(order.created_at).toLocaleDateString("bg-BG", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {formatBgDateTime(order.created_at)}
                   </TableCell>
                   <TableCell>
                     <div className="text-sm font-medium">{order.first_name} {order.last_name}</div>
@@ -473,8 +457,8 @@ function AdminOrdersPage() {
                     })()}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_BADGE_VARIANT[order.status] || "outline"}>
-                      {STATUS_BADGE_LABELS[order.status] || order.status}
+                    <Badge variant={ORDER_STATUS_BADGE_VARIANT[order.status] || "outline"}>
+                      {ORDER_STATUS_LABELS[order.status] || order.status}
                     </Badge>
                   </TableCell>
                 </TableRow>

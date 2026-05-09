@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatBgDate } from "@/lib/utils"
 
 export default function AdminInvoicesPage() {
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([])
@@ -198,11 +199,7 @@ export default function AdminInvoicesPage() {
                   </TableCell>
                   <TableCell className="font-mono text-sm">#{inv.invoice_number}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(inv.invoice_date).toLocaleDateString("bg-BG", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}
+                    {formatBgDate(inv.invoice_date)}
                   </TableCell>
                   <TableCell>
                     <div className="text-sm font-medium">{inv.customer_first_name} {inv.customer_last_name}</div>

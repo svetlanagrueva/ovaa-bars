@@ -207,7 +207,7 @@ describe("saveBatchAllocation — DB-driven flows", () => {
     // but save_batch_allocation returns the locked error.
     mockSupabase.rpc = vi.fn((name: string, args: unknown) => {
       if (name === "save_batch_allocation") {
-        return Promise.resolve({ data: null, error: { message: "Allocation is locked (tracking_number is set)" } })
+        return Promise.resolve({ data: null, error: { message: "Allocation is locked (tracking_number is set)", hint: "BATCH_ALLOCATION_LOCKED" } })
       }
       if (name === "batch_quantity_available") {
         const params = args as { p_batch_id: string }
@@ -328,7 +328,7 @@ describe("clearBatchAllocation", () => {
     mockSupabase.eq = vi.fn(() => mockThenableResult([{ id: 1 }]))
     mockSupabase.delete = vi.fn(() => ({
       in: vi.fn(() => Promise.resolve({
-        error: { message: "Cannot modify batch allocation after shipment generation (tracking_number is set)" },
+        error: { message: "Cannot modify batch allocation after shipment generation (tracking_number is set)", hint: "BATCH_ALLOCATION_LOCKED" },
         count: null,
       })),
     }))
