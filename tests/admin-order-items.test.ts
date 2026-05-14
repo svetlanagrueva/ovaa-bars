@@ -35,9 +35,9 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }))
 vi.mock("@/lib/sales", () => ({
   getProductsWithSales: vi.fn(() =>
     Promise.resolve([
-      { id: "egg-origin-dark-chocolate-box", sku: "EGO-DC-12", name: "Тъмен Шоколад Кутия", priceInCents: 2570 },
-      { id: "egg-origin-white-chocolate-raspberry-box", sku: "EGO-WCR-12", name: "Бял Шоколад Малина Кутия", priceInCents: 2570 },
-      { id: "egg-origin-mix-box", sku: "EGO-MIX-12", name: "Микс Кутия", priceInCents: 2570 },
+      { id: "egg-origin-dark-chocolate-box", sku: "EGO-DC-12", name: "Натурален Шоколад", priceInCents: 2570 },
+      { id: "egg-origin-white-chocolate-raspberry-box", sku: "EGO-WCR-12", name: "Бял Шоколад с Малини", priceInCents: 2570 },
+      { id: "egg-origin-mix-box", sku: "EGO-MIX-12", name: "Микс", priceInCents: 2570 },
     ]),
   ),
 }))
@@ -137,7 +137,7 @@ describe("addOrderItem — happy path", () => {
       p_sku: "EGO-DC-12",
       p_quantity: 2,
       p_unit_price_cents: 2570,
-      p_product_name: "Тъмен Шоколад Кутия",
+      p_product_name: "Натурален Шоколад",
     })
 
     const auditCall = calls.find((c) => c[0] === "record_order_outcome")
@@ -147,7 +147,7 @@ describe("addOrderItem — happy path", () => {
       p_payload: expect.objectContaining({
         action: "added",
         sku: "EGO-DC-12",
-        product_name: "Тъмен Шоколад Кутия",
+        product_name: "Натурален Шоколад",
         quantity: 2,
         unit_price_cents: 2570,
         new_total_cents: 8910,
@@ -207,7 +207,7 @@ describe("removeOrderItem — happy path", () => {
     // Pre-delete read of the order_items row for audit-shape capture.
     mockSupabase.single = vi.fn(() =>
       Promise.resolve({
-        data: { quantity: 3, product_name: "Тъмен Шоколад Кутия", unit_price_cents: 2570 },
+        data: { quantity: 3, product_name: "Натурален Шоколад", unit_price_cents: 2570 },
         error: null,
       }),
     )
@@ -234,7 +234,7 @@ describe("removeOrderItem — happy path", () => {
       p_payload: expect.objectContaining({
         action: "removed",
         sku: "EGO-DC-12",
-        product_name: "Тъмен Шоколад Кутия",
+        product_name: "Натурален Шоколад",
         removed_quantity: 3,
         new_total_cents: 4500,
         reason: null,
@@ -253,7 +253,7 @@ describe("removeOrderItem — happy path", () => {
     )
     expect(noteCall).toBeDefined()
     expect(noteCall![1]).toMatchObject({
-      p_text: expect.stringContaining("Премахнат артикул: Тъмен Шоколад Кутия × 3"),
+      p_text: expect.stringContaining("Премахнат артикул: Натурален Шоколад × 3"),
     })
     expect(noteCall![1].p_text).toContain("клиентът се отказа")
   })
