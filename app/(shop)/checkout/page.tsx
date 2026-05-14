@@ -792,7 +792,7 @@ export default function CheckoutPage() {
                       className="mt-0.5"
                     />
                     <label htmlFor="acceptedTerms" className="cursor-pointer text-sm font-medium leading-snug text-foreground">
-                      Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>*
+                      Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>
                     </label>
                   </div>
                   <div className="flex items-start space-x-3">

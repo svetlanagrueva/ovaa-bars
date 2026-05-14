@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useCallback, useEffect, useState, use } from "react"
 import Link from "next/link"
 import {
   getWithdrawal,
@@ -61,7 +61,7 @@ export default function AdminWithdrawalDetailPage({ params }: { params: Promise<
   const [pathBResolution, setPathBResolution] = useState<WithdrawalResolutionType>("refund")
   const [pathBNote, setPathBNote] = useState("")
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const result = await getWithdrawal(id)
@@ -71,9 +71,9 @@ export default function AdminWithdrawalDetailPage({ params }: { params: Promise<
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
 
-  useEffect(() => { refresh() }, [id])
+  useEffect(() => { void refresh() }, [refresh])
 
   if (loading) {
     return <div className="mx-auto max-w-3xl px-4 py-8 text-sm text-muted-foreground">Зареждане...</div>

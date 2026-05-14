@@ -3,10 +3,13 @@ import { formatPrice } from "@/lib/products"
 import {
   buildOrderConfirmationEmail,
   buildDeliveryEmail,
+  buildAdminNewOrderEmail,
   buildWithdrawalReceivedEmail,
   buildWithdrawalApprovedEmail,
   buildWithdrawalRejectedEmail,
 } from "@/lib/email-template"
+import { getDeliveryLabel } from "@/lib/delivery"
+import { getBaseUrl } from "@/lib/constants"
 import { createClient } from "@/lib/supabase/server"
 import { requireEnv } from "@/lib/env"
 
@@ -233,32 +236,28 @@ export async function notifyAdminNewOrder(order: Record<string, unknown>, paymen
   const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
   if (!orderItems) return
 
-  const itemsList = orderItems
-    .map((item) => `${item.productName} x ${item.quantity} - ${formatPrice(item.priceInCents * item.quantity)}`)
-    .join("\n")
+  const orderId = order.id as string
+  const totalAmount = order.total_amount as number
+  const logisticsPartner = (order.logistics_partner as string | null) ?? ""
+  const adminUrl = `${getBaseUrl()}/admin/orders/${orderId}`
 
   await sendTransactionalEmail({
     to: process.env.ADMIN_EMAIL,
-    subject: `Нова поръчка #${(order.id as string).slice(0, 8)} — ${formatPrice(order.total_amount as number)}`,
-    build: () => ({ text: `
-Нова поръчка!
-
-Поръчка: #${(order.id as string).slice(0, 8)}
-Клиент: ${order.first_name} ${order.last_name}
-Имейл: ${order.email}
-Телефон: ${order.phone}
-Град: ${order.city}
-Плащане: ${paymentMethod === "card" ? "Карта" : "Наложен платеж"}
-
-Продукти:
-${itemsList}
-
-Обща сума: ${formatPrice(order.total_amount as number)}
-
-Виж в админ панела:
-${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/admin/orders/${order.id}
-    `.trim() }),
-    logTag: `admin notification for order ${order.id}`,
+    subject: `Нова поръчка #${orderId.slice(0, 8)} — ${formatPrice(totalAmount)}`,
+    build: () => buildAdminNewOrderEmail({
+      orderId,
+      firstName: (order.first_name as string) ?? "",
+      lastName: (order.last_name as string) ?? "",
+      customerEmail: (order.email as string) ?? "",
+      phone: (order.phone as string) ?? "",
+      city: (order.city as string) ?? "",
+      items: orderItems,
+      totalAmount,
+      paymentMethod: paymentMethod === "card" ? "card" : "cod",
+      deliveryLabel: logisticsPartner ? getDeliveryLabel(logisticsPartner) : "—",
+      adminUrl,
+    }),
+    logTag: `admin notification for order ${orderId}`,
   })
 }
 

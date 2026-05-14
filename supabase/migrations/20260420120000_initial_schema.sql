@@ -1312,7 +1312,9 @@ begin
     'batch_allocation_overridden_fefo',
     'batch_allocation_overridden_expired',
     'batch_allocation_cleared',
-    'batch_allocation_unlocked_after_shipment_cancelled'
+    'batch_allocation_unlocked_after_shipment_cancelled',
+    -- Admin-driven delivery-method change on a confirmed/unshipped order
+    'delivery_method_changed'
   ) then
     raise exception 'Unknown outcome type: %', p_outcome_type;
   end if;
@@ -1505,6 +1507,187 @@ begin
   update public.order_items
     set quantity = p_new_quantity
     where order_id = p_order_id and sku = p_sku;
+
+  select coalesce(sum(quantity * unit_price_cents), 0)
+    into v_items_subtotal
+    from public.order_items
+    where order_id = p_order_id;
+
+  select shipping_fee, cod_fee, discount_amount
+    into v_shipping_fee, v_cod_fee, v_discount
+    from public.orders
+    where id = p_order_id;
+
+  v_new_total := v_items_subtotal
+    + coalesce(v_shipping_fee, 0)
+    + coalesce(v_cod_fee, 0)
+    - coalesce(v_discount, 0);
+
+  if v_new_total < 1 then
+    v_new_total := 1;
+  end if;
+
+  update public.orders
+    set total_amount = v_new_total
+    where id = p_order_id;
+
+  return v_new_total;
+end;
+$$;
+
+-- ─── Orders: add_order_item RPC ─────────────────────────────────────────────
+-- Atomic line-add for a confirmed COD order. Mirrors edit_order_quantity:
+-- FOR UPDATE on order_items, reserve_inventory for the new line's quantity,
+-- INSERT a new row with the next line_no, recompute orders.total_amount.
+-- Fees stay frozen (same precedent). Returns new total_amount.
+create or replace function add_order_item(
+  p_order_id           uuid,
+  p_sku                text,
+  p_product_id         text,
+  p_product_name       text,
+  p_quantity           integer,
+  p_unit_price_cents   integer
+)
+returns integer
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_status         text;
+  v_tracking       text;
+  v_payment_method text;
+  v_next_line_no   integer;
+  v_items_subtotal integer;
+  v_shipping_fee   integer;
+  v_cod_fee        integer;
+  v_discount       integer;
+  v_new_total      integer;
+begin
+  if p_quantity is null or p_quantity < 1 then
+    raise exception 'Quantity must be a positive integer' using hint = 'INVALID_QUANTITY';
+  end if;
+  if p_unit_price_cents is null or p_unit_price_cents < 0 then
+    raise exception 'Unit price must be non-negative' using hint = 'INVALID_PRICE';
+  end if;
+
+  -- Lock order + assert preconditions. Mirrors save_batch_allocation's pattern.
+  select status, tracking_number, payment_method
+    into v_status, v_tracking, v_payment_method
+    from public.orders where id = p_order_id for update;
+
+  if not found then
+    raise exception 'Order not found' using hint = 'ORDER_NOT_FOUND';
+  end if;
+  if v_payment_method <> 'cod' then
+    raise exception 'Order is not COD' using hint = 'ORDER_NOT_COD';
+  end if;
+  if v_status <> 'confirmed' then
+    raise exception 'Order status is %, must be confirmed', v_status using hint = 'ORDER_NOT_CONFIRMED';
+  end if;
+  if v_tracking is not null then
+    raise exception 'Order is locked (tracking_number is set)' using hint = 'ORDER_LOCKED_AFTER_SHIPMENT';
+  end if;
+
+  -- Reject duplicate SKU; admin should use edit_order_quantity to bump qty.
+  if exists (select 1 from public.order_items where order_id = p_order_id and sku = p_sku) then
+    raise exception 'SKU % already on order %', p_sku, p_order_id using hint = 'ORDER_ITEM_ALREADY_PRESENT';
+  end if;
+
+  perform public.reserve_inventory(p_sku, p_quantity, p_order_id);
+
+  select coalesce(max(line_no), 0) + 1 into v_next_line_no
+    from public.order_items where order_id = p_order_id;
+
+  insert into public.order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
+  values (p_order_id, v_next_line_no, p_product_id, p_sku, p_product_name, p_quantity, p_unit_price_cents);
+
+  select coalesce(sum(quantity * unit_price_cents), 0)
+    into v_items_subtotal
+    from public.order_items
+    where order_id = p_order_id;
+
+  select shipping_fee, cod_fee, discount_amount
+    into v_shipping_fee, v_cod_fee, v_discount
+    from public.orders
+    where id = p_order_id;
+
+  v_new_total := v_items_subtotal
+    + coalesce(v_shipping_fee, 0)
+    + coalesce(v_cod_fee, 0)
+    - coalesce(v_discount, 0);
+
+  if v_new_total < 1 then
+    v_new_total := 1;
+  end if;
+
+  update public.orders
+    set total_amount = v_new_total
+    where id = p_order_id;
+
+  return v_new_total;
+end;
+$$;
+
+-- ─── Orders: remove_order_item RPC ──────────────────────────────────────────
+-- Atomic line-remove. Mirrors add_order_item but inverted:
+-- restore_inventory for the removed quantity, DELETE the row, recompute total.
+-- Rejects when removing would leave the order with zero items (DB's
+-- chk_total_amount check would block it anyway, but the friendly error is
+-- better than "violates check constraint").
+create or replace function remove_order_item(
+  p_order_id uuid,
+  p_sku      text
+)
+returns integer
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_status         text;
+  v_tracking       text;
+  v_payment_method text;
+  v_qty            integer;
+  v_remaining_lines integer;
+  v_items_subtotal integer;
+  v_shipping_fee   integer;
+  v_cod_fee        integer;
+  v_discount       integer;
+  v_new_total      integer;
+begin
+  select status, tracking_number, payment_method
+    into v_status, v_tracking, v_payment_method
+    from public.orders where id = p_order_id for update;
+
+  if not found then
+    raise exception 'Order not found' using hint = 'ORDER_NOT_FOUND';
+  end if;
+  if v_payment_method <> 'cod' then
+    raise exception 'Order is not COD' using hint = 'ORDER_NOT_COD';
+  end if;
+  if v_status <> 'confirmed' then
+    raise exception 'Order status is %, must be confirmed', v_status using hint = 'ORDER_NOT_CONFIRMED';
+  end if;
+  if v_tracking is not null then
+    raise exception 'Order is locked (tracking_number is set)' using hint = 'ORDER_LOCKED_AFTER_SHIPMENT';
+  end if;
+
+  select quantity into v_qty
+    from public.order_items
+    where order_id = p_order_id and sku = p_sku
+    for update;
+
+  if v_qty is null then
+    raise exception 'SKU % not on order %', p_sku, p_order_id using hint = 'ORDER_ITEM_NOT_FOUND';
+  end if;
+
+  select count(*) into v_remaining_lines from public.order_items where order_id = p_order_id;
+  if v_remaining_lines <= 1 then
+    raise exception 'Cannot remove the last line — cancel the order instead' using hint = 'CANNOT_REMOVE_LAST_ITEM';
+  end if;
+
+  perform public.restore_inventory(p_sku, v_qty, p_order_id);
+
+  delete from public.order_items where order_id = p_order_id and sku = p_sku;
 
   select coalesce(sum(quantity * unit_price_cents), 0)
     into v_items_subtotal

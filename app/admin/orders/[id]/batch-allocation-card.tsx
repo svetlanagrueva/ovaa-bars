@@ -170,9 +170,21 @@ export function BatchAllocationCard({ orderId, onSaved }: { orderId: string; onS
 
   function isLineFefoCompliant(line: LineState): boolean {
     if (!view) return true
+    // Quantity already covered by expired-override rows. The expired-batch
+    // override is its own warning; once the admin has acknowledged it for
+    // a quantity, that quantity isn't subject to FEFO ordering — pulling
+    // expired stock IS the oldest-out choice. So we only run FEFO over the
+    // remaining quantity that needs to come from active+non-expired stock.
+    const expiredOverrideQty = line.rows.reduce((s, r) => {
+      if (!rowExpired(r)) return s
+      return s + (parseInt(r.quantity, 10) || 0)
+    }, 0)
+    const remaining = line.orderedQuantity - expiredOverrideQty
+    if (remaining <= 0) return true
+
     const skuActiveNonExpired = view.batches.filter((b) => b.sku === line.sku && !b.isExpired)
     const expected = buildExpectedFefoPlan({
-      orderedQty: line.orderedQuantity,
+      orderedQty: remaining,
       batches: skuActiveNonExpired.map((b) => ({
         id: b.productBatchId,
         expiryDate: b.expiryDate,

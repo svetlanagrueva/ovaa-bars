@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useCallback, useEffect, useState, use } from "react"
 import Link from "next/link"
 import {
   getProductBatch,
@@ -40,7 +40,7 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
   const [writeoffError, setWriteoffError] = useState("")
   const [writeoffSuccess, setWriteoffSuccess] = useState("")
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
@@ -55,9 +55,9 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
 
-  useEffect(() => { refresh() }, [id])
+  useEffect(() => { void refresh() }, [refresh])
 
   async function downloadCSV() {
     if (affected.length === 0) return
