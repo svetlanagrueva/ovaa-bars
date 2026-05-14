@@ -161,7 +161,10 @@ export function getProductBySlug(slug: string): Product | undefined {
 }
 
 export function formatPrice(priceInCents: number): string {
-  return (priceInCents / 100).toFixed(2).replace(".", ",") + " €"
+  // Non-breaking space (U+00A0) between number and € so currency values
+  // never wrap across a line break — mobile email clients were splitting
+  // "25,70 €" into "25,70" + "€" on a new line in narrow columns.
+  return (priceInCents / 100).toFixed(2).replace(".", ",") + " €"
 }
 
 export function isOnSale(product: Product): boolean {

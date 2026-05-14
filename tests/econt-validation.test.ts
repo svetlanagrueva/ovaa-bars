@@ -56,6 +56,7 @@ beforeAll(async () => {
 })
 
 const validCartItems = [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }]
+const validCartSubtotal = 5140 // 2 × 2570
 const validCustomerInfo = {
   firstName: "Иван",
   lastName: "Петров",
@@ -93,6 +94,7 @@ describe("Econt office validation – createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
       })
@@ -103,6 +105,7 @@ describe("Econt office validation – createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
         econtOffice: { id: 1, code: "TST", name: "", city: "София", fullAddress: "ул. Тест" },
@@ -114,6 +117,7 @@ describe("Econt office validation – createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
         econtOffice: {
@@ -131,6 +135,7 @@ describe("Econt office validation – createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
         econtOffice: {
@@ -154,6 +159,7 @@ describe("Econt office validation – createCheckoutSession", () => {
 
     const result = await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -172,6 +178,7 @@ describe("Econt office validation – createCheckoutSession", () => {
 
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -194,6 +201,7 @@ describe("Econt office validation – createCheckoutSession", () => {
 
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -215,6 +223,7 @@ describe("Econt office validation – createCheckoutSession", () => {
 
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -234,6 +243,7 @@ describe("Econt office validation – createCheckoutSession", () => {
 
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -255,6 +265,7 @@ describe("Econt office validation – createCheckoutSession", () => {
     // fullAddress is undefined — should not crash on .length check
     const result = await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: {
@@ -281,6 +292,7 @@ describe("Econt office validation – createCODOrder", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
       })
@@ -297,6 +309,7 @@ describe("Econt office validation – createCODOrder", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -320,6 +333,7 @@ describe("Econt office validation – createCODOrder", () => {
 
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,

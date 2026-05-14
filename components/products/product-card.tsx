@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { useCartStore } from "@/lib/store/cart"
 import { type Product } from "@/lib/products"
 import { PriceDisplay } from "@/components/products/price-display"
+import { trackAddToCart } from "@/lib/meta-pixel"
 
 interface ProductCardProps {
   product: Product
@@ -49,6 +50,11 @@ export function ProductCard({ product, soldOut = false }: ProductCardProps) {
           <Button
             onClick={() => {
               addItem(product)
+              trackAddToCart({
+                sku: product.sku,
+                priceInCents: product.priceInCents,
+                quantity: 1,
+              })
               toast(product.name, {
                 description: "Добавено в количката",
                 icon: <ShoppingCart className="h-4 w-4" />,

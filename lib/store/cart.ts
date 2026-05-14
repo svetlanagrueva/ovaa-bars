@@ -31,6 +31,12 @@ export const useCartStore = create<CartState>()(
         get().addItemWithQuantity(product, 1)
       },
 
+      // Cart dedups by product.id so each SKU appears on at most one line.
+      // This is a schema contract, not just a UX choice: the inventory_log
+      // UNIQUE (order_id, sku) index where type='order_out' relies on it.
+      // Changing to allow multiple lines per SKU (variants, split fulfillment,
+      // bundles flattening to the same SKU) requires a migration that drops
+      // or reworks idx_inventory_log_order_out_unique.
       addItemWithQuantity: (product: Product, qty: number) => {
         const items = get().items
         const existingItem = items.find((item) => item.product.id === product.id)

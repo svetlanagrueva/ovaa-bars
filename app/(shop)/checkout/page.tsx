@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { ArrowLeft, Truck, CreditCard, Loader2, Banknote, FileText, HelpCircle, ShieldCheck } from "lucide-react"
@@ -20,6 +20,7 @@ import { isOnSale } from "@/lib/products"
 import { DeliveryInfo } from "@/components/delivery/delivery-info"
 import { EcontOfficePicker, type EcontOfficeOption } from "@/components/delivery/econt-office-picker"
 import { SpeedyOfficePicker, type SpeedyOfficeOption } from "@/components/delivery/speedy-office-picker"
+import { cartHash, trackInitiateCheckout, type PixelLineItem } from "@/lib/meta-pixel"
 
 interface CustomerInfo {
   firstName: string
@@ -39,10 +40,16 @@ interface BillingInfo {
   company: string
   eik: string
   vatNumber: string
-  egn: string
   city: string
   postalCode: string
 }
+
+// Mirror server regex (app/actions/stripe.ts) so client-side validation
+// surfaces the same Bulgarian message inline before any server roundtrip.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_REGEX = /^\+?[\d\s\-()]{6,20}$/
+const EIK_REGEX = /^\d{9,13}$/
+const VAT_REGEX = /^BG\d{9,13}$/
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -90,7 +97,6 @@ export default function CheckoutPage() {
     company: "",
     eik: "",
     vatNumber: "",
-    egn: "",
     city: "",
     postalCode: "",
   })
@@ -112,6 +118,29 @@ export default function CheckoutPage() {
     const cartItems = items.map((item) => ({ productId: item.product.id, quantity: item.quantity }))
     checkCartInventory(cartItems).then(setStockWarnings).catch(() => {})
   }, [mounted, items])
+
+  // Fire InitiateCheckout once per distinct cart contents per tab session.
+  // Helper uses a sessionStorage marker keyed on cart hash — refreshes and
+  // back/forward on the same cart do not re-fire; edits produce a new event.
+  // Depend on the cart hash (a stable string) rather than the items array
+  // (reference changes on every Zustand mutation) so the effect only runs
+  // when cart contents actually change.
+  const pixelCartItems: PixelLineItem[] = useMemo(
+    () =>
+      items.map((item) => ({
+        sku: item.product.sku,
+        quantity: item.quantity,
+        unitPriceCents: item.product.priceInCents,
+      })),
+    [items],
+  )
+  const pixelCartFingerprint = useMemo(() => cartHash(pixelCartItems), [pixelCartItems])
+
+  useEffect(() => {
+    if (!mounted || pixelCartItems.length === 0) return
+    trackInitiateCheckout(pixelCartItems)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, pixelCartFingerprint])
 
   const totalPrice = getTotalPrice()
   const shippingPrice = calculateShippingPrice(totalPrice, deliveryMethod)
@@ -162,6 +191,48 @@ export default function CheckoutPage() {
     setBillingInfo((prev) => ({ ...prev, [name]: value }))
   }
 
+  // Inline checkout validation. Returns the first failing message or null;
+  // mirrors server validation in app/actions/stripe.ts so we surface the
+  // same Bulgarian copy without the native browser tooltip.
+  function validateCheckout(): string | null {
+    if (!acceptedTerms) return "Моля, приемете условията за ползване и политиката за поверителност."
+    if (deliveryMethod === "econt-office" && !selectedEcontOffice) return "Моля, изберете офис на Еконт"
+    if (deliveryMethod === "speedy-office" && !selectedSpeedyOffice) return "Моля, изберете офис на Speedy"
+
+    if (!customerInfo.firstName.trim()) return "Моля, въведете име."
+    if (!customerInfo.lastName.trim()) return "Моля, въведете фамилия."
+    if (!customerInfo.email.trim()) return "Моля, въведете имейл адрес."
+    if (!EMAIL_REGEX.test(customerInfo.email)) return "Моля, въведете валиден имейл адрес."
+    if (!customerInfo.phone.trim()) return "Моля, въведете телефонен номер."
+    if (!PHONE_REGEX.test(customerInfo.phone)) return "Моля, въведете валиден телефонен номер."
+
+    if (deliveryMethod === "speedy-address") {
+      if (!customerInfo.city.trim()) return "Моля, въведете град."
+      if (!customerInfo.address.trim()) return "Моля, въведете адрес за доставка."
+      if (!customerInfo.postalCode.trim()) return "Моля, въведете пощенски код за доставка на адрес."
+    }
+
+    if (wantsInvoice) {
+      if (billingType === "company") {
+        if (!billingInfo.company.trim()) return "Моля, въведете име на фирмата за фактурата."
+        if (!billingInfo.eik.trim()) return "Моля, въведете ЕИК / Булстат за фактурата."
+        if (!EIK_REGEX.test(billingInfo.eik.trim())) return "ЕИК трябва да съдържа 9 до 13 цифри."
+        if (billingInfo.vatNumber.trim() && !VAT_REGEX.test(billingInfo.vatNumber.trim())) {
+          return "Невалиден ДДС номер. Форматът е BG + 9 до 13 цифри (напр. BG123456789)."
+        }
+        if (!billingInfo.firstName.trim()) return "Моля, въведете име на МОЛ."
+        if (!billingInfo.lastName.trim()) return "Моля, въведете фамилия на МОЛ."
+      } else {
+        if (!billingInfo.firstName.trim()) return "Моля, въведете име за фактурата."
+        if (!billingInfo.lastName.trim()) return "Моля, въведете фамилия за фактурата."
+      }
+      if (!billingInfo.address.trim()) return "Моля, въведете адрес за фактурата."
+      if (!billingInfo.city.trim()) return "Моля, въведете град за фактурата."
+    }
+
+    return null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (submittingRef.current) return
@@ -170,22 +241,9 @@ export default function CheckoutPage() {
     setError(null)
 
     try {
-      if (!acceptedTerms) {
-        setError("Моля, приемете условията за ползване и политиката за поверителност.")
-        setIsLoading(false)
-        submittingRef.current = false
-        return
-      }
-
-      if (deliveryMethod === "econt-office" && !selectedEcontOffice) {
-        setError("Моля, изберете офис на Еконт")
-        setIsLoading(false)
-        submittingRef.current = false
-        return
-      }
-
-      if (deliveryMethod === "speedy-office" && !selectedSpeedyOffice) {
-        setError("Моля, изберете офис на Speedy")
+      const validationError = validateCheckout()
+      if (validationError) {
+        setError(validationError)
         setIsLoading(false)
         submittingRef.current = false
         return
@@ -212,14 +270,16 @@ export default function CheckoutPage() {
 
       const invoiceData = wantsInvoice
         ? {
+            type: billingType,
             companyName: billingType === "company" ? billingInfo.company.trim() : "",
             eik: billingType === "company" ? billingInfo.eik.trim() : "",
             vatNumber: billingType === "company" ? billingInfo.vatNumber.trim() : "",
-            egn: billingType === "individual" ? billingInfo.egn.trim() : "",
             mol: billingName,
             invoiceAddress: computedInvoiceAddress,
           }
         : undefined
+
+      const clientSubtotal = totalPrice
 
       if (paymentMethod === "cod") {
         const result = await createCODOrder({
@@ -232,6 +292,7 @@ export default function CheckoutPage() {
           speedyOffice,
           promoCode: appliedPromo?.code,
           marketingConsent,
+          clientSubtotal,
         })
 
         if (result.success) {
@@ -250,6 +311,7 @@ export default function CheckoutPage() {
           speedyOffice,
           promoCode: appliedPromo?.code,
           marketingConsent,
+          clientSubtotal,
         })
 
         if (result.url) {
@@ -260,13 +322,61 @@ export default function CheckoutPage() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : ""
+
+      // Price drift — resync cart prices, inform the user, let them confirm again.
+      if (message.startsWith("PRICE_DRIFT")) {
+        try {
+          await useCartStore.getState().syncPrices()
+        } catch {
+          // syncPrices is fail-soft; the new prices will still be picked up
+          // on next render via /api/prices.
+        }
+        setError(
+          "Цените са обновени. Прегледайте сумата на поръчката в количката и продължете отново.",
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
+      // Insufficient stock for a specific product — raw RPC error exposes SKU
+      // codes, so the server translates to a sentinel + product name.
+      if (message.startsWith("INV_INSUFFICIENT:")) {
+        const productName = message.slice("INV_INSUFFICIENT:".length).trim()
+        setError(
+          `Не достига наличност от "${productName}". Моля, намалете количеството или опитайте по-късно.`,
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+      if (message.startsWith("INV_FAILED:")) {
+        const productName = message.slice("INV_FAILED:".length).trim()
+        setError(
+          `Грешка при резервация на "${productName}". Моля, опитайте отново след малко.`,
+        )
+        setIsLoading(false)
+        submittingRef.current = false
+        return
+      }
+
       const friendlyMessages: Record<string, string> = {
         "Invalid phone format": "Моля, въведете валиден телефонен номер.",
         "Invalid email format": "Моля, въведете валиден имейл адрес.",
         "First name is required": "Моля, въведете име.",
         "Last name is required": "Моля, въведете фамилия.",
+        "Email is required": "Моля, въведете имейл адрес.",
+        "Phone is required": "Моля, въведете телефонен номер.",
         "City is required": "Моля, въведете град.",
         "Address is required for address delivery": "Моля, въведете адрес за доставка.",
+        "Postal code is required for address delivery": "Моля, въведете пощенски код за доставка на адрес.",
+        "ЕИК трябва да бъде 9 или 13 цифри": "ЕИК трябва да съдържа 9 до 13 цифри.",
+        "Невалиден ДДС номер (формат: BG + ЕИК)": "Невалиден ДДС номер. Форматът е BG + 9 до 13 цифри (напр. BG123456789).",
+        "Името на фирмата е задължително за фактура": "Моля, въведете име на фирмата за фактурата.",
+        "Името на фирмата е твърде дълго": "Името на фирмата е твърде дълго.",
+        "МОЛ е задължително за фактура на фирма": "Моля, въведете име на МОЛ.",
+        "Адресът е задължителен за фактура": "Моля, въведете адрес за фактурата.",
+        "Невалиден тип фактура": "Невалиден тип фактура.",
       }
       setError(friendlyMessages[message] || "Възникна грешка при обработката на поръчката. Моля, опитайте отново.")
       setIsLoading(false)
@@ -327,7 +437,6 @@ export default function CheckoutPage() {
                         name="firstName"
                         value={customerInfo.firstName}
                         onChange={handleInputChange}
-                        required
                       />
                     </div>
                     <div className="space-y-2">
@@ -337,7 +446,6 @@ export default function CheckoutPage() {
                         name="lastName"
                         value={customerInfo.lastName}
                         onChange={handleInputChange}
-                        required
                       />
                     </div>
                   </div>
@@ -346,10 +454,11 @@ export default function CheckoutPage() {
                     <Input
                       id="email"
                       name="email"
-                      type="email"
+                      type="text"
+                      inputMode="email"
+                      autoComplete="email"
                       value={customerInfo.email}
                       onChange={handleInputChange}
-                      required
                     />
                   </div>
                   <div className="space-y-2">
@@ -358,14 +467,10 @@ export default function CheckoutPage() {
                       id="phone"
                       name="phone"
                       type="tel"
-                      pattern="\+?[0-9\s\-()]*[0-9][0-9\s\-()]*"
-                      minLength={6}
                       maxLength={20}
-                      title="Въведете валиден телефонен номер (напр. +359888123456)"
                       placeholder="+359"
                       value={customerInfo.phone}
                       onChange={handleInputChange}
-                      required
                     />
                   </div>
                 </CardContent>
@@ -433,7 +538,6 @@ export default function CheckoutPage() {
                           name="city"
                           value={customerInfo.city}
                           onChange={handleInputChange}
-                          required
                         />
                       </div>
                     )}
@@ -446,11 +550,10 @@ export default function CheckoutPage() {
                             name="address"
                             value={customerInfo.address}
                             onChange={handleInputChange}
-                            required={deliveryMethod === "speedy-address"}
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="postalCode">Пощенски код</Label>
+                          <Label htmlFor="postalCode">Пощенски код *</Label>
                           <Input
                             id="postalCode"
                             name="postalCode"
@@ -503,7 +606,7 @@ export default function CheckoutPage() {
                           <Banknote className="h-4 w-4" />
                           Наложен платеж
                         </span>
-                        <p className="text-sm text-muted-foreground">Плащане при доставка (+{formatPrice(COD_FEE)})</p>
+                        <p className="text-sm text-muted-foreground">Плащане при доставка</p>
                       </Label>
                     </div>
                   </RadioGroup>
@@ -568,7 +671,6 @@ export default function CheckoutPage() {
                               name="company"
                               value={billingInfo.company}
                               onChange={handleBillingChange}
-                              required={wantsInvoice && billingType === "company"}
                             />
                           </div>
                           <div className="grid gap-4 sm:grid-cols-2">
@@ -579,7 +681,6 @@ export default function CheckoutPage() {
                                 name="eik"
                                 value={billingInfo.eik}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -601,7 +702,6 @@ export default function CheckoutPage() {
                                 name="firstName"
                                 value={billingInfo.firstName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -611,7 +711,6 @@ export default function CheckoutPage() {
                                 name="lastName"
                                 value={billingInfo.lastName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "company"}
                               />
                             </div>
                           </div>
@@ -628,7 +727,6 @@ export default function CheckoutPage() {
                                 name="firstName"
                                 value={billingInfo.firstName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "individual"}
                               />
                             </div>
                             <div className="space-y-2">
@@ -638,21 +736,8 @@ export default function CheckoutPage() {
                                 name="lastName"
                                 value={billingInfo.lastName}
                                 onChange={handleBillingChange}
-                                required={wantsInvoice && billingType === "individual"}
                               />
                             </div>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="billingEgn">ЕГН *</Label>
-                            <Input
-                              id="billingEgn"
-                              name="egn"
-                              value={billingInfo.egn}
-                              onChange={handleBillingChange}
-                              required={wantsInvoice && billingType === "individual"}
-                              placeholder="10 цифри"
-                              maxLength={10}
-                            />
                           </div>
                         </>
                       )}
@@ -666,7 +751,6 @@ export default function CheckoutPage() {
                           name="address"
                           value={billingInfo.address}
                           onChange={handleBillingChange}
-                          required={wantsInvoice}
                         />
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -677,8 +761,7 @@ export default function CheckoutPage() {
                             name="city"
                             value={billingInfo.city}
                             onChange={handleBillingChange}
-                            required={wantsInvoice}
-                          />
+                            />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="billingPostalCode">Пощенски код</Label>
@@ -712,7 +795,6 @@ export default function CheckoutPage() {
                       checked={acceptedTerms}
                       onCheckedChange={(checked) => setAcceptedTerms(checked === true)}
                       className="mt-0.5"
-                      required
                     />
                     <label htmlFor="acceptedTerms" className="cursor-pointer text-sm font-medium leading-snug text-foreground">
                       Приемам <a href="/terms" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Условията за ползване</a> и <a href="/privacy" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-accent">Политиката за поверителност</a>

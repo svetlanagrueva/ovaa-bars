@@ -4,6 +4,7 @@ import { Footer } from "@/components/layout/footer"
 import { CookieConsentBanner } from "@/components/cookie-consent"
 import { CartPriceSync } from "@/components/cart-price-sync"
 import { ConditionalAnalytics } from "@/components/analytics"
+import { MetaPixel } from "@/components/meta-pixel"
 
 export default function ShopLayout({
   children,
@@ -20,6 +21,7 @@ export default function ShopLayout({
       <CartPriceSync />
       <CookieConsentBanner />
       <ConditionalAnalytics />
+      <MetaPixel />
     </>
   )
 }

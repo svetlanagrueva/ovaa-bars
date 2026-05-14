@@ -76,10 +76,23 @@ export interface SpeedyShipmentParams {
   recipientPhone: string
   recipientEmail?: string
   officeId?: number
-  address?: { siteId: number; streetName: string; streetNo: string }
+  address?: { siteId?: number; siteName?: string; postCode?: string; streetName: string; streetNo: string }
   weight: number
   contents: string
   codAmount?: number
+  // When set, the sender will drop the parcel off at this Speedy office
+  // instead of the courier picking it up at the registered sender address.
+  // Mirrors the recipient's `officeId` / pickupOfficeId on the receiver side.
+  // Sent to the Speedy API as `sender.dropoffOfficeId`.
+  senderOfficeId?: number
+}
+
+export interface CourierShipmentStatus {
+  delivered: boolean
+  deliveredAt?: string
+  rawStatus?: string
+  rawEventCode?: string | number
+  source: "speedy" | "econt"
 }
 
 export interface SpeedyShipmentResult {
@@ -99,12 +112,15 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
   if (params.officeId) {
     recipient.pickupOfficeId = params.officeId
   } else if (params.address) {
-    recipient.address = {
+    const addr: Record<string, unknown> = {
       countryId: 100,
-      siteId: params.address.siteId,
       streetName: params.address.streetName,
       streetNo: params.address.streetNo,
     }
+    if (params.address.siteId) addr.siteId = params.address.siteId
+    if (params.address.siteName) addr.siteName = params.address.siteName
+    if (params.address.postCode) addr.postCode = params.address.postCode
+    recipient.address = addr
   }
 
   const service: Record<string, unknown> = {
@@ -116,20 +132,29 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
     service.additionalServices = {
       cod: {
         amount: params.codAmount,
-        processingType: "CASH",
+        processingType: "POSTAL_MONEY_TRANSFER",
       },
     }
+  }
+
+  const sender: Record<string, unknown> = {
+    phone1: { number: process.env.SELLER_PHONE || "" },
+    contactName: process.env.SELLER_COMPANY_NAME || "",
+    email: process.env.SELLER_EMAIL || "",
+  }
+  // Drop-off-at-office mode: if the seller's account is configured for it
+  // and an office id is supplied, Speedy will not dispatch a courier to the
+  // sender address. Mutually exclusive with the default address-pickup
+  // behavior — supplying both would let Speedy decide which to honor.
+  if (params.senderOfficeId) {
+    sender.dropoffOfficeId = params.senderOfficeId
   }
 
   const body = {
     userName: SPEEDY_USERNAME,
     password: SPEEDY_PASSWORD,
     language: "BG",
-    sender: {
-      phone1: { number: process.env.SELLER_PHONE || "" },
-      contactName: process.env.SELLER_COMPANY_NAME || "",
-      email: process.env.SELLER_EMAIL || "",
-    },
+    sender,
     recipient,
     service,
     content: {
@@ -178,5 +203,63 @@ export async function createShipment(params: SpeedyShipmentParams): Promise<Spee
     shipmentId: String(data.id),
     trackingNumber: String(data.parcels?.[0]?.id || data.id),
     deliveryDeadline: data.deliveryDeadline,
+  }
+}
+
+const SPEEDY_DELIVERED_OPERATION = -14
+
+export async function getShipmentStatus(trackingNumber: string): Promise<CourierShipmentStatus> {
+  const body = {
+    userName: SPEEDY_USERNAME,
+    password: SPEEDY_PASSWORD,
+    language: "BG",
+    parcels: [{ id: trackingNumber }],
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  let res: Response
+  try {
+    res = await fetch(`${SPEEDY_API_URL}/shipment/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Speedy tracking API timeout")
+    }
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`Speedy tracking API error: ${res.status} ${text}`)
+  }
+
+  const data = await res.json()
+
+  if (data.error) {
+    throw new Error(`Speedy tracking: ${data.error.message || JSON.stringify(data.error)}`)
+  }
+
+  const operations = data.parcels?.[0]?.operations
+  if (!operations || operations.length === 0) {
+    return { delivered: false, source: "speedy" }
+  }
+
+  const lastOp = operations[operations.length - 1]
+  const delivered = lastOp.operationCode === SPEEDY_DELIVERED_OPERATION
+
+  return {
+    delivered,
+    deliveredAt: delivered ? lastOp.dateTime : undefined,
+    rawStatus: lastOp.operationDescription,
+    rawEventCode: lastOp.operationCode,
+    source: "speedy",
   }
 }

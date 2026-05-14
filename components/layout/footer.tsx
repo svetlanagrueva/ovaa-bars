@@ -103,6 +103,11 @@ export function Footer() {
                   Политика за поверителност
                 </Link>
               </li>
+              <li>
+                <Link href="/returns" className="text-sm text-muted-foreground hover:text-accent">
+                  Право на отказ и връщане
+                </Link>
+              </li>
             </ul>
           </div>
         </div>

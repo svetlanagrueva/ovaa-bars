@@ -22,6 +22,7 @@ interface OrderEmailData {
   totalAmount: number
   paymentMethod: "card" | "cod"
   date: string
+  stripeReceiptUrl?: string | null
 }
 
 interface ShippingEmailData {
@@ -327,6 +328,12 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
           </td>
         </tr>
       </table>
+      ${data.stripeReceiptUrl ? `
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse; margin-top: 20px;">
+        <tr><td style="font-family: ${FONT_STACK}; text-align: right;">
+          <a href="${escapeHtml(data.stripeReceiptUrl)}" style="color: #999; font-size: 13px; text-decoration: underline;">Разписка за картово плащане (Stripe)</a>
+        </td></tr>
+      </table>` : ""}
     `)}`
 
   const html = emailShell({
@@ -354,7 +361,7 @@ ${itemsPlainText(data.items)}
 Обща сума: ${formatPrice(data.totalAmount)}
 Платено днес: ${formatPrice(paidToday)}
 За плащане при доставка: ${formatPrice(toBePaid)}
-
+${data.stripeReceiptUrl ? `\nРазписка за картово плащане (Stripe): ${data.stripeReceiptUrl}` : ""}
 Ще получите известие от куриера, когато покупките Ви са на път към Вас.
 
 Поздрави,
@@ -664,6 +671,285 @@ ${itemsPlainText(data.items)}
 Завършете поръчката: ${utmUrl(`${baseUrl}/cart`, "abandoned_cart", "cta")}
 
 Отписване: ${data.unsubscribeUrl || `${baseUrl}/unsubscribe`}
+
+Поздрави,
+Екипът на Egg Origin
+  `.trim()
+
+  return { html, text }
+}
+
+// ── 7. Admin: New-order notification ──────────────────────────────────
+// Operational alert fired on every new order (card webhook + COD creation).
+// Optimized for fast triage: customer + payment + delivery + items at a glance,
+// with a one-click admin-panel CTA.
+
+export interface AdminNewOrderEmailData {
+  orderId: string
+  firstName: string
+  lastName: string
+  customerEmail: string
+  phone: string
+  city: string
+  items: OrderItem[]
+  totalAmount: number
+  paymentMethod: "card" | "cod"
+  deliveryLabel: string
+  adminUrl: string
+}
+
+function adminInfoRow(label: string, value: string): string {
+  return `
+    <tr>
+      <td style="font-family: ${FONT_STACK}; color: #999; font-size: 14px; padding: 6px 0; width: 40%;">${escapeHtml(label)}</td>
+      <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;"><strong>${escapeHtml(value)}</strong></td>
+    </tr>`
+}
+
+export function buildAdminNewOrderEmail(data: AdminNewOrderEmailData): { html: string; text: string } {
+  const baseUrl = getBaseUrl()
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const paymentLabel = data.paymentMethod === "card" ? "Карта" : "Наложен платеж"
+  const customerName = `${data.firstName} ${data.lastName}`.trim()
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Нова поръчка #${shortId}</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        Получена е нова поръчка на стойност <strong>${formatPrice(data.totalAmount)}</strong>.
+      </p>
+    `)}
+    ${section(`
+      <h3 style="font-weight: normal; font-size: 18px; margin: 0 0 16px;">Клиент</h3>
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse;">
+        ${adminInfoRow("Име", customerName || "—")}
+        ${adminInfoRow("Имейл", data.customerEmail)}
+        ${adminInfoRow("Телефон", data.phone || "—")}
+        ${adminInfoRow("Град", data.city || "—")}
+        ${adminInfoRow("Плащане", paymentLabel)}
+        ${adminInfoRow("Доставка", data.deliveryLabel)}
+      </table>
+    `)}
+    ${section(`
+      <h3 style="font-weight: normal; font-size: 18px; margin: 0 0 16px;">Продукти</h3>
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse;">
+        ${itemRowsHtml(data.items, baseUrl)}
+      </table>
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse; margin-top: 20px; border-top: 2px solid #e5e5e5;">
+        ${subtotalRow("Обща сума", formatPrice(data.totalAmount), true)}
+      </table>
+      <center>${ctaButton("Виж в админ панела", data.adminUrl)}</center>
+    `)}`
+
+  const html = emailShell({
+    content,
+    orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
+    preheaderText: `Нова поръчка #${data.orderId.slice(0, 8)} — ${formatPrice(data.totalAmount)}`,
+  })
+
+  const text = `
+Нова поръчка!
+
+Поръчка: #${data.orderId.slice(0, 8)}
+Клиент: ${customerName || "—"}
+Имейл: ${data.customerEmail}
+Телефон: ${data.phone || "—"}
+Град: ${data.city || "—"}
+Плащане: ${paymentLabel}
+Доставка: ${data.deliveryLabel}
+
+Продукти:
+${itemsPlainText(data.items)}
+
+Обща сума: ${formatPrice(data.totalAmount)}
+
+Виж в админ панела:
+${data.adminUrl}
+  `.trim()
+
+  return { html, text }
+}
+
+// ── 8. Withdrawals (право на отказ; ЗЗП Чл. 50) ──────────────────────────
+// Three transactional emails fired by admin actions on the withdrawal lifecycle.
+
+export interface WithdrawalEmailDataReceived {
+  orderId: string
+  withdrawalRef: string
+}
+
+export interface WithdrawalEmailDataApproved {
+  orderId: string
+  withdrawalRef: string
+  returnRequired: boolean
+}
+
+export interface WithdrawalEmailDataRejected {
+  orderId: string
+  withdrawalRef: string
+  rejectionReason: string
+}
+
+export function buildWithdrawalReceivedEmail(data: WithdrawalEmailDataReceived): { html: string; text: string } {
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const ref = escapeHtml(data.withdrawalRef)
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Получихме Вашата заявка за връщане</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        Здравейте, благодарим Ви за обратната връзка. Регистрирахме Вашата заявка
+        за упражняване на правото на отказ по чл. 50 ЗЗП.
+      </p>
+      <table style="width: 100%; border-spacing: 0; border-collapse: collapse; margin: 24px 0 0;">
+        <tr>
+          <td style="font-family: ${FONT_STACK}; color: #999; font-size: 14px; padding: 6px 0;">Референция на заявката:</td>
+          <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;" align="right"><strong>${ref}</strong></td>
+        </tr>
+        <tr>
+          <td style="font-family: ${FONT_STACK}; color: #999; font-size: 14px; padding: 6px 0;">Поръчка:</td>
+          <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;" align="right"><strong>#${shortId}</strong></td>
+        </tr>
+      </table>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 24px 0 0;">
+        Ще прегледаме заявката и ще Ви информираме за следващите стъпки в най-кратък
+        срок (обикновено в рамките на 1–2 работни дни).
+      </p>
+    `)}`
+
+  const html = emailShell({
+    content,
+    orderLabel: `Заявка ${data.withdrawalRef}`,
+    preheaderText: `Получихме заявката Ви за връщане ${data.withdrawalRef}.`,
+  })
+
+  const text = `
+Получихме Вашата заявка за връщане
+
+Здравейте, благодарим Ви за обратната връзка. Регистрирахме Вашата заявка за упражняване на правото на отказ по чл. 50 ЗЗП.
+
+Референция на заявката: ${data.withdrawalRef}
+Поръчка: #${data.orderId.slice(0, 8)}
+
+Ще прегледаме заявката и ще Ви информираме за следващите стъпки в най-кратък срок (обикновено в рамките на 1–2 работни дни).
+
+Поздрави,
+Екипът на Egg Origin
+  `.trim()
+
+  return { html, text }
+}
+
+export function buildWithdrawalApprovedEmail(data: WithdrawalEmailDataApproved): { html: string; text: string } {
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const ref = escapeHtml(data.withdrawalRef)
+
+  const instructions = data.returnRequired
+    ? `
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0 0 16px;">
+        Моля върнете стоката на адреса по-долу в рамките на 14 дни. Запазете товарителницата
+        като доказателство за изпращане. След получаване и преглед ще извършим възстановяването.
+      </p>
+      <p style="color: #555; line-height: 150%; font-size: 14px; margin: 0; padding: 16px; background: #faf6ee; border-radius: 6px;">
+        <strong>Адрес за връщане:</strong><br />
+        ${escapeHtml(getSellerAddress())}
+      </p>
+      <p style="color: #999; font-size: 13px; margin: 16px 0 0;">
+        Разходите за връщане са за Ваша сметка съгласно условията при покупка.
+      </p>`
+    : `
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        В този случай не е необходимо да връщате продукта. Ще извършим възстановяването
+        в рамките на 14 дни по същия начин на плащане.
+      </p>`
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Заявката Ви е одобрена</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
+        Здравейте, заявката Ви за връщане <strong>${ref}</strong> по поръчка <strong>#${shortId}</strong>
+        е одобрена.
+      </p>
+    `)}
+    ${section(instructions)}
+  `
+
+  const html = emailShell({
+    content,
+    orderLabel: `Заявка ${data.withdrawalRef}`,
+    preheaderText: data.returnRequired
+      ? `Заявка ${data.withdrawalRef} одобрена — моля върнете стоката`
+      : `Заявка ${data.withdrawalRef} одобрена — възстановяване без връщане`,
+  })
+
+  const text = data.returnRequired
+    ? `
+Заявката Ви е одобрена
+
+Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)} е одобрена.
+
+Моля върнете стоката на адреса по-долу в рамките на 14 дни. Запазете товарителницата като доказателство за изпращане. След получаване и преглед ще извършим възстановяването.
+
+Адрес за връщане:
+${getSellerAddress()}
+
+Разходите за връщане са за Ваша сметка съгласно условията при покупка.
+
+Поздрави,
+Екипът на Egg Origin
+      `.trim()
+    : `
+Заявката Ви е одобрена
+
+Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)} е одобрена.
+
+В този случай не е необходимо да връщате продукта. Ще извършим възстановяването в рамките на 14 дни по същия начин на плащане.
+
+Поздрави,
+Екипът на Egg Origin
+      `.trim()
+
+  return { html, text }
+}
+
+export function buildWithdrawalRejectedEmail(data: WithdrawalEmailDataRejected): { html: string; text: string } {
+  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const ref = escapeHtml(data.withdrawalRef)
+  const reason = escapeHtml(data.rejectionReason)
+
+  const content = `
+    ${section(`
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Заявката Ви не може да бъде одобрена</h2>
+      <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0 0 16px;">
+        Здравейте, разгледахме заявката Ви за връщане <strong>${ref}</strong> по поръчка
+        <strong>#${shortId}</strong>, но за съжаление не можем да я одобрим.
+      </p>
+      <p style="color: #555; line-height: 150%; font-size: 14px; margin: 0; padding: 16px; background: #fdf3f3; border-radius: 6px;">
+        <strong>Причина:</strong><br />
+        ${reason}
+      </p>
+      <p style="color: #999; font-size: 14px; margin: 16px 0 0;">
+        Ако смятате, че решението е грешно, моля свържете се с нас на
+        <a href="mailto:info@eggorigin.com" style="color: ${BRAND_COLOR};">info@eggorigin.com</a>.
+        Запазваме всички Ваши права съгласно българското и европейското законодателство.
+      </p>
+    `)}`
+
+  const html = emailShell({
+    content,
+    orderLabel: `Заявка ${data.withdrawalRef}`,
+    preheaderText: `Заявка ${data.withdrawalRef} не е одобрена`,
+  })
+
+  const text = `
+Заявката Ви не може да бъде одобрена
+
+Здравейте, разгледахме заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)}, но за съжаление не можем да я одобрим.
+
+Причина:
+${data.rejectionReason}
+
+Ако смятате, че решението е грешно, моля свържете се с нас на info@eggorigin.com. Запазваме всички Ваши права съгласно българското и европейското законодателство.
 
 Поздрави,
 Екипът на Egg Origin

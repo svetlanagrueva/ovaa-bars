@@ -9,16 +9,19 @@ const COOKIE_CONSENT_KEY = "egg-origin-cookie-consent"
 export interface CookiePreferences {
   essential: true // always on
   analytics: boolean
+  marketing: boolean
 }
 
 const DEFAULT_PREFERENCES: CookiePreferences = {
   essential: true,
   analytics: false,
+  marketing: false,
 }
 
 const ALL_ACCEPTED: CookiePreferences = {
   essential: true,
   analytics: true,
+  marketing: true,
 }
 
 /** Read stored preferences. Returns null if user hasn't chosen yet. */
@@ -27,13 +30,14 @@ export function getCookiePreferences(): CookiePreferences | null {
   const raw = localStorage.getItem(COOKIE_CONSENT_KEY)
   if (!raw) return null
 
-  // Backwards compat: old format stored "accepted" / "rejected"
-  if (raw === "accepted") return ALL_ACCEPTED
-  if (raw === "rejected") return DEFAULT_PREFERENCES
-
   try {
     const parsed = JSON.parse(raw)
-    return { essential: true, analytics: !!parsed.analytics }
+    if (!parsed || typeof parsed !== "object") return null
+    return {
+      essential: true,
+      analytics: !!parsed.analytics,
+      marketing: !!parsed.marketing,
+    }
   } catch {
     return null
   }
@@ -56,9 +60,10 @@ export function CookieConsentBanner() {
   const [hasStored, setHasStored] = useState(false)
   const [showBanner, setShowBanner] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
-  const [analyticsChecked, setAnalyticsChecked] = useState(true)
-  const [openSections, setOpenSections] = useState<Set<"essential" | "analytics">>(
-    () => new Set(["essential", "analytics"]),
+  const [analyticsChecked, setAnalyticsChecked] = useState(false)
+  const [marketingChecked, setMarketingChecked] = useState(false)
+  const [openSections, setOpenSections] = useState<Set<"essential" | "analytics" | "marketing">>(
+    () => new Set(["essential", "analytics", "marketing"]),
   )
 
   useEffect(() => {
@@ -66,12 +71,13 @@ export function CookieConsentBanner() {
     if (stored) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnalyticsChecked(stored.analytics)
+      setMarketingChecked(stored.marketing)
       setHasStored(true)
     }
     setLoaded(true)
   }, [])
 
-  const toggleSection = useCallback((id: "essential" | "analytics") => {
+  const toggleSection = useCallback((id: "essential" | "analytics" | "marketing") => {
     setOpenSections((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -100,6 +106,7 @@ export function CookieConsentBanner() {
   const save = useCallback((prefs: CookiePreferences) => {
     savePreferences(prefs)
     setAnalyticsChecked(prefs.analytics)
+    setMarketingChecked(prefs.marketing)
     setHasStored(true)
     setShowBanner(false)
     setShowDetails(false)
@@ -107,8 +114,8 @@ export function CookieConsentBanner() {
 
   const acceptAll = useCallback(() => save(ALL_ACCEPTED), [save])
   const saveSelected = useCallback(
-    () => save({ essential: true, analytics: analyticsChecked }),
-    [save, analyticsChecked],
+    () => save({ essential: true, analytics: analyticsChecked, marketing: marketingChecked }),
+    [save, analyticsChecked, marketingChecked],
   )
 
   const closeDetails = useCallback(() => {
@@ -230,6 +237,14 @@ export function CookieConsentBanner() {
                 onCheckedChange={setAnalyticsChecked}
                 label="Бисквитки за анализ"
                 description="Аналитичните бисквитки (Analytics cookies) са анонимни бисквитки, които ни съобщават, в съвкупност, кои са най-посещаваните страници, потребителските ви пътувания и действията на широки категории потребители. Благодарение на аналитичните бисквитки можем да оценим ефективността на нашия уебсайт и да подобрим вашето изживяване онлайн."
+              />
+              <CategorySection
+                isOpen={openSections.has("marketing")}
+                onToggle={() => toggleSection("marketing")}
+                checked={marketingChecked}
+                onCheckedChange={setMarketingChecked}
+                label="Маркетингови бисквитки"
+                description="Маркетинговите бисквитки ни позволяват да Ви показваме реклами във Facebook и Instagram и да измерваме тяхната ефективност. Те споделят данни с Meta (Facebook), за да Ви предложат по-релевантно съдържание."
               />
             </div>
 

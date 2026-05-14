@@ -1,12 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { createSupabaseMock, resetSupabaseMock } from "./helpers/supabase-mock"
-import { validCustomerInfo, validCartItems, singleCartItem, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
+import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
+import { validCustomerInfo, validCartItems, validCartSubtotal, singleCartItem, singleCartSubtotal, validEcontOffice, validSpeedyOffice } from "./helpers/fixtures"
 
 // Mock Stripe
 vi.mock("@/lib/stripe", () => ({
   stripe: {
     checkout: {
       sessions: { create: vi.fn(), retrieve: vi.fn() },
+    },
+    paymentIntents: {
+      retrieve: vi.fn(() => Promise.resolve({
+        latest_charge: { receipt_url: "https://pay.stripe.com/receipts/test_receipt" },
+        amount_received: 5140,
+      })),
     },
     coupons: { del: vi.fn(() => Promise.resolve()) },
   },
@@ -64,6 +70,7 @@ describe("createCheckoutSession", () => {
 
     const result = await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -85,6 +92,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "nonexistent", quantity: 1 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -96,6 +104,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 100 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -107,6 +116,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 0 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -118,11 +128,24 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: [],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
       })
     ).rejects.toThrow("Cart is empty")
+  })
+
+  it("rejects with PRICE_DRIFT when client subtotal differs from server", async () => {
+    await expect(
+      createCheckoutSession({
+        cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal - 100, // client shows 1 euro less
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    ).rejects.toThrow("PRICE_DRIFT")
   })
 
   it("throws when database insert fails", async () => {
@@ -134,6 +157,7 @@ describe("createCheckoutSession", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -149,6 +173,7 @@ describe("createCheckoutSession", () => {
     // 2 boxes at 25.70 = 51.40 € → free shipping
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -166,6 +191,7 @@ describe("createCheckoutSession", () => {
     // 1 box = 25.70 € < 30 € threshold, but test checks carrier name not shipping
     await createCheckoutSession({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -187,6 +213,7 @@ describe("createCheckoutSession", () => {
 
     await createCheckoutSession({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -209,12 +236,48 @@ describe("confirmOrder", () => {
   })
 
   it("returns minimal data if already confirmed", async () => {
-    const confirmedOrder = { id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890", status: "confirmed" }
+    const confirmedOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "confirmed",
+      total_amount: 2570,
+      items: [],
+    }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    expect(result).toEqual({ status: "confirmed" })
+    expect(result).toEqual({ status: "confirmed", totalCents: 2570, items: [] })
     expect(mockSupabase.update).not.toHaveBeenCalled()
+  })
+
+  it("returns tracking items from order_items table", async () => {
+    const confirmedOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "confirmed",
+      total_amount: 5140,
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
+    mockSupabase.order.mockReturnValueOnce(mockThenableResult([
+      { sku: "EGO-DC-12", quantity: 2, unit_price_cents: 2570 },
+    ]))
+
+    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    expect(result.items).toEqual([
+      { sku: "EGO-DC-12", quantity: 2, priceInCents: 2570 },
+    ])
+  })
+
+  it("returns empty items array when order_items query fails or is empty", async () => {
+    const confirmedOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "confirmed",
+      total_amount: 0,
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
+    mockSupabase.order.mockReturnValueOnce(mockThenableResult(null, { message: "fetch failed" }))
+
+    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    expect(result.items).toEqual([])
+    expect(result.totalCents).toBe(0)
   })
 
   it("throws when order not found", async () => {
@@ -242,6 +305,91 @@ describe("confirmOrder", () => {
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     expect(result.status).toBe("confirmed")
     expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith("cs_test_abc")
+  })
+
+  it("sets seller_settled_at, receipt URL, and payment_intent_id when confirming card payment", async () => {
+    const pendingOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "pending",
+      payment_method: "card",
+      stripe_session_id: "cs_test_paid",
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: pendingOrder, error: null })
+
+    vi.mocked(stripe.checkout.sessions.retrieve).mockResolvedValueOnce({
+      payment_status: "paid",
+      payment_intent: "pi_test_123",
+    } as never)
+
+    vi.mocked(stripe.paymentIntents.retrieve).mockResolvedValueOnce({
+      latest_charge: { receipt_url: "https://pay.stripe.com/receipts/test" },
+      amount_received: 5140,
+    } as never)
+
+    await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    expect(mockSupabase.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "confirmed",
+        confirmed_at: expect.any(String),
+        seller_settled_at: expect.any(String),
+        stripe_payment_intent_id: "pi_test_123",
+        stripe_receipt_url: "https://pay.stripe.com/receipts/test",
+      })
+    )
+    expect(stripe.paymentIntents.retrieve).toHaveBeenCalledWith(
+      "pi_test_123",
+      { expand: ["latest_charge"] }
+    )
+  })
+
+  it("still confirms order when PaymentIntent retrieval fails", async () => {
+    const pendingOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "pending",
+      payment_method: "card",
+      stripe_session_id: "cs_test_fallback",
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: pendingOrder, error: null })
+
+    vi.mocked(stripe.checkout.sessions.retrieve).mockResolvedValueOnce({
+      payment_status: "paid",
+      payment_intent: "pi_test_fail",
+    } as never)
+
+    vi.mocked(stripe.paymentIntents.retrieve).mockRejectedValueOnce(new Error("Stripe API error"))
+
+    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    expect(result.status).toBe("confirmed")
+    // Order should still be confirmed with seller_settled_at, just without receipt URL
+    expect(mockSupabase.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "confirmed",
+        seller_settled_at: expect.any(String),
+        stripe_payment_intent_id: "pi_test_fail",
+      })
+    )
+    // receipt URL should NOT be in the update (fetch failed)
+    const updateArg = mockSupabase.update.mock.calls[0][0]
+    expect(updateArg).not.toHaveProperty("stripe_receipt_url")
+  })
+
+  it("does not set seller_settled_at for COD orders in confirmOrder", async () => {
+    // COD orders come through as already confirmed, but test the branch
+    const pendingCodOrder = {
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      status: "pending",
+      payment_method: "cod",
+      stripe_session_id: null,
+    }
+    mockSupabase.single.mockResolvedValueOnce({ data: pendingCodOrder, error: null })
+
+    await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    const updateArg = mockSupabase.update.mock.calls[0][0]
+    expect(updateArg).not.toHaveProperty("seller_settled_at")
+    expect(updateArg.status).toBe("confirmed")
   })
 
   it("rejects card order when payment not verified", async () => {
@@ -286,6 +434,7 @@ describe("createCODOrder", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
@@ -306,20 +455,22 @@ describe("createCODOrder", () => {
 
     await createCODOrder({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "econt-office",
       econtOffice: validEcontOffice,
     })
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
-    // 2570 (product) + 300 (shipping, 25.70 < 30 € threshold) + 200 (COD fee) = 3070
-    expect(insertCall.total_amount).toBe(3070)
+    // 2570 (product) + 300 (shipping, 25.70 < 30 € threshold) + 0 (COD fee) = 2870
+    expect(insertCall.total_amount).toBe(2870)
   })
 
   it("throws when product not found", async () => {
     await expect(
       createCODOrder({
         cartItems: [{ productId: "nonexistent", quantity: 1 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
         econtOffice: validEcontOffice,
@@ -339,6 +490,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "invalid-method",
       })
@@ -349,6 +501,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, firstName: "" },
         deliveryMethod: "speedy-office",
       })
@@ -359,6 +512,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, email: "not-an-email" },
         deliveryMethod: "speedy-office",
       })
@@ -369,6 +523,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, phone: "abc" },
         deliveryMethod: "speedy-office",
       })
@@ -379,6 +534,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1.5 }],
+        clientSubtotal: 0,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -390,6 +546,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, address: "" },
         deliveryMethod: "speedy-address",
       })
@@ -400,6 +557,7 @@ describe("input validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, address: "" },
         deliveryMethod: "speedy-address",
       })
@@ -410,6 +568,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, notes: "x".repeat(501) },
         deliveryMethod: "speedy-office",
       })
@@ -420,6 +579,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, lastName: "" },
         deliveryMethod: "speedy-office",
       })
@@ -428,6 +588,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, city: "" },
         deliveryMethod: "speedy-address",
       })
@@ -439,6 +600,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: { ...validCustomerInfo, city: "" },
         deliveryMethod: "speedy-office",
         speedyOffice: { id: 1, name: "Test", city: "Sofia", fullAddress: "Sofia, Test" },
@@ -450,6 +612,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
       })
@@ -460,6 +623,7 @@ describe("input validation", () => {
     await expect(
       createCheckoutSession({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "econt-office",
       })
@@ -484,10 +648,11 @@ describe("input validation", () => {
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
     const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    expect(result).toEqual({ status: "confirmed" })
+    expect(result.status).toBe("confirmed")
     expect(result).not.toHaveProperty("email")
     expect(result).not.toHaveProperty("first_name")
     expect(result).not.toHaveProperty("phone")
+    expect(result).not.toHaveProperty("stripe_session_id")
   })
 })
 
@@ -504,6 +669,7 @@ describe("invoice validation", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -519,15 +685,16 @@ describe("invoice validation", () => {
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
       needsInvoice: true,
       invoiceInfo: {
+        type: "company",
         companyName: "Test EOOD",
         eik: "123456789",
         vatNumber: "BG123456789",
-        egn: "",
         mol: "Иван Петров",
         invoiceAddress: "София, ул. Тестова 1",
       },
@@ -540,15 +707,16 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "company",
           companyName: "Test EOOD",
           eik: "abc",
           vatNumber: "",
-          egn: "",
           mol: "Test",
           invoiceAddress: "Sofia",
         },
@@ -560,15 +728,16 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "company",
           companyName: "Test EOOD",
           eik: "",
           vatNumber: "",
-          egn: "",
           mol: "Test",
           invoiceAddress: "Sofia",
         },
@@ -580,15 +749,16 @@ describe("invoice validation", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "company",
           companyName: "Test EOOD",
           eik: "123456789",
           vatNumber: "INVALID",
-          egn: "",
           mol: "Test",
           invoiceAddress: "Sofia",
         },
@@ -596,39 +766,44 @@ describe("invoice validation", () => {
     ).rejects.toThrow("Невалиден ДДС номер")
   })
 
-  it("rejects invoice without MOL", async () => {
+  it("requires МОЛ for company invoice but not for individual", async () => {
+    // Per the new schema, mol is required only for company invoices.
+    // Individual invoices use the order's first_name + last_name as the
+    // legal name, so an empty mol on individual is allowed.
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
-          companyName: "",
-          eik: "",
+          type: "company",
+          companyName: "Firm",
+          eik: "123456789",
           vatNumber: "",
-          egn: "",
           mol: "",
           invoiceAddress: "Sofia",
         },
       })
-    ).rejects.toThrow("МОЛ / Име е задължително")
+    ).rejects.toThrow("МОЛ е задължително за фактура на фирма")
   })
 
-  it("rejects invoice without address", async () => {
+  it("rejects individual invoice without address", async () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
         needsInvoice: true,
         invoiceInfo: {
+          type: "individual",
           companyName: "",
           eik: "",
           vatNumber: "",
-          egn: "",
           mol: "Test Person",
           invoiceAddress: "",
         },
@@ -636,41 +811,22 @@ describe("invoice validation", () => {
     ).rejects.toThrow("Адресът е задължителен")
   })
 
-  it("rejects individual invoice with invalid EGN", async () => {
-    await expect(
-      createCODOrder({
-        cartItems: validCartItems,
-        customerInfo: validCustomerInfo,
-        deliveryMethod: "speedy-office",
-        speedyOffice: validSpeedyOffice,
-        needsInvoice: true,
-        invoiceInfo: {
-          companyName: "",
-          eik: "",
-          vatNumber: "",
-          egn: "12345",
-          mol: "Test Person",
-          invoiceAddress: "Sofia",
-        },
-      })
-    ).rejects.toThrow("ЕГН трябва да бъде 10 цифри")
-  })
-
-  it("accepts valid individual invoice with EGN", async () => {
+  it("accepts valid individual invoice (name + address, no identifier)", async () => {
     const fakeOrder = { id: "order-inv-ind", email: "t@t.com", first_name: "T" }
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
 
     const result = await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
       needsInvoice: true,
       invoiceInfo: {
+        type: "individual",
         companyName: "",
         eik: "",
         vatNumber: "",
-        egn: "1234567890",
         mol: "Иван Петров",
         invoiceAddress: "София, ул. Тестова 1",
       },
@@ -693,6 +849,7 @@ describe("createCODOrder — additional", () => {
 
     await createCODOrder({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -700,35 +857,51 @@ describe("createCODOrder — additional", () => {
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
     expect(insertCall.shipping_fee).toBe(300) // speedy office shipping
-    expect(insertCall.cod_fee).toBe(200)
+    // COD fee was dropped 2026-05-03 — every COD order now has cod_fee = 0.
+    expect(insertCall.cod_fee).toBe(0)
     expect(insertCall.confirmed_at).toBeTruthy()
   })
 
-  it("stores invoice data when needsInvoice is true", async () => {
+  it("inserts invoices row when needsInvoice is true", async () => {
     const fakeOrder = { id: "cod-inv", email: "t@t.com", first_name: "T" }
     mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
 
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
       needsInvoice: true,
       invoiceInfo: {
+        type: "company",
         companyName: "Firm",
         eik: "123456789",
         vatNumber: "",
-        egn: "",
         mol: "Boss",
         invoiceAddress: "Sofia",
       },
     })
 
-    const insertCall = mockSupabase.insert.mock.calls[0][0]
-    expect(insertCall.needs_invoice).toBe(true)
-    expect(insertCall.invoice_company_name).toBe("Firm")
-    expect(insertCall.invoice_eik).toBe("123456789")
-    expect(insertCall.invoice_mol).toBe("Boss")
+    // Two inserts: first the orders row (no invoice cols anymore), then the
+    // invoices row with type='invoice' carrying the profile.
+    const orderInsert = mockSupabase.insert.mock.calls[0][0]
+    expect(orderInsert.payment_method).toBe("cod")
+    expect(orderInsert).not.toHaveProperty("needs_invoice")
+    expect(orderInsert).not.toHaveProperty("invoice_type")
+    expect(orderInsert).not.toHaveProperty("invoice_company_name")
+
+    // The invoices insert is the next call after order_items insert. Find it.
+    const invoiceInsert = mockSupabase.insert.mock.calls.find((args: unknown[]) => {
+      const arg = args[0] as Record<string, unknown> | undefined
+      return arg?.type === "invoice"
+    })?.[0] as Record<string, unknown> | undefined
+    expect(invoiceInsert).toBeDefined()
+    expect(invoiceInsert?.invoice_type).toBe("company")
+    expect(invoiceInsert?.company_name).toBe("Firm")
+    expect(invoiceInsert?.eik).toBe("123456789")
+    expect(invoiceInsert?.mol).toBe("Boss")
+    expect(invoiceInsert?.address).toBe("Sofia")
   })
 
   it("stores Speedy office data", async () => {
@@ -737,6 +910,7 @@ describe("createCODOrder — additional", () => {
 
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -753,6 +927,7 @@ describe("createCODOrder — additional", () => {
     await expect(
       createCODOrder({
         cartItems: validCartItems,
+        clientSubtotal: validCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -767,6 +942,7 @@ describe("createCODOrder — additional", () => {
     // 2 boxes = 51.40 EUR > 30 EUR threshold → free office shipping
     await createCODOrder({
       cartItems: validCartItems,
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -774,8 +950,8 @@ describe("createCODOrder — additional", () => {
 
     const insertCall = mockSupabase.insert.mock.calls[0][0]
     expect(insertCall.shipping_fee).toBe(0)
-    // total = 5140 (products) + 0 (shipping) + 200 (cod) = 5340
-    expect(insertCall.total_amount).toBe(5340)
+    // total = 5140 (products) + 0 (shipping) + 0 (cod, dropped 2026-05-03) = 5140
+    expect(insertCall.total_amount).toBe(5140)
   })
 })
 
@@ -793,6 +969,7 @@ describe("inventory reservation", () => {
 
     await createCheckoutSession({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 2 }],
+      clientSubtotal: validCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,
@@ -813,16 +990,45 @@ describe("inventory reservation", () => {
     await expect(
       createCheckoutSession({
         cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+        clientSubtotal: singleCartSubtotal,
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
       })
-    ).rejects.toThrow("Insufficient stock")
+    // Error is translated to a sentinel that doesn't leak the SKU code to the UI.
+    // The sentinel includes the product name so the client can render a
+    // Bulgarian message.
+    ).rejects.toThrow(/^INV_INSUFFICIENT:/)
 
     // Order must be cleaned up
     expect(mockSupabase.delete).toHaveBeenCalled()
     // Stripe session must NOT have been created
     expect(stripe.checkout.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it("insufficient-stock error message carries the product name, not the SKU", async () => {
+    const fakeOrder = { id: "order-inv-message" }
+    mockSupabase.single.mockResolvedValueOnce({ data: fakeOrder, error: null })
+    mockSupabase.rpc = vi.fn(() => Promise.resolve({ data: null, error: { message: "Insufficient stock for SKU EGO-DC-12. Available: 0, requested: 1" } }))
+
+    let caught: Error | null = null
+    try {
+      await createCheckoutSession({
+        cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+        clientSubtotal: singleCartSubtotal,
+        customerInfo: validCustomerInfo,
+        deliveryMethod: "speedy-office",
+        speedyOffice: validSpeedyOffice,
+      })
+    } catch (err) {
+      caught = err as Error
+    }
+    expect(caught).toBeTruthy()
+    expect(caught!.message).not.toContain("EGO-DC-12")
+    expect(caught!.message).toContain("INV_INSUFFICIENT:")
+    // The PRODUCTS fixture has a Bulgarian-friendly name for this SKU; we
+    // assert the sentinel carries *some* product name, not the opaque SKU.
+    expect(caught!.message.slice("INV_INSUFFICIENT:".length).trim().length).toBeGreaterThan(0)
   })
 
   it("createCheckoutSession rolls back already-reserved items if a later item fails", async () => {
@@ -846,6 +1052,7 @@ describe("inventory reservation", () => {
           { productId: "egg-origin-dark-chocolate-box", quantity: 1 },
           { productId: "egg-origin-white-chocolate-raspberry-box", quantity: 1 },
         ],
+        clientSubtotal: singleCartSubtotal * 2, // both products are 2570
         customerInfo: validCustomerInfo,
         deliveryMethod: "speedy-office",
         speedyOffice: validSpeedyOffice,
@@ -865,6 +1072,7 @@ describe("inventory reservation", () => {
 
     await createCODOrder({
       cartItems: [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }],
+      clientSubtotal: singleCartSubtotal,
       customerInfo: validCustomerInfo,
       deliveryMethod: "speedy-office",
       speedyOffice: validSpeedyOffice,

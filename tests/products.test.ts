@@ -68,20 +68,23 @@ describe("getProductBySlug", () => {
 })
 
 describe("formatPrice", () => {
+  // Asserted strings use U+00A0 (non-breaking space) between number and €
+  // so mobile email clients don't wrap "25,70" + "€" onto separate lines.
+
   it("formats price in EUR with comma separator", () => {
-    expect(formatPrice(5999)).toBe("59,99 €")
+    expect(formatPrice(5999)).toBe("59,99 €")
   })
 
   it("formats zero", () => {
-    expect(formatPrice(0)).toBe("0,00 €")
+    expect(formatPrice(0)).toBe("0,00 €")
   })
 
   it("formats small amounts", () => {
-    expect(formatPrice(99)).toBe("0,99 €")
+    expect(formatPrice(99)).toBe("0,99 €")
   })
 
   it("formats round amounts", () => {
-    expect(formatPrice(10000)).toBe("100,00 €")
+    expect(formatPrice(10000)).toBe("100,00 €")
   })
 })
 

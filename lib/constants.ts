@@ -6,7 +6,12 @@ export const TIKTOK_URL = "https://www.tiktok.com/@eggorigin"
 export const FREE_SHIPPING_THRESHOLD = 3000 // 30.00 €
 export const SHIPPING_PRICE_OFFICE = 300 // 3.00 € (to courier office)
 export const SHIPPING_PRICE_ADDRESS = 360 // 3.60 € (to address)
-export const COD_FEE = 200 // 2.00 €
+// COD fee was historically 2 € — dropped 2026-05-03 (no longer charged
+// to the customer for choosing наложен платеж). The DB column + checkout
+// + admin price-breakdown logic stays in place so historical orders that
+// were placed with a fee still display it correctly; new orders are
+// created with cod_fee = 0 because COD_FEE is now zero.
+export const COD_FEE = 0
 export const MAX_QUANTITY = 10
 
 // Base URL for absolute links (emails, callbacks)

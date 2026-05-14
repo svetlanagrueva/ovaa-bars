@@ -85,12 +85,14 @@ export function SocialProof() {
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="Instagram"
-                className="group aspect-square overflow-hidden rounded-full bg-muted"
+                className="group relative aspect-square overflow-hidden rounded-full bg-muted"
               >
-                <img
+                <Image
                   src={src}
                   alt=""
-                  className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                  fill
+                  sizes="(max-width: 1024px) 33vw, 20vw"
+                  className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                 />
               </Link>
             ))}

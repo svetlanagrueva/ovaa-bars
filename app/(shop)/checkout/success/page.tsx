@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useCartStore } from "@/lib/store/cart"
 import { confirmOrder } from "@/app/actions/stripe"
+import { trackPurchase } from "@/lib/meta-pixel"
 
 export default function CheckoutSuccessPage() {
   const searchParams = useSearchParams()
@@ -24,10 +25,19 @@ export default function CheckoutSuccessPage() {
         return
       }
       try {
-        await confirmOrder(orderId)
+        const result = await confirmOrder(orderId)
         if (!cancelled) {
           setStatus("confirmed")
           clearCart()
+          trackPurchase({
+            orderId,
+            totalCents: result.totalCents,
+            items: result.items.map((item) => ({
+              sku: item.sku,
+              quantity: item.quantity,
+              unitPriceCents: item.priceInCents,
+            })),
+          })
         }
       } catch {
         if (!cancelled) {
@@ -110,7 +120,7 @@ export default function CheckoutSuccessPage() {
 
         <div className="mt-6 space-y-4 sm:mt-8">
           <p className="text-[13px] text-muted-foreground sm:text-sm">
-            Очаквайте доставка в рамките на 2 работни дни.
+            Очаквайте доставка в рамките на 3 работни дни.
           </p>
           <Button asChild size="lg" className="h-12 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:h-11 sm:w-auto sm:px-6">
             <Link href="/products">

@@ -158,10 +158,14 @@ export default async function HomePage() {
       {/* Why Egg White Section */}
       <section className="relative overflow-hidden bg-background py-12 sm:py-16 lg:py-24">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <img
+          <Image
             src="/images/egg-white-texture.png"
             alt=""
             aria-hidden="true"
+            width={1536}
+            height={1024}
+            sizes="140vw"
+            priority={false}
             className="absolute left-1/2 top-1/2 h-[140%] w-[140%] max-w-none -translate-x-1/2 -translate-y-1/2 object-cover opacity-[0.6]"
           />
           <div className="absolute inset-0 bg-background/80" />
