@@ -19,18 +19,18 @@ export default function TermsPage() {
     const companyMol = process.env.SELLER_MOL || "[управител]"
 
     return (
-        <div className="bg-background py-16 sm:py-20 lg:py-24">
-            <div className="mx-auto max-w-3xl px-6 lg:px-8">
-                <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+        <div className="bg-background py-12 sm:py-16 lg:py-24">
+            <div className="mx-auto max-w-3xl px-5 sm:px-6 lg:px-8">
+                <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
                     Правна информация
                 </p>
-                <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">Общи
+                <h1 className="mt-4 text-[28px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-6 sm:text-3xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-4xl">Общи
                     условия</h1>
-                <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Април 2026</p>
+                <p className="mt-4 text-[13px] leading-[1.7] text-muted-foreground sm:mt-6 sm:text-sm sm:leading-7">Последна актуализация: Април 2026</p>
 
-                <div className="mt-8 space-y-8 text-muted-foreground">
+                <div className="mt-6 space-y-6 text-[13px] leading-[1.7] text-muted-foreground sm:mt-8 sm:space-y-8 sm:text-sm sm:leading-7">
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">1. Данни за продавача</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">1. Данни за продавача</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 Уеб сайтът eggorigin.com е електронен магазин, собственост на:
@@ -58,7 +58,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">2. Надзорни органи</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">2. Надзорни органи</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 <strong className="text-foreground">Комисия за защита на потребителите (КЗП)</strong>
@@ -80,7 +80,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">3. Поръчки</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">3. Поръчки</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 Поръчки се приемат чрез уебсайта eggorigin.com без регистрация на профил.
@@ -116,7 +116,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">4. Цени и плащане</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">4. Цени и плащане</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 Всички цени са в евро (EUR) и са крайни. Цената на доставката и
@@ -142,7 +142,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">5. Доставка</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">5. Доставка</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 Доставката се извършва на територията на Република България
@@ -180,7 +180,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">6. Фактури</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">6. Фактури</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 При оформяне на поръчката Купувачът може да заяви издаване на фактура,
@@ -201,7 +201,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">7. Право на отказ</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">7. Право на отказ</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 Съгласно чл. 50 от Закона за защита на потребителите, Купувачът има право
@@ -245,7 +245,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">8. Възстановяване на заплатена
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">8. Възстановяване на заплатена
                             сума</h2>
                         <div className="mt-4 space-y-4">
                             <p>
@@ -268,7 +268,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">9. Рекламации</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">9. Рекламации</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 При получаване на дефектен, повреден или несъответстващ на поръчката продукт,
@@ -297,7 +297,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">10. Законова гаранция за
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">10. Законова гаранция за
                             съответствие</h2>
                         <div className="mt-4 space-y-4">
                             <p>
@@ -332,7 +332,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">11. Промоционални цени</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">11. Промоционални цени</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 При намаление на цената посочваме предишната цена, която е била прилагана
@@ -343,7 +343,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">12. Решаване на спорове</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">12. Решаване на спорове</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 В случай на спор относно онлайн покупка, страните ще се опитат да го
@@ -373,7 +373,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">13. Защита на личните
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">13. Защита на личните
                             данни</h2>
                         <p className="mt-4">
                             Обработката на лични данни е описана подробно в
@@ -386,7 +386,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">14. Отговорност</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">14. Отговорност</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 Продавачът не носи отговорност за вреди, причинени от непреодолима сила,
@@ -406,7 +406,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">15. Заключителни
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">15. Заключителни
                             разпоредби</h2>
                         <div className="mt-4 space-y-4">
                             <p>
@@ -427,7 +427,7 @@ export default function TermsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-lg font-medium tracking-wide text-foreground">16. Контакт</h2>
+                        <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">16. Контакт</h2>
                         <div className="mt-4 space-y-4">
                             <p>
                                 При въпроси относно тези Общи условия:

@@ -5,7 +5,6 @@ import Link from "next/link"
 import { Plus, ShoppingCart } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { useCartStore } from "@/lib/store/cart"
 import { type Product } from "@/lib/products"
 import { PriceDisplay } from "@/components/products/price-display"
@@ -30,16 +29,6 @@ export function ProductCard({ product, soldOut = false }: ProductCardProps) {
               fill
               className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
             />
-
-            {soldOut ? (
-              <Badge className="absolute left-2.5 top-2.5 rounded-full bg-background/90 px-2 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground shadow-none">
-                Изчерпан
-              </Badge>
-            ) : product.badge ? (
-              <Badge className="absolute left-2.5 top-2.5 rounded-full bg-background/90 px-2 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-foreground shadow-none">
-                {product.badge}
-              </Badge>
-            ) : null}
           </div>
         </div>
       </Link>
@@ -77,7 +66,7 @@ export function ProductCard({ product, soldOut = false }: ProductCardProps) {
             }}
             size="sm"
             disabled={soldOut}
-            className="h-9 rounded-full bg-primary px-3 text-[10px] uppercase tracking-[0.16em] text-primary-foreground transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
+            className="h-9 flex-shrink-0 rounded-full bg-primary px-3 text-[10px] uppercase tracking-[0.16em] text-primary-foreground transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
           >
             {soldOut ? (
               "Изчерпан"

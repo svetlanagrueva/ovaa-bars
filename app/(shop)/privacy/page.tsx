@@ -19,17 +19,17 @@ export default function PrivacyPage() {
   const companyMol = process.env.SELLER_MOL || "[управител]"
 
   return (
-    <div className="bg-background py-16 sm:py-20 lg:py-24">
-      <div className="mx-auto max-w-3xl px-6 lg:px-8">
-        <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+    <div className="bg-background py-12 sm:py-16 lg:py-24">
+      <div className="mx-auto max-w-3xl px-5 sm:px-6 lg:px-8">
+        <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
           Правна информация
         </p>
-        <h1 className="mt-6 text-3xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-4xl">Политика за поверителност</h1>
-        <p className="mt-6 text-sm leading-7 text-muted-foreground">Последна актуализация: Април 2026</p>
+        <h1 className="mt-4 text-[28px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-6 sm:text-3xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-4xl">Политика за поверителност</h1>
+        <p className="mt-4 text-[13px] leading-[1.7] text-muted-foreground sm:mt-6 sm:text-sm sm:leading-7">Последна актуализация: Април 2026</p>
 
-        <div className="mt-8 space-y-8 text-muted-foreground">
+        <div className="mt-6 space-y-6 text-[13px] leading-[1.7] text-muted-foreground sm:mt-8 sm:space-y-8 sm:text-sm sm:leading-7">
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">1. Администратор на лични данни</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">1. Администратор на лични данни</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Администратор на вашите лични данни е:
@@ -60,7 +60,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">2. Определение за лични данни</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">2. Определение за лични данни</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Съгласно чл. 4 от Регламент (ЕС) 2016/679 (GDPR), &quot;лични данни&quot; е всяка
@@ -72,7 +72,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">3. Принципи при обработка на лични данни</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">3. Принципи при обработка на лични данни</h2>
             <div className="mt-4 space-y-4">
               <p>Спазваме следните принципи при обработка на вашите лични данни:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -112,7 +112,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">4. Какви данни събираме</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">4. Какви данни събираме</h2>
             <div className="mt-4 space-y-4">
               <p>
                 <strong className="text-foreground">При правене на поръчка</strong> събираме следните данни:
@@ -174,7 +174,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">5. Цели на обработката</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">5. Цели на обработката</h2>
             <div className="mt-4 space-y-4">
               <p>Събираме и обработваме вашите лични данни единствено за следните цели:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -192,7 +192,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">6. Споделяне на данни с трети страни</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">6. Споделяне на данни с трети страни</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Не продаваме вашите лични данни на трети страни. Имаме право да разкрием
@@ -211,7 +211,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">7. Предаване на данни извън ЕС</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">7. Предаване на данни извън ЕС</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Някои от нашите доставчици на услуги (Stripe, Vercel, Resend, Google) са
@@ -224,7 +224,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">8. Срокове за съхранение на данни</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">8. Срокове за съхранение на данни</h2>
             <div className="mt-4 space-y-4">
               <ul className="list-disc space-y-2 pl-6">
                 <li>
@@ -253,7 +253,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">9. Вашите права</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">9. Вашите права</h2>
             <div className="mt-4 space-y-4">
               <p>Съгласно GDPR и Закона за защита на личните данни, вие имате следните права:</p>
               <ul className="list-disc space-y-2 pl-6">
@@ -303,7 +303,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">10. Право на възражение</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">10. Право на възражение</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Вие имате право по всяко време да възразите срещу обработване на лични
@@ -321,7 +321,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">11. Как да упражните правата си</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">11. Как да упражните правата си</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Можете да упражните правата си, като подадете писмено искане до нас по
@@ -361,7 +361,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">12. Маркетингови съобщения</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">12. Маркетингови съобщения</h2>
             <div className="mt-4 space-y-4">
               <p>
                 При оформяне на поръчка имате възможност да се съгласите да получавате
@@ -386,7 +386,7 @@ export default function PrivacyPage() {
           </section>
 
           <section id="cookies">
-            <h2 className="text-lg font-medium tracking-wide text-foreground">13. Бисквитки и локално съхранение</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">13. Бисквитки и локално съхранение</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Нашият сайт използва бисквитки и локално съхранение (localStorage) за различни
@@ -459,7 +459,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">14. Автоматизирано вземане на решения</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">14. Автоматизирано вземане на решения</h2>
             <p className="mt-4">
               Не използваме автоматизирано вземане на решения или профилиране по смисъла
               на чл. 22 GDPR, което да има правни последици за вас. Имате право да не
@@ -469,7 +469,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">15. Задължителност на предоставянето на данни</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">15. Задължителност на предоставянето на данни</h2>
             <div className="mt-4 space-y-4">
               <ul className="list-disc space-y-2 pl-6">
                 <li>
@@ -491,7 +491,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">16. Сигурност на данните</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">16. Сигурност на данните</h2>
             <p className="mt-4">
               Прилагаме подходящи технически и организационни мерки за защита на вашите
               данни от неоторизиран достъп, загуба или унищожаване. Плащанията се обработват
@@ -501,7 +501,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">17. Промени в Политиката за поверителност</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">17. Промени в Политиката за поверителност</h2>
             <div className="mt-4 space-y-4">
               <p>
                 Настоящата Политика за поверителност може да бъде променяна по всяко време.
@@ -513,7 +513,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-medium tracking-wide text-foreground">18. Контакт</h2>
+            <h2 className="text-base font-medium tracking-[-0.01em] text-foreground sm:text-lg">18. Контакт</h2>
             <div className="mt-4 space-y-4">
               <p>
                 При въпроси относно тази политика или обработката на вашите данни:

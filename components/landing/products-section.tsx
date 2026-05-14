@@ -9,14 +9,14 @@ interface ProductsSectionProps {
 
 export function ProductsSection({ products, inventoryMap }: ProductsSectionProps) {
   return (
-    <section className="bg-background pt-8 pb-16 sm:pt-10 sm:pb-20 lg:pt-12 lg:pb-24">
-      <div className="mx-auto max-w-7xl px-6 lg:px-8">
+    <section className="bg-card py-12 sm:py-16 lg:py-24">
+      <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+            <p className="text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:text-[11px] sm:tracking-[0.3em]">
               Продукти
             </p>
-            <h2 className="mt-4 text-3xl font-light tracking-wide text-foreground sm:text-4xl">
+            <h2 className="mt-3 text-[24px] font-light tracking-[-0.02em] text-foreground sm:mt-4 sm:text-3xl lg:text-4xl">
               Избери своя вкус
             </h2>
           </div>
@@ -28,7 +28,7 @@ export function ProductsSection({ products, inventoryMap }: ProductsSectionProps
           </Link>
         </div>
 
-        <div className="mt-10 grid grid-cols-2 gap-3 sm:mt-12 sm:gap-5 lg:grid-cols-3 lg:gap-6">
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:mt-10 sm:gap-5 lg:grid-cols-3 lg:gap-6">
           {products.map((product) => (
             <ProductCard
               key={product.id}
@@ -38,10 +38,10 @@ export function ProductsSection({ products, inventoryMap }: ProductsSectionProps
           ))}
         </div>
 
-        <div className="mt-8 text-center sm:hidden">
+        <div className="mt-8 sm:hidden">
           <Link
             href="/products"
-            className="inline-flex items-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent"
+            className="inline-flex w-full items-center justify-center gap-3 rounded-full border border-border/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-accent"
           >
             Виж всички
           </Link>

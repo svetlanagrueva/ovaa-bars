@@ -1,7 +1,7 @@
 "use client"
 
 import { motion, useInView } from "framer-motion"
-import { useRef } from "react"
+import { Fragment, useRef } from "react"
 
 const benefits = [
   { value: 20, suffix: "g", label: "Яйчен Протеин" },
@@ -33,7 +33,7 @@ export function BenefitsStrip() {
   const isInView = useInView(ref, { once: true, margin: "-50px" })
 
   return (
-    <section ref={ref} className="relative overflow-hidden bg-background py-14 md:py-20">
+    <section ref={ref} className="relative overflow-hidden bg-card py-8 sm:py-12 lg:py-16">
       {/* Subtle gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-accent/[0.03] to-transparent" />
 
@@ -43,8 +43,33 @@ export function BenefitsStrip() {
       {/* Bottom accent line */}
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
 
-      <div className="relative mx-auto max-w-7xl px-6 lg:px-8">
-        <div className="flex flex-col items-center gap-12 md:flex-row md:justify-center md:gap-16 lg:gap-24">
+      <div className="relative mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
+        {/* Mobile: horizontal row with dot separators */}
+        <div className="flex items-center gap-3 sm:hidden">
+          {benefits.map((benefit, index) => (
+            <Fragment key={benefit.label}>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={isInView ? { opacity: 1 } : {}}
+                transition={{ duration: 0.8, delay: index * 0.15 }}
+                className="flex-1 text-center"
+              >
+                <p className="text-2xl font-extralight tracking-tight text-foreground">
+                  {benefit.value}{benefit.suffix}
+                </p>
+                <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  {benefit.label}
+                </p>
+              </motion.div>
+              {index < benefits.length - 1 && (
+                <span className="block h-1 w-1 flex-shrink-0 rounded-full bg-accent/40" />
+              )}
+            </Fragment>
+          ))}
+        </div>
+
+        {/* Desktop: original layout */}
+        <div className="hidden sm:flex sm:flex-row sm:items-center sm:justify-center sm:gap-16 lg:gap-24">
           {benefits.map((benefit, index) => (
             <div key={benefit.label} className="flex items-center gap-16 lg:gap-24">
               <motion.div
@@ -56,8 +81,6 @@ export function BenefitsStrip() {
                 <p className="text-4xl font-extralight tracking-tight text-foreground transition-colors duration-300 group-hover:text-accent">
                   {benefit.value}{benefit.suffix}
                 </p>
-
-                <div className="mx-auto mt-3 h-px w-12 bg-accent/40" />
 
                 <p className="mt-3 text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
                   {benefit.label}

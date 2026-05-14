@@ -386,8 +386,8 @@ export default function CheckoutPage() {
 
   if (!mounted || items.length === 0) {
     return (
-      <div className="bg-background py-16 sm:py-20 lg:py-24">
-        <div className="mx-auto max-w-4xl px-6 lg:px-8">
+      <div className="bg-background py-12 sm:py-16 lg:py-24">
+        <div className="mx-auto max-w-4xl px-5 sm:px-6 lg:px-8">
           <div className="animate-pulse">
             <div className="h-8 w-48 rounded bg-secondary" />
             <div className="mt-8 h-96 rounded-lg bg-secondary" />
@@ -398,20 +398,25 @@ export default function CheckoutPage() {
   }
 
   return (
-    <div className="bg-background py-16 sm:py-20 lg:py-24">
-      <div className="mx-auto max-w-4xl px-6 lg:px-8">
+    <div className="bg-background py-12 sm:py-16 lg:py-24">
+      <div className="mx-auto max-w-4xl px-5 sm:px-6 lg:px-8">
         <Link
           href="/cart"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:text-sm"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Обратно към количката
         </Link>
 
-        <h1 className="mt-6 text-4xl font-light leading-[1.05] tracking-[-0.04em] text-foreground sm:text-5xl">Плащане</h1>
+        <p className="mt-6 text-[10px] font-medium uppercase tracking-[0.25em] text-muted-foreground sm:mt-8 sm:text-[11px] sm:tracking-[0.3em]">
+          Поръчка
+        </p>
+        <h1 className="mt-4 text-[32px] font-light leading-[1.1] tracking-[-0.03em] text-foreground sm:mt-6 sm:text-4xl sm:leading-[1.05] sm:tracking-[-0.04em] lg:text-5xl">
+          Плащане
+        </h1>
 
         <form onSubmit={handleSubmit} className="mt-8">
-          <div className="grid gap-8 lg:grid-cols-2">
+          <div className="grid gap-6 sm:gap-8 lg:grid-cols-2">
             {/* Customer Information */}
             <div className="space-y-6">
               <Card>
@@ -951,7 +956,7 @@ export default function CheckoutPage() {
                     <p className="text-sm text-destructive">{error}</p>
                   )}
 
-                  <Button type="submit" className="mt-6 h-11 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90" size="lg" disabled={isLoading || stockWarnings.length > 0}>
+                  <Button type="submit" className="mt-6 h-12 w-full gap-2 rounded-full bg-primary text-[10px] uppercase tracking-[0.16em] text-primary-foreground hover:opacity-90 sm:h-11" size="lg" disabled={isLoading || stockWarnings.length > 0}>
                     {isLoading ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
