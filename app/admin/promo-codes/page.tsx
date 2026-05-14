@@ -27,6 +27,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { formatBgDate } from "@/lib/utils"
 
 function getPromoStatus(promo: PromoCodeRecord): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (!promo.is_active) return { label: "Деактивиран", variant: "secondary" }
@@ -130,15 +131,11 @@ export default function AdminPromoCodesPage() {
                       {code.current_uses}/{code.max_uses ?? "∞"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {new Date(code.starts_at).toLocaleDateString("bg-BG", {
-                        day: "2-digit", month: "2-digit", year: "numeric",
-                      })}
+                      {formatBgDate(code.starts_at)}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {code.ends_at
-                        ? new Date(code.ends_at).toLocaleDateString("bg-BG", {
-                            day: "2-digit", month: "2-digit", year: "numeric",
-                          })
+                        ? formatBgDate(code.ends_at)
                         : "—"}
                     </TableCell>
                     <TableCell>

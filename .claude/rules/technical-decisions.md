@@ -111,7 +111,7 @@ Migration `20260429071812_withdrawals_table.sql`. **Decisions**:
 - `inventory_log` append-only: BEFORE UPDATE/DELETE triggers raise unconditionally
 - `invoices` append-mostly: forward-only transitions on `invoice_number` / `invoice_date` / `sent_at` (NULL → set); identity, profile, linkage, `due_at`, `created_at` strictly immutable; DELETE rejected. Corrections to issued documents go through credit_note per ЗДДС Чл. 115/116.
 - `product_batches` append-mostly: only `active → recalled` forward UPDATE; recall metadata required in same UPDATE
-- `order_item_batches` fully immutable post-insert
+- `order_item_batches` status-conditional: mutable while parent order's `tracking_number IS NULL`; locked the moment a tracking number lands (covers the `'__generating__'` placeholder). `cancelShipment` clears tracking and re-opens edits, emitting `batch_allocation_unlocked_after_shipment_cancelled`.
 - Stripe refund verification on paste: 4-way check (exists, succeeded, payment_intent matches, amount matches) — rejects phantom / misattributed rows at source
 
 ## Contact Form

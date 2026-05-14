@@ -1450,7 +1450,7 @@ begin
   where id = p_order_id;
 
   if not found then
-    raise exception 'Order % not found', p_order_id;
+    raise exception 'Order % not found', p_order_id using hint = 'ORDER_NOT_FOUND';
   end if;
 end;
 $$;
@@ -2122,7 +2122,8 @@ begin
       raise exception 'resolution_type is required to complete a withdrawal';
     end if;
     if new.resolution_type = 'refund' and new.refund_id is null then
-      raise exception 'refund_id is required when resolution_type=refund';
+      raise exception 'refund_id is required when resolution_type=refund'
+        using hint = 'WITHDRAWAL_REFUND_ID_REQUIRED';
     end if;
     return new;
   end if;
@@ -2132,7 +2133,8 @@ begin
       raise exception 'resolution_type is required to complete a withdrawal';
     end if;
     if new.resolution_type = 'refund' and new.refund_id is null then
-      raise exception 'refund_id is required when resolution_type=refund';
+      raise exception 'refund_id is required when resolution_type=refund'
+        using hint = 'WITHDRAWAL_REFUND_ID_REQUIRED';
     end if;
     return new;
   end if;
@@ -2469,7 +2471,8 @@ begin
   where oi.id = v_order_item_id;
 
   if v_tracking_number is not null then
-    raise exception 'Cannot modify batch allocation after shipment generation (tracking_number is set)';
+    raise exception 'Cannot modify batch allocation after shipment generation (tracking_number is set)'
+      using hint = 'BATCH_ALLOCATION_LOCKED';
   end if;
 
   return case
@@ -2630,13 +2633,15 @@ begin
   from public.orders where id = p_order_id for update;
 
   if not found then
-    raise exception 'Order not found';
+    raise exception 'Order not found' using hint = 'ORDER_NOT_FOUND';
   end if;
   if v_status <> 'confirmed' then
-    raise exception 'Order status is %, must be confirmed to allocate batches', v_status;
+    raise exception 'Order status is %, must be confirmed to allocate batches', v_status
+      using hint = 'ORDER_NOT_CONFIRMED';
   end if;
   if v_tracking is not null then
-    raise exception 'Allocation is locked (tracking_number is set)';
+    raise exception 'Allocation is locked (tracking_number is set)'
+      using hint = 'BATCH_ALLOCATION_LOCKED';
   end if;
 
   -- 2. Lock referenced product_batches so concurrent saves serialize on
@@ -2668,13 +2673,15 @@ begin
       select 1 from public.product_batches
       where id = rec.batch_id and status = 'active'
     ) then
-      raise exception 'Batch % is not active', rec.batch_id;
+      raise exception 'Batch % is not active', rec.batch_id
+        using hint = 'BATCH_NOT_ACTIVE';
     end if;
 
     select public.batch_quantity_available(rec.batch_id) into v_avail;
     if rec.requested > v_avail then
       raise exception 'Batch % availability % less than requested %',
-        rec.batch_id, v_avail, rec.requested;
+        rec.batch_id, v_avail, rec.requested
+        using hint = 'BATCH_INSUFFICIENT_AVAILABILITY';
     end if;
   end loop;
 
@@ -2696,7 +2703,8 @@ begin
     where oi.order_id = p_order_id
   loop
     if rec.allocated <> rec.ordered then
-      raise exception 'SKU %: allocated % but ordered %', rec.sku, rec.allocated, rec.ordered;
+      raise exception 'SKU %: allocated % but ordered %', rec.sku, rec.allocated, rec.ordered
+        using hint = 'BATCH_ALLOCATION_SUM_MISMATCH';
     end if;
   end loop;
 

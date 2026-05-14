@@ -31,6 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatBgDate } from "@/lib/utils"
 
 const STATUS_LABELS: Record<ProductBatchStatus | "all", string> = {
   all: "Всички",
@@ -213,9 +214,7 @@ export default function AdminBatchesPage() {
                     </TableCell>
                     <TableCell className="font-mono text-sm">{b.batch_number}</TableCell>
                     <TableCell className="text-sm">
-                      {expiryDate.toLocaleDateString("bg-BG", {
-                        day: "2-digit", month: "2-digit", year: "numeric",
-                      })}
+                      {formatBgDate(expiryDate)}
                       <div className={`text-[11px] ${daysToExpiry < 0 ? "text-red-700" : daysToExpiry < 30 ? "text-amber-700" : "text-muted-foreground"}`}>
                         {daysToExpiry < 0 ? `изтекла преди ${Math.abs(daysToExpiry)} дни` : `${daysToExpiry} дни до изтичане`}
                       </div>

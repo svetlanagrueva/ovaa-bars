@@ -39,6 +39,106 @@ async function fetchOrderItemsForEmail(
 }
 
 /**
+ * Common shell for fire-and-forget transactional emails: gate on
+ * `isEmailEnabled`, get the email client, send with `EMAIL_FROM`, log on
+ * error. Used by withdrawal notifications and the admin new-order alert
+ * — sites that don't need to record a per-order timestamp on success.
+ *
+ * The order-bound senders below (`sendOrderConfirmationEmail`,
+ * `sendDeliveryEmail`) use `sendAndRecordOrderEmail` instead, which adds
+ * the post-send DB-update dance.
+ */
+async function sendTransactionalEmail(args: {
+  to: string
+  subject: string
+  // Deferred so the template render only runs when the gate has passed —
+  // callers that build expensive payloads should not pay for them when
+  // email is disabled.
+  build: () => { html?: string; text: string }
+  logTag: string
+}): Promise<void> {
+  if (!isEmailEnabled()) return
+  try {
+    const { html, text } = args.build()
+    const client = getEmailClient()
+    await client.emails.send({
+      from: requireEnv("EMAIL_FROM"),
+      to: args.to,
+      subject: args.subject,
+      html,
+      text,
+    })
+  } catch (err) {
+    console.error(`Failed to send ${args.logTag}:`, err)
+  }
+}
+
+/**
+ * Order-bound transactional email with post-send DB updates:
+ *   - On success: stamp `sentAtColumn` (with `.is(sentAtColumn, null)` guard
+ *     so concurrent retries / cron passes don't double-write).
+ *   - On send failure: if `errorColumn` is provided, record `String(err)`
+ *     there (with the same `.is(sentAtColumn, null)` guard so a stale
+ *     error doesn't clobber a concurrent success).
+ *
+ * Fire-and-forget: this function awaits the send-trigger but the post-send
+ * DB writes happen asynchronously through `.then` / `.catch` so callers
+ * don't pay request-time latency for the audit columns.
+ */
+async function sendAndRecordOrderEmail(args: {
+  order: Record<string, unknown>
+  subject: string
+  text: string
+  html: string
+  sentAtColumn: string
+  errorColumn?: string
+  // Used in the catch-side log message (e.g., "Failed to send confirmation
+  // email for order X"). Kept as a separate arg from `sentAtColumn` so the
+  // log reads naturally regardless of the column name.
+  logKind: string
+}): Promise<void> {
+  const orderId = args.order.id as string
+  const client = getEmailClient()
+  client.emails.send({
+    from: requireEnv("EMAIL_FROM"),
+    to: args.order.email as string,
+    subject: args.subject,
+    html: args.html,
+    text: args.text,
+  }).then(async () => {
+    try {
+      const supabase = await createClient()
+      const update: Record<string, unknown> = { [args.sentAtColumn]: new Date().toISOString() }
+      if (args.errorColumn) update[args.errorColumn] = null
+      const { error: tsError } = await supabase
+        .from("orders")
+        .update(update)
+        .eq("id", orderId)
+        .is(args.sentAtColumn, null)
+      if (tsError) {
+        console.error(`Failed to record ${args.logKind} email timestamp for order ${orderId}:`, tsError)
+      }
+    } catch (err) {
+      console.error(`Failed to record ${args.logKind} email timestamp for order ${orderId}:`, err)
+    }
+  }).catch(async (err) => {
+    console.error(`Failed to send ${args.logKind} email for order ${orderId}:`, err)
+    if (args.errorColumn) {
+      try {
+        const supabase = await createClient()
+        await supabase
+          .from("orders")
+          .update({ [args.errorColumn]: String(err) })
+          .eq("id", orderId)
+          .is(args.sentAtColumn, null)
+      } catch (dbErr) {
+        console.error(`Failed to record ${args.logKind} email error for order ${orderId}:`, dbErr)
+      }
+    }
+  })
+}
+
+/**
  * Send order confirmation email to the customer.
  * Sets order_confirmation_sent_at on success.
  * Fire-and-forget — logs errors but never throws.
@@ -51,11 +151,9 @@ export async function sendOrderConfirmationEmail(order: Record<string, unknown>)
     const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
     if (!orderItems) return
 
-    const resend = getEmailClient()
-
     const subtotal = orderItems.reduce(
       (sum, item) => sum + item.priceInCents * item.quantity,
-      0
+      0,
     )
 
     const { html, text } = buildOrderConfirmationEmail({
@@ -73,30 +171,13 @@ export async function sendOrderConfirmationEmail(order: Record<string, unknown>)
       stripeReceiptUrl: (order.stripe_receipt_url as string) || null,
     })
 
-    resend.emails.send({
-      from: requireEnv("EMAIL_FROM"),
-      to: order.email as string,
+    await sendAndRecordOrderEmail({
+      order,
       subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
       html,
       text,
-    }).then(async () => {
-      // Record that the confirmation email was sent. Idempotency guard:
-      // .is("order_confirmation_sent_at", null) — first writer wins, retries no-op.
-      try {
-        const supabase = await createClient()
-        const { error: tsError } = await supabase
-          .from("orders")
-          .update({ order_confirmation_sent_at: new Date().toISOString() })
-          .eq("id", order.id as string)
-          .is("order_confirmation_sent_at", null)
-        if (tsError) {
-          console.error(`Failed to record confirmation email timestamp for order ${order.id}:`, tsError)
-        }
-      } catch (err) {
-        console.error(`Failed to record confirmation email timestamp for order ${order.id}:`, err)
-      }
-    }).catch((err) => {
-      console.error(`Failed to send confirmation email for order ${order.id}:`, err)
+      sentAtColumn: "order_confirmation_sent_at",
+      logKind: "confirmation",
     })
   } catch (err) {
     console.error(`Failed to build confirmation email for order ${order.id}:`, err)
@@ -124,51 +205,20 @@ export async function sendDeliveryEmail(
     const orderItems = await fetchOrderItemsForEmail(supabase, order.id as string)
     if (!orderItems) return
 
-    const resend = getEmailClient()
-
     const { html, text } = buildDeliveryEmail({
       orderId: order.id as string,
       firstName: order.first_name as string,
       items: orderItems,
     })
 
-    resend.emails.send({
-      from: requireEnv("EMAIL_FROM"),
-      to: order.email as string,
+    await sendAndRecordOrderEmail({
+      order,
       subject: `Поръчка #${(order.id as string).slice(0, 8)} - Доставена`,
       html,
       text,
-    }).then(async () => {
-      // Idempotency guard: .is("delivery_email_sent_at", null) — overlapping
-      // cron runs or retries cannot double-write the success timestamp.
-      try {
-        const supabase = await createClient()
-        const { error: tsError } = await supabase
-          .from("orders")
-          .update({ delivery_email_sent_at: new Date().toISOString(), delivery_email_last_error: null })
-          .eq("id", order.id as string)
-          .is("delivery_email_sent_at", null)
-        if (tsError) {
-          console.error(`Failed to record delivery email timestamp for order ${order.id}:`, tsError)
-        }
-      } catch (err) {
-        console.error(`Failed to record delivery email timestamp for order ${order.id}:`, err)
-      }
-    }).catch(async (err) => {
-      console.error(`Failed to send delivery email for order ${order.id}:`, err)
-      // Only record the error if success hasn't been recorded concurrently —
-      // avoids overwriting a successful send's state with an error from a
-      // stale attempt.
-      try {
-        const supabase = await createClient()
-        await supabase
-          .from("orders")
-          .update({ delivery_email_last_error: String(err) })
-          .eq("id", order.id as string)
-          .is("delivery_email_sent_at", null)
-      } catch (dbErr) {
-        console.error(`Failed to record delivery email error for order ${order.id}:`, dbErr)
-      }
+      sentAtColumn: "delivery_email_sent_at",
+      errorColumn: "delivery_email_last_error",
+      logKind: "delivery",
     })
   } catch (err) {
     console.error(`Failed to build delivery email for order ${order.id}:`, err)
@@ -191,29 +241,23 @@ export async function notifyAdminNewOrder(order: Record<string, unknown>, paymen
   const logisticsPartner = (order.logistics_partner as string | null) ?? ""
   const adminUrl = `${getBaseUrl()}/admin/orders/${orderId}`
 
-  const { html, text } = buildAdminNewOrderEmail({
-    orderId,
-    firstName: (order.first_name as string) ?? "",
-    lastName: (order.last_name as string) ?? "",
-    customerEmail: (order.email as string) ?? "",
-    phone: (order.phone as string) ?? "",
-    city: (order.city as string) ?? "",
-    items: orderItems,
-    totalAmount,
-    paymentMethod: paymentMethod === "card" ? "card" : "cod",
-    deliveryLabel: logisticsPartner ? getDeliveryLabel(logisticsPartner) : "—",
-    adminUrl,
-  })
-
-  const resend = getEmailClient()
-  resend.emails.send({
-    from: process.env.EMAIL_FROM || "Egg Origin <onboarding@resend.dev>",
+  await sendTransactionalEmail({
     to: process.env.ADMIN_EMAIL,
     subject: `Нова поръчка #${orderId.slice(0, 8)} — ${formatPrice(totalAmount)}`,
-    html,
-    text,
-  }).catch((err) => {
-    console.error(`Failed to send admin notification for order ${orderId}:`, err)
+    build: () => buildAdminNewOrderEmail({
+      orderId,
+      firstName: (order.first_name as string) ?? "",
+      lastName: (order.last_name as string) ?? "",
+      customerEmail: (order.email as string) ?? "",
+      phone: (order.phone as string) ?? "",
+      city: (order.city as string) ?? "",
+      items: orderItems,
+      totalAmount,
+      paymentMethod: paymentMethod === "card" ? "card" : "cod",
+      deliveryLabel: logisticsPartner ? getDeliveryLabel(logisticsPartner) : "—",
+      adminUrl,
+    }),
+    logTag: `admin notification for order ${orderId}`,
   })
 }
 
@@ -226,23 +270,15 @@ export async function sendWithdrawalReceivedEmail(
   order: Record<string, unknown>,
   data: { withdrawalRef: string; customerEmail: string },
 ): Promise<void> {
-  if (!isEmailEnabled()) return
-  try {
-    const resend = getEmailClient()
-    const { html, text } = buildWithdrawalReceivedEmail({
+  await sendTransactionalEmail({
+    to: data.customerEmail,
+    subject: `Получихме заявката Ви за връщане ${data.withdrawalRef}`,
+    build: () => buildWithdrawalReceivedEmail({
       orderId: order.id as string,
       withdrawalRef: data.withdrawalRef,
-    })
-    await resend.emails.send({
-      from: requireEnv("EMAIL_FROM"),
-      to: data.customerEmail,
-      subject: `Получихме заявката Ви за връщане ${data.withdrawalRef}`,
-      html,
-      text,
-    })
-  } catch (err) {
-    console.error(`Failed to send withdrawal-received email for ${data.withdrawalRef}:`, err)
-  }
+    }),
+    logTag: `withdrawal-received email for ${data.withdrawalRef}`,
+  })
 }
 
 export async function sendWithdrawalApprovedEmail(data: {
@@ -251,24 +287,16 @@ export async function sendWithdrawalApprovedEmail(data: {
   withdrawalRef: string
   returnRequired: boolean
 }): Promise<void> {
-  if (!isEmailEnabled()) return
-  try {
-    const resend = getEmailClient()
-    const { html, text } = buildWithdrawalApprovedEmail({
+  await sendTransactionalEmail({
+    to: data.customerEmail,
+    subject: `Заявката Ви ${data.withdrawalRef} е одобрена`,
+    build: () => buildWithdrawalApprovedEmail({
       orderId: data.orderId,
       withdrawalRef: data.withdrawalRef,
       returnRequired: data.returnRequired,
-    })
-    await resend.emails.send({
-      from: requireEnv("EMAIL_FROM"),
-      to: data.customerEmail,
-      subject: `Заявката Ви ${data.withdrawalRef} е одобрена`,
-      html,
-      text,
-    })
-  } catch (err) {
-    console.error(`Failed to send withdrawal-approved email for ${data.withdrawalRef}:`, err)
-  }
+    }),
+    logTag: `withdrawal-approved email for ${data.withdrawalRef}`,
+  })
 }
 
 export async function sendWithdrawalRejectedEmail(data: {
@@ -277,22 +305,14 @@ export async function sendWithdrawalRejectedEmail(data: {
   withdrawalRef: string
   rejectionReason: string
 }): Promise<void> {
-  if (!isEmailEnabled()) return
-  try {
-    const resend = getEmailClient()
-    const { html, text } = buildWithdrawalRejectedEmail({
+  await sendTransactionalEmail({
+    to: data.customerEmail,
+    subject: `Заявката Ви ${data.withdrawalRef} не е одобрена`,
+    build: () => buildWithdrawalRejectedEmail({
       orderId: data.orderId,
       withdrawalRef: data.withdrawalRef,
       rejectionReason: data.rejectionReason,
-    })
-    await resend.emails.send({
-      from: requireEnv("EMAIL_FROM"),
-      to: data.customerEmail,
-      subject: `Заявката Ви ${data.withdrawalRef} не е одобрена`,
-      html,
-      text,
-    })
-  } catch (err) {
-    console.error(`Failed to send withdrawal-rejected email for ${data.withdrawalRef}:`, err)
-  }
+    }),
+    logTag: `withdrawal-rejected email for ${data.withdrawalRef}`,
+  })
 }
