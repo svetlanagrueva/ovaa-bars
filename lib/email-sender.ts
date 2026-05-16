@@ -12,6 +12,7 @@ import { getDeliveryLabel } from "@/lib/delivery"
 import { getBaseUrl } from "@/lib/constants"
 import { createClient } from "@/lib/supabase/server"
 import { requireEnv } from "@/lib/env"
+import { formatOrderId } from "@/lib/orders"
 
 /**
  * Load order items in the shape email templates expect.
@@ -173,7 +174,7 @@ export async function sendOrderConfirmationEmail(order: Record<string, unknown>)
 
     await sendAndRecordOrderEmail({
       order,
-      subject: `Поръчка #${(order.id as string).slice(0, 8)} - Потвърждение`,
+      subject: `Поръчка ${formatOrderId(order.id as string)} - Потвърждение`,
       html,
       text,
       sentAtColumn: "order_confirmation_sent_at",
@@ -213,7 +214,7 @@ export async function sendDeliveryEmail(
 
     await sendAndRecordOrderEmail({
       order,
-      subject: `Поръчка #${(order.id as string).slice(0, 8)} - Доставена`,
+      subject: `Поръчка ${formatOrderId(order.id as string)} - Доставена`,
       html,
       text,
       sentAtColumn: "delivery_email_sent_at",
@@ -243,7 +244,7 @@ export async function notifyAdminNewOrder(order: Record<string, unknown>, paymen
 
   await sendTransactionalEmail({
     to: process.env.ADMIN_EMAIL,
-    subject: `Нова поръчка #${orderId.slice(0, 8)} — ${formatPrice(totalAmount)}`,
+    subject: `Нова поръчка ${formatOrderId(orderId)} — ${formatPrice(totalAmount)}`,
     build: () => buildAdminNewOrderEmail({
       orderId,
       firstName: (order.first_name as string) ?? "",

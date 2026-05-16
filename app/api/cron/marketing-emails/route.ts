@@ -6,6 +6,7 @@ import { buildReviewRequestEmail, buildCrossSellEmail } from "@/lib/email-templa
 import { buildUnsubscribeUrl } from "@/lib/unsubscribe"
 import { sanitizeError } from "@/lib/logger"
 import { requireEnv } from "@/lib/env"
+import { formatOrderId } from "@/lib/orders"
 
 export const maxDuration = 60
 
@@ -22,8 +23,6 @@ interface ClaimedJob {
 }
 
 function buildEmailForJob(job: ClaimedJob, unsubscribeUrl: string): { html: string; text: string; subject: string } | null {
-  const shortId = job.out_order_id.slice(0, 8)
-
   if (job.out_email_type === "review_request") {
     const { html, text } = buildReviewRequestEmail({
       orderId: job.out_order_id,
@@ -31,7 +30,7 @@ function buildEmailForJob(job: ClaimedJob, unsubscribeUrl: string): { html: stri
       items: job.out_items,
       unsubscribeUrl,
     })
-    return { html, text, subject: `Как Ви се стори поръчка #${shortId}?` }
+    return { html, text, subject: `Как Ви се стори поръчка ${formatOrderId(job.out_order_id)}?` }
   }
 
   if (job.out_email_type === "cross_sell") {

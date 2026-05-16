@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { useCartStore } from "@/lib/store/cart"
 import { confirmOrder } from "@/app/actions/stripe"
 import { trackPurchase } from "@/lib/meta-pixel"
+import { ORDER_ID_REGEX, formatOrderId } from "@/lib/orders"
 
 export default function CheckoutSuccessPage() {
   const searchParams = useSearchParams()
@@ -18,9 +19,8 @@ export default function CheckoutSuccessPage() {
 
   useEffect(() => {
     let cancelled = false
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     const confirm = async () => {
-      if (!orderId || !uuidRegex.test(orderId)) {
+      if (!orderId || !ORDER_ID_REGEX.test(orderId)) {
         setStatus("error")
         return
       }
@@ -112,7 +112,7 @@ export default function CheckoutSuccessPage() {
                 <span>Номер на поръчка:</span>
               </div>
               <p className="mt-2 font-mono text-lg font-semibold text-foreground">
-                #{orderId.slice(0, 8).toUpperCase()}
+                {formatOrderId(orderId)}
               </p>
             </CardContent>
           </Card>

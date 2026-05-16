@@ -12,7 +12,7 @@ import { headers } from "next/headers"
 import { createShipment as createSpeedyShipment } from "@/lib/speedy"
 import { createShipment as createEcontShipment } from "@/lib/econt"
 import { confirmDeliveryForOrder } from "@/lib/delivery-confirmation"
-import { hasCustomerPaid } from "@/lib/orders"
+import { hasCustomerPaid, ORDER_ID_REGEX, formatOrderId } from "@/lib/orders"
 import { requireEnv } from "@/lib/env"
 import { stripe } from "@/lib/stripe"
 import { sanitizeError } from "@/lib/logger"
@@ -371,10 +371,13 @@ function applyOrderFilters(query: any, params?: OrderQueryParams) {
   const search = params?.search?.trim().toLowerCase()
   if (search) {
     const escaped = escapeIlike(search)
-    const uuidPrefix = /^#?[0-9a-f-]+$/i.test(search)
-    if (uuidPrefix) {
-      const cleanId = search.replace(/^#/, "")
-      query = query.ilike("id", `${cleanId}%`)
+    // Order IDs are 10-char lowercase hex. Customers see them uppercased
+    // with a '#' prefix on the success page and in emails — accept either
+    // form. Exact-equality is the only useful match: anything shorter is
+    // either a typo or a partial paste, and we'd rather show "no match"
+    // than a list of look-alikes.
+    if (/^#?[0-9a-f]{10}$/i.test(search)) {
+      query = query.eq("id", search.replace(/^#/, ""))
     } else if (search.includes("@")) {
       query = query.ilike("email", `%${escaped}%`)
     } else {
@@ -627,12 +630,13 @@ function applyInvoiceFilters(query: any, params?: InvoiceQueryParams) {
   const search = params?.search?.trim().toLowerCase()
   if (search) {
     const escaped = escapeIlike(search)
-    // Invoice-number search; customer-name/email/company-name search needs a
-    // joined-orders ilike which PostgREST doesn't expose easily, so fall back
-    // to invoice_number search only when input is digits, and to company_name
-    // (on invoices itself) otherwise. For richer search the admin UI can add
-    // a separate filter, or we can switch to a Postgres full-text view.
-    if (/^[a-zA-Z0-9-]+$/.test(search)) {
+    // 10-char order ID takes precedence (paste from email / success page).
+    // Otherwise: invoice number search when input looks alphanumeric,
+    // company_name otherwise. Customer-name/email search needs a joined-
+    // orders ilike which PostgREST doesn't expose easily.
+    if (/^#?[0-9a-f]{10}$/i.test(search)) {
+      query = query.eq("order_id", search.replace(/^#/, ""))
+    } else if (/^[a-zA-Z0-9-]+$/.test(search)) {
       query = query.ilike("invoice_number", `%${escaped}%`)
     } else {
       query = query.ilike("company_name", `%${escaped}%`)
@@ -731,7 +735,7 @@ export async function getAllInvoices(params?: InvoiceQueryParams): Promise<Invoi
 export async function getOrder(orderId: string): Promise<OrderDetail> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) {
+  if (!ORDER_ID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -901,7 +905,7 @@ export async function updateOrderStatus(
 ) {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) {
+  if (!ORDER_ID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -1049,7 +1053,7 @@ export interface ShipmentDisplayInfo {
 export async function getShipmentDefaults(orderId: string): Promise<{ form: ShipmentFormData; display: ShipmentDisplayInfo }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -1107,7 +1111,7 @@ export async function getShipmentDefaults(orderId: string): Promise<{ form: Ship
 export async function generateShipment(orderId: string, form: ShipmentFormData): Promise<{ trackingNumber: string }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
   if (!form.weight || form.weight < 0.1 || form.weight > 50) throw new Error("Теглото трябва да е между 0.1 и 50 кг")
   if (!form.recipientName.trim()) throw new Error("Името на получателя е задължително")
   if (!form.recipientPhone.trim()) throw new Error("Телефонът на получателя е задължителен")
@@ -1265,7 +1269,7 @@ export async function cancelShipment(
   reason: string,
 ): Promise<{ success: true; previousTrackingNumber: string }> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const trimmed = reason?.trim() ?? ""
   if (trimmed.length < 10) throw new Error("Причината трябва да е поне 10 символа")
@@ -1324,7 +1328,7 @@ export async function cancelShipment(
 export async function addAdminNote(orderId: string, note: string) {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const trimmed = note.trim()
   if (!trimmed) throw new Error("Бележката е празна")
@@ -1436,7 +1440,7 @@ export async function recordCodSettlement(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   if (data.courierPppRef && data.courierPppRef.length > 100) {
     throw new Error("ППП референцията е твърде дълга")
@@ -1518,7 +1522,7 @@ export async function recordCodSettlement(
 export async function markCodConfirmed(orderId: string): Promise<{ success: true }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
 
@@ -1600,7 +1604,7 @@ export async function updateOrderContact(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   // Per-field validation. Only fields that were actually provided are
   // validated; undefined values pass through untouched. The client is
@@ -1745,7 +1749,7 @@ export async function updateOrderDeliveryMethod(
   data: UpdateOrderDeliveryMethodInput,
 ): Promise<{ success: true; fromPartner: string | null; toPartner: LogisticsPartner }> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const validPartners: LogisticsPartner[] = ["econt-office", "speedy-office", "speedy-address"]
   if (!validPartners.includes(data.partner)) {
@@ -1942,7 +1946,7 @@ export async function updateOrderQuantity(
 ): Promise<{ success: true; newTotalCents: number }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   if (!sku || typeof sku !== "string") throw new Error("SKU е задължителен")
   const validSkus = PRODUCTS.map((p) => p.sku)
@@ -2071,7 +2075,7 @@ export async function addOrderItem(
   quantity: number,
 ): Promise<{ success: true; newTotalCents: number; unitPriceCents: number }> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
   if (!sku || !PRODUCTS.find((p) => p.sku === sku)) throw new Error("Невалиден SKU")
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
     throw new Error("Количеството трябва да е цяло число между 1 и 100")
@@ -2138,7 +2142,7 @@ export async function removeOrderItem(
   reason?: string,
 ): Promise<{ success: true; newTotalCents: number; removedQuantity: number }> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
   if (!sku) throw new Error("SKU е задължителен")
 
   const trimmedReason = reason?.trim() ?? ""
@@ -2293,7 +2297,7 @@ const RESEND_SPECS: Record<ResendKind, ResendSpec> = {
 async function resendOrderEmail(orderId: string, kind: ResendKind): Promise<{ success: true }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Invalid order ID")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Invalid order ID")
 
   const supabase = await createClient()
   const { data: order, error } = await supabase
@@ -2403,7 +2407,7 @@ export async function recordRefund(
 ): Promise<{ success: true; refundId: string; creditNoteId: string | null }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
   if (!UUID_REGEX.test(data.clientIdempotencyKey)) {
     throw new Error("Невалиден idempotency key")
   }
@@ -3013,7 +3017,7 @@ export async function recordOrderOutcome(
 ): Promise<{ success: true }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   if (!OUTCOME_TYPES.includes(data.outcomeType)) {
     throw new Error("Невалиден тип събитие")
@@ -3129,7 +3133,7 @@ export async function recordComplaint(
 ): Promise<{ success: true; complaintRef: string }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   // Validate defect description
   const trimmedDefect = data.defectDescription?.trim()
@@ -3280,7 +3284,7 @@ export async function getComplaints(
 export async function getOrderComplaints(orderId: string): Promise<Complaint[]> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -3316,7 +3320,7 @@ export async function createWithdrawal(
 ): Promise<{ success: true; withdrawalId: string; withdrawalRef: string }> {
   await requireAdmin()
 
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const requestedVia = data.requestedVia
   if (!["email", "phone", "admin"].includes(requestedVia)) {
@@ -3656,7 +3660,7 @@ export async function getWithdrawal(withdrawalId: string): Promise<WithdrawalWit
 
 export async function getOrderWithdrawals(orderId: string): Promise<Withdrawal[]> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -3701,7 +3705,7 @@ async function sendShippingEmail(order: Record<string, unknown>, trackingNumber:
   resend.emails.send({
     from: requireEnv("EMAIL_FROM"),
     to: order.email as string,
-    subject: `Поръчка #${(order.id as string).slice(0, 8)} - Изпратена`,
+    subject: `Поръчка ${formatOrderId(order.id as string)} - Изпратена`,
     text: `
 Здравейте ${order.first_name},
 
@@ -4159,6 +4163,9 @@ export async function getInventoryStatus(): Promise<{ current: InventoryStatus[]
   }
 }
 
+// UUID format for refunds, withdrawals, batches, invoices, sales, promo codes,
+// idempotency keys. Order IDs have their own narrower format — see
+// ORDER_ID_REGEX in @/lib/orders.
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function addInventoryBatch(data: {
@@ -4346,30 +4353,17 @@ export async function recordStockMovement(data: {
   // Validate orderId — allowed on return_in (sellable return) and damaged
   // (damaged return). On other movement types, order_id wouldn't have
   // meaningful semantics under the current reference_type rules.
-  const shortIdRegex = /^[0-9a-f]{8}$/i
-  let resolvedOrderId: string | undefined = data.orderId?.trim() || undefined
+  // Accept the form admin sees in the UI (`#A1B2C3D4E5`) by stripping the
+  // leading `#` and lowercasing before the regex test.
+  let resolvedOrderId: string | undefined = data.orderId?.trim().replace(/^#/, "").toLowerCase() || undefined
   if (resolvedOrderId && data.type !== "return_in" && data.type !== "damaged") {
     throw new Error("Поръчка може да се свърже само при връщане или брак след връщане")
   }
-  if (resolvedOrderId && !UUID_REGEX.test(resolvedOrderId) && !shortIdRegex.test(resolvedOrderId)) {
-    throw new Error("Невалиден формат на поръчка (очаква се UUID или 8-знаков префикс)")
+  if (resolvedOrderId && !ORDER_ID_REGEX.test(resolvedOrderId)) {
+    throw new Error("Невалиден формат на поръчка (очаква се 10 hex знака)")
   }
 
   const supabase = await createClient()
-
-  if (resolvedOrderId && shortIdRegex.test(resolvedOrderId)) {
-    const prefix = resolvedOrderId.toLowerCase()
-    const { data: matches, error: lookupErr } = await supabase
-      .from("orders")
-      .select("id")
-      .gte("id", `${prefix}-0000-0000-0000-000000000000`)
-      .lte("id", `${prefix}-ffff-ffff-ffff-ffffffffffff`)
-      .limit(2)
-    if (lookupErr) throw new Error("Грешка при търсене на поръчка")
-    if (!matches || matches.length === 0) throw new Error("Поръчка с този ID не е намерена")
-    if (matches.length > 1) throw new Error("Префиксът съответства на повече от една поръчка — въведете пълния ID")
-    resolvedOrderId = matches[0].id as string
-  }
 
   // Order-scoped return cap: when the movement is tied to a specific
   // customer order return (order_id + reference_type='return' +
@@ -4511,7 +4505,6 @@ export async function recordStockMovement(data: {
 
 export interface RecallCandidate {
   orderId: string
-  shortId: string
   createdAt: string
   shippedAt: string | null
   deliveredAt: string | null
@@ -4618,7 +4611,6 @@ export async function getRecallCandidates(
     const o = Array.isArray(row.orders) ? row.orders[0] : row.orders
     return {
       orderId: o.id,
-      shortId: o.id.slice(0, 8),
       createdAt: o.created_at,
       shippedAt: o.shipped_at,
       deliveredAt: o.delivered_at,
@@ -4777,7 +4769,7 @@ export interface SaveBatchAllocationRow {
 
 export async function getBatchAllocation(orderId: string): Promise<BatchAllocationLine[]> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
 
@@ -4869,7 +4861,7 @@ export interface BatchAllocationView {
 // The client computes the FEFO seed using lib/batches/fefo.ts.
 export async function getBatchAllocationView(orderId: string): Promise<BatchAllocationView> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
 
@@ -4958,7 +4950,7 @@ export async function getBatchAllocationView(orderId: string): Promise<BatchAllo
 
 export async function autoAllocateFefo(orderId: string): Promise<FefoAutoSuggestion[]> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
 
@@ -5040,7 +5032,7 @@ export async function saveBatchAllocation(
   rows: SaveBatchAllocationRow[],
 ): Promise<{ success: true; saved: number }> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
   if (!Array.isArray(rows) || rows.length === 0) {
     throw new Error("Не са предоставени разпределения")
   }
@@ -5297,7 +5289,7 @@ export async function saveBatchAllocation(
 
 export async function clearBatchAllocation(orderId: string): Promise<{ success: true; cleared: number }> {
   await requireAdmin()
-  if (!UUID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
+  if (!ORDER_ID_REGEX.test(orderId)) throw new Error("Невалиден формат на поръчка")
 
   const supabase = await createClient()
 

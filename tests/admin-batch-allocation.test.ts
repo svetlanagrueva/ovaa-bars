@@ -32,7 +32,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(() => Promise.resolve(mockSupabase)),
 }))
 
-const VALID_ORDER_ID = "11111111-1111-1111-1111-111111111111"
+const VALID_ORDER_ID = "1111111111"
 const BATCH_A = "22222222-2222-2222-2222-222222222222"
 const BATCH_B = "33333333-3333-3333-3333-333333333333"
 const TODAY = new Date().toISOString().slice(0, 10)

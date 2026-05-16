@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Search, Download } from "lucide-react"
 import { getInvoices, getAllInvoices, type InvoiceSummary } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
+import { formatOrderId } from "@/lib/orders"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -77,7 +78,7 @@ export default function AdminInvoicesPage() {
         inv.company_name || "",
         inv.eik || "",
         (inv.order_total_amount / 100).toFixed(2),
-        inv.order_id.slice(0, 8),
+        inv.order_id.toUpperCase(),
       ])
 
       const csvContent = "\uFEFF" + [headers, ...rows]
@@ -217,7 +218,7 @@ export default function AdminInvoicesPage() {
                       href={`/admin/orders/${inv.order_id}`}
                       className="font-mono text-sm text-blue-600 hover:underline"
                     >
-                      #{inv.order_id.slice(0, 8)}
+                      {formatOrderId(inv.order_id)}
                     </Link>
                   </TableCell>
                 </TableRow>

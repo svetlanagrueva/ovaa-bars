@@ -8,6 +8,7 @@ import {
   type Withdrawal,
   type Complaint,
 } from "@/app/actions/admin"
+import { formatOrderId } from "@/lib/orders"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -202,7 +203,7 @@ export default function AdminReturnsPage() {
                         href={`/admin/orders/${r.order_id}`}
                         className="font-mono text-sm text-blue-600 hover:underline"
                       >
-                        #{r.order_id.slice(0, 8)}
+                        {formatOrderId(r.order_id)}
                       </Link>
                     </TableCell>
                     <TableCell className="text-sm">

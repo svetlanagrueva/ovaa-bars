@@ -35,6 +35,27 @@
 - `revalidateTag` must be mocked via `vi.mock("next/cache", ...)`
 - Test helpers: `tests/helpers/supabase-mock.ts` — `createSupabaseMock()`, `resetSupabaseMock()`, `mockThenableResult()`, `createUpdateChain()`. Use `mockThenableResult` when the chain ends in `.select().single()`.
 
+## Order ID format
+**`orders.id` is `text` (10-char lowercase hex), not `uuid`.** Only orders — every other id column in the schema stays `uuid`.
+
+**Why**:
+- The customer-visible ID (success page, confirmation email, courier label) IS the stored ID — no slice-and-uppercase divergence between display and DB.
+- Admin search bar accepts the literal `#A1B2C3D4E5` a customer reads aloud and resolves with an indexed equality, not an ilike prefix scan.
+- Shorter URLs (`/admin/orders/a1b2c3d4e5`) — readable, type-able for cross-team support handoffs.
+
+**Mechanics**:
+- DEFAULT `lower(encode(gen_random_bytes(5), 'hex'))`; CHECK `^[0-9a-f]{10}$`. Stored lowercase; **uppercased only at the display boundary** via `formatOrderId(id)` from `lib/orders.ts`.
+- 16^10 ≈ 1.1T values → birthday collision at 10k orders is ~10⁻⁸. The three INSERT paths (`createCheckoutSession`, `createCODOrder`, and any future order-mint path) wrap the insert in `insertOrderWithRetry` in `app/actions/stripe.ts` — up to 3 retries on Postgres `23505` (unique_violation) with a fresh default; any other error throws immediately. Cheap belt-and-suspenders.
+- Validation regex: `ORDER_ID_REGEX = /^[0-9a-f]{10}$/i` exported from `lib/orders.ts`. **Don't reuse `UUID_REGEX` on order IDs** — it lives in `app/actions/admin.ts` for the other entity IDs (refunds, withdrawals, batches, invoices, sales, promo codes, idempotency keys).
+- 8 FK columns inherit the type swap: `order_items.order_id`, `inventory_log.order_id`, `order_audit_events.order_id`, `refunds.order_id`, `withdrawals.order_id`, `invoices.order_id`, `marketing_email_log.order_id`, `complaints.order_id` — all `text`.
+- RPC parameter type is `text` everywhere: `reserve_inventory`, `restore_inventory`, `record_order_outcome`, `force_status_override`, `add_admin_note`, `edit_order_quantity`, `add_order_item`, `remove_order_item`, `confirm_delivery`, `save_batch_allocation`; return-table columns `affected_orders_for_batch.order_id` and `claim_marketing_emails.out_order_id` are `text` as well.
+
+**When writing tests**: use `validOrderId` (10-char hex) from `tests/helpers/fixtures.ts` for order IDs; `validUUID` stays a real UUID for refund/withdrawal/batch/invoice/sale/promo/idempotency columns. Mixing them silently fails the validators.
+
+**When emitting display strings**: use `formatOrderId(id)` from `lib/orders.ts` — it's the single source of truth for the `#XXXXXXXXXX` format. JSX, email subjects, email bodies, webhook alerts all go through this helper. Don't inline `#${id.toUpperCase()}`.
+
+**When validating order-id input from outside (URL params, Stripe metadata, search box)**: `ORDER_ID_REGEX.test(orderId)` after `.trim().toLowerCase().replace(/^#/, "")` if the input might be uppercased or prefixed.
+
 ## Architecture: Three/Four-Layer Separation
 The most important pattern in the codebase. Refunds, returns, and complaints are NOT bundled into a single "process a return" action. They are decomposed into independently-callable layers:
 

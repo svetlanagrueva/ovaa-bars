@@ -72,7 +72,7 @@ describe("meta-pixel event helpers (disabled)", () => {
       { sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 },
     ])
     trackPurchase({
-      orderId: "00000000-0000-0000-0000-000000000001",
+      orderId: "0000000001",
       totalCents: 2570,
       items: [{ sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 }],
     })
@@ -142,7 +142,7 @@ describe("meta-pixel event helpers (enabled)", () => {
 
   it("Purchase passes eventID for dedupe with CAPI", () => {
     trackPurchase({
-      orderId: "00000000-0000-0000-0000-000000000001",
+      orderId: "0000000001",
       totalCents: 2570,
       items: [{ sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 }],
     })
@@ -155,13 +155,13 @@ describe("meta-pixel event helpers (enabled)", () => {
         value: 25.7,
         num_items: 1,
       }),
-      { eventID: "purchase-00000000-0000-0000-0000-000000000001" },
+      { eventID: "purchase-0000000001" },
     )
   })
 
   it("Purchase deduplicates by orderId via localStorage", () => {
     const params = {
-      orderId: "00000000-0000-0000-0000-000000000001",
+      orderId: "0000000001",
       totalCents: 2570,
       items: [{ sku: "EGO-DC-12", quantity: 1, unitPriceCents: 2570 }],
     }
@@ -171,7 +171,7 @@ describe("meta-pixel event helpers (enabled)", () => {
   })
 
   it("Purchase marker is written before fbq (at-most-once)", () => {
-    const orderId = "00000000-0000-0000-0000-000000000001"
+    const orderId = "0000000001"
     fbq.mockImplementationOnce(() => {
       // localStorage marker must already exist by the time fbq is called
       expect(localStorage.getItem("eo-purchase-fired:" + orderId)).toBe("1")
@@ -200,7 +200,7 @@ describe("trackPurchase — fbq-not-ready race handling", () => {
   })
 
   it("does NOT write the marker when fbq is missing (preserves retry)", () => {
-    const orderId = "00000000-0000-0000-0000-000000000002"
+    const orderId = "0000000002"
     trackPurchase({
       orderId,
       totalCents: 2570,
@@ -211,7 +211,7 @@ describe("trackPurchase — fbq-not-ready race handling", () => {
   })
 
   it("retries and fires once fbq becomes available", () => {
-    const orderId = "00000000-0000-0000-0000-000000000003"
+    const orderId = "0000000003"
     trackPurchase({
       orderId,
       totalCents: 2570,
@@ -235,7 +235,7 @@ describe("trackPurchase — fbq-not-ready race handling", () => {
   })
 
   it("gives up after the retry window without writing the marker", () => {
-    const orderId = "00000000-0000-0000-0000-000000000004"
+    const orderId = "0000000004"
     trackPurchase({
       orderId,
       totalCents: 2570,

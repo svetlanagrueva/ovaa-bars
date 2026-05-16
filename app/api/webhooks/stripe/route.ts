@@ -6,9 +6,8 @@ import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sen
 import { sanitizeError } from "@/lib/logger"
 import { requireEnv } from "@/lib/env"
 import { autoCreateCreditNoteRow } from "@/lib/credit-note"
+import { ORDER_ID_REGEX, formatOrderId } from "@/lib/orders"
 import type Stripe from "stripe"
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Fire-and-forget admin alert for events that need operator attention
 // (refunds issued outside the admin UI, disputes, etc.).
@@ -157,7 +156,7 @@ async function upsertRefundFromStripe(refund: Stripe.Refund): Promise<void> {
   }
 
   alertAdmin(
-    `Stripe refund recorded — order ${String(order.id).slice(0, 8)}`,
+    `Stripe refund recorded — order ${formatOrderId(String(order.id))}`,
     `A refund of ${(refund.amount / 100).toFixed(2)} EUR was recorded for order ${order.id}.\n` +
       `Stripe refund: ${refund.id}\n` +
       `Reason (gateway): ${refund.reason ?? "n/a"}\n\n` +
@@ -174,7 +173,7 @@ async function alertRefundFailed(refund: Stripe.Refund): Promise<void> {
   const order = await findOrderForRefund(refund)
   if (!order) return
   alertAdmin(
-    `⚠ Stripe refund FAILED — order ${String(order.id).slice(0, 8)}`,
+    `⚠ Stripe refund FAILED — order ${formatOrderId(String(order.id))}`,
     `A Stripe refund failed for order ${order.id}. ACTION REQUIRED.\n\n` +
       `Stripe refund: ${refund.id}\n` +
       `Amount: ${(refund.amount / 100).toFixed(2)} EUR\n` +
@@ -192,7 +191,7 @@ async function alertRefundCanceled(refund: Stripe.Refund): Promise<void> {
   const order = await findOrderForRefund(refund)
   if (!order) return
   alertAdmin(
-    `Stripe refund canceled — order ${String(order.id).slice(0, 8)}`,
+    `Stripe refund canceled — order ${formatOrderId(String(order.id))}`,
     `A Stripe refund was canceled for order ${order.id}.\n\n` +
       `Stripe refund: ${refund.id}\n` +
       `Amount: ${(refund.amount / 100).toFixed(2)} EUR\n` +
@@ -220,8 +219,7 @@ export async function POST(request: Request) {
   if (event.type === "checkout.session.expired") {
     const session = event.data.object as Stripe.Checkout.Session
     const orderId = session.metadata?.orderId
-    const uuidRegex = UUID_REGEX
-    if (orderId && uuidRegex.test(orderId)) {
+    if (orderId && ORDER_ID_REGEX.test(orderId)) {
       const supabase = await createClient()
 
       // Atomically claim the order by flipping pending → expired.
@@ -264,8 +262,7 @@ export async function POST(request: Request) {
     }
 
     const orderId = session.metadata?.orderId
-    const uuidRegex = UUID_REGEX
-    if (!orderId || !uuidRegex.test(orderId)) {
+    if (!orderId || !ORDER_ID_REGEX.test(orderId)) {
       console.error("Stripe webhook: missing or invalid orderId in session metadata")
       return NextResponse.json({ error: "Invalid orderId in metadata" }, { status: 400 })
     }
@@ -371,7 +368,7 @@ export async function POST(request: Request) {
     const paymentIntent = event.data.object as Stripe.PaymentIntent
     // Stripe Checkout propagates session metadata to the PaymentIntent.
     const orderId = paymentIntent.metadata?.orderId
-    if (orderId && UUID_REGEX.test(orderId)) {
+    if (orderId && ORDER_ID_REGEX.test(orderId)) {
       const supabase = await createClient()
 
       const { data: claimed } = await supabase
@@ -459,7 +456,7 @@ export async function POST(request: Request) {
         ? new Date(dispute.evidence_details.due_by * 1000).toISOString().slice(0, 10)
         : "unknown"
       alertAdmin(
-        `⚠ Chargeback opened — order ${String(order.id).slice(0, 8)}`,
+        `⚠ Chargeback opened — order ${formatOrderId(String(order.id))}`,
         `A chargeback (dispute) was filed on order ${order.id}.\n\n` +
           `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +
           `Reason: ${dispute.reason}\n` +
@@ -494,7 +491,7 @@ export async function POST(request: Request) {
         console.error(`Failed to record dispute_closed outcome for ${order.id}:`, sanitizeError(outcomeErr))
       }
 
-      const orderShort = String(order.id).slice(0, 8)
+      const orderShort = formatOrderId(String(order.id))
       const amt = (dispute.amount / 100).toFixed(2)
       const disputeUrl = `https://dashboard.stripe.com/disputes/${dispute.id}`
       if (dispute.status === "won") {
@@ -558,7 +555,7 @@ export async function POST(request: Request) {
       }
 
       alertAdmin(
-        `✓ Dispute funds restored — order ${String(order.id).slice(0, 8)}`,
+        `✓ Dispute funds restored — order ${formatOrderId(String(order.id))}`,
         `Stripe has reinstated the held funds from the won dispute on ` +
           `order ${order.id}.\n\n` +
           `Amount: ${(dispute.amount / 100).toFixed(2)} EUR\n` +

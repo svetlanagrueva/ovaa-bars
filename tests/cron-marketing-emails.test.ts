@@ -54,7 +54,7 @@ function makeRequest(authHeader: string | null = `Bearer ${VALID_SECRET}`): Requ
 function fakeJob(overrides: Record<string, unknown> = {}) {
   return {
     out_log_id: 101,
-    out_order_id: "11111111-2222-3333-4444-555555555555",
+    out_order_id: "1122334455",
     out_email: "customer@example.com",
     out_first_name: "Иван",
     out_items: [
@@ -176,7 +176,7 @@ describe("Marketing-emails cron — RPC + send loop", () => {
 
     expect(mockBuildReviewRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderId: "11111111-2222-3333-4444-555555555555",
+        orderId: "1122334455",
         firstName: "Иван",
         unsubscribeUrl: expect.stringContaining("/unsubscribe"),
       }),
@@ -184,7 +184,8 @@ describe("Marketing-emails cron — RPC + send loop", () => {
     expect(mockResendSend).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "customer@example.com",
-        subject: expect.stringContaining("11111111"),
+        // subject contains the 10-char order id uppercased (1122334455 → 1122334455 stays the same).
+        subject: expect.stringContaining("1122334455"),
         html: "<review-request-html />",
       }),
     )
@@ -310,7 +311,7 @@ describe("Marketing-emails cron — RPC + send loop", () => {
 
     expect(mockResendSend).toHaveBeenCalledWith(
       expect.objectContaining({
-        subject: expect.stringMatching(/^Как Ви се стори поръчка #[0-9a-f]{8}\?$/),
+        subject: expect.stringMatching(/^Как Ви се стори поръчка #[0-9A-F]{10}\?$/),
       }),
     )
   })

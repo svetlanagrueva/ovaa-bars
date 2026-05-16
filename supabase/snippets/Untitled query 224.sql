@@ -17,15 +17,11 @@
 begin;
 
 -- ── 1. Inventory: 2 batches per SKU × 5 units = 10 units per SKU ──────
--- Batches receive an explicit `created_at = -30 days` so they predate
--- every order in section 2 (oldest order is -16 days). Otherwise the
--- audit trail would suggest orders happened before any stock arrived.
--- The expired batch is dated -90 days (60-day shelf, then 30 days past
--- expiry) for a realistic timeline.
+-- Batch A: closer expiry (FEFO winner)
+-- Batch B: later expiry
 do $$
 declare
   v_sku text;
-  v_added timestamptz := now() - interval '30 days';
   v_skus text[] := array[
     'EGO-DC-12',   -- Тъмен Шоколад Кутия
     'EGO-WCR-12',  -- Бял Шоколад с Малини Кутия
@@ -34,18 +30,18 @@ declare
 begin
   foreach v_sku in array v_skus loop
     -- Earlier-expiry batch (FEFO picks first)
-    insert into product_batches (sku, batch_number, expiry_date, status, created_by, created_at)
-    values (v_sku, 'SEED-A-' || v_sku, current_date + interval '60 days', 'active', 'seed', v_added);
+    insert into product_batches (sku, batch_number, expiry_date, status, created_by)
+    values (v_sku, 'SEED-A-' || v_sku, current_date + interval '60 days', 'active', 'seed');
 
-    insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by, created_at)
-    values (v_sku, 'batch_in', 5, 'SEED-A-' || v_sku, current_date + interval '60 days', 'seed', v_added);
+    insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by)
+    values (v_sku, 'batch_in', 5, 'SEED-A-' || v_sku, current_date + interval '60 days', 'seed');
 
     -- Later-expiry batch
-    insert into product_batches (sku, batch_number, expiry_date, status, created_by, created_at)
-    values (v_sku, 'SEED-B-' || v_sku, current_date + interval '180 days', 'active', 'seed', v_added);
+    insert into product_batches (sku, batch_number, expiry_date, status, created_by)
+    values (v_sku, 'SEED-B-' || v_sku, current_date + interval '180 days', 'active', 'seed');
 
-    insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by, created_at)
-    values (v_sku, 'batch_in', 5, 'SEED-B-' || v_sku, current_date + interval '180 days', 'seed', v_added);
+    insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by)
+    values (v_sku, 'batch_in', 5, 'SEED-B-' || v_sku, current_date + interval '180 days', 'seed');
   end loop;
 end;
 $$;
@@ -58,25 +54,19 @@ $$;
 -- Expired:     2 units, expired 30 days ago. Hidden from the dropdown
 --              by default; revealed via "Покажи изтекли партиди" + the
 --              red override checkbox + reason ≥ 20 chars.
-insert into product_batches (sku, batch_number, expiry_date, status, created_by, created_at)
-values ('EGO-DC-12', 'SEED-NEAR-EGO-DC-12', current_date + interval '5 days', 'active', 'seed', now() - interval '30 days');
-insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by, created_at)
-values ('EGO-DC-12', 'batch_in', 3, 'SEED-NEAR-EGO-DC-12', current_date + interval '5 days', 'seed', now() - interval '30 days');
+insert into product_batches (sku, batch_number, expiry_date, status, created_by)
+values ('EGO-DC-12', 'SEED-NEAR-EGO-DC-12', current_date + interval '5 days', 'active', 'seed');
+insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by)
+values ('EGO-DC-12', 'batch_in', 3, 'SEED-NEAR-EGO-DC-12', current_date + interval '5 days', 'seed');
 
-insert into product_batches (sku, batch_number, expiry_date, status, created_by, created_at)
-values ('EGO-DC-12', 'SEED-EXPIRED-EGO-DC-12', current_date - interval '30 days', 'active', 'seed', now() - interval '90 days');
-insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by, created_at)
-values ('EGO-DC-12', 'batch_in', 2, 'SEED-EXPIRED-EGO-DC-12', current_date - interval '30 days', 'seed', now() - interval '90 days');
+insert into product_batches (sku, batch_number, expiry_date, status, created_by)
+values ('EGO-DC-12', 'SEED-EXPIRED-EGO-DC-12', current_date - interval '30 days', 'active', 'seed');
+insert into inventory_log (sku, type, quantity, batch_id, expiry_date, created_by)
+values ('EGO-DC-12', 'batch_in', 2, 'SEED-EXPIRED-EGO-DC-12', current_date - interval '30 days', 'seed');
 
 -- ── 2. Orders: 5 in different statuses, made ~10 days ago ─────────────
--- Each order's inventory_log row gets created_at = the order's
--- confirmed_at (or cancelled_at for the cancellation row), so the
--- timeline reads correctly: stock arrives -30d, orders consume -16d
--- through -4d. We bypass reserve_inventory/restore_inventory and
--- INSERT directly into inventory_log because those functions force
--- created_at = now(); their built-in guards (sufficient stock,
--- per-(sku,order_id) sum invariant) are enforced by the trigger
--- chain anyway.
+-- Stock-deducting orders use reserve_inventory RPC for correct
+-- inventory_log + inventory_current bookkeeping.
 do $$
 declare
   v_t10 timestamptz := now() - interval '10 days';
@@ -85,13 +75,13 @@ begin
   -- ─ Order 1: pending (card) — no stock movement ─────────────────────
   insert into orders (id, created_at, email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner)
-  values ('1111111111', v_t10,
+  values ('11111111-1111-1111-1111-111111111111', v_t10,
           'pending@seed.local', 'Иван', 'Петров', '+359888000001',
           'София', 'ул. Тестова 1', '1000',
           2570, 0, 'pending', 'card', 'speedy-address');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('1111111111', 1,
+  values ('11111111-1111-1111-1111-111111111111', 1,
           'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 1, 2570);
 
   -- ─ Order 2: confirmed (COD, Econt office) ──────────────────────────
@@ -99,7 +89,7 @@ begin
                       total_amount, shipping_fee, cod_fee, status, payment_method, logistics_partner,
                       econt_office_id, econt_office_code, econt_office_name, econt_office_address,
                       cod_confirmed_at, cod_confirmed_by)
-  values ('2222222222', v_t10, v_t10 + interval '1 hour',
+  values ('22222222-2222-2222-2222-222222222222', v_t10, v_t10 + interval '1 hour',
           'confirmed@seed.local', 'Мария', 'Иванова', '+359888000002',
           'София', '', '',
           5340, 500, 200, 'confirmed', 'cod', 'econt-office',
@@ -108,29 +98,27 @@ begin
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
   values
-    ('2222222222', 1, 'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 1, 2570),
-    ('2222222222', 2, 'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
+    ('22222222-2222-2222-2222-222222222222', 1, 'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 1, 2570),
+    ('22222222-2222-2222-2222-222222222222', 2, 'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
 
-  insert into inventory_log (sku, type, quantity, order_id, created_by, created_at) values
-    ('EGO-DC-12',  'order_out', 1, '2222222222', 'seed', v_t10 + interval '1 hour'),
-    ('EGO-MIX-12', 'order_out', 1, '2222222222', 'seed', v_t10 + interval '1 hour');
+  perform reserve_inventory('EGO-DC-12',  1, '22222222-2222-2222-2222-222222222222');
+  perform reserve_inventory('EGO-MIX-12', 1, '22222222-2222-2222-2222-222222222222');
 
   -- ─ Order 3: shipped (card, Speedy address) ─────────────────────────
   insert into orders (id, created_at, confirmed_at, shipped_at, email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at)
-  values ('3333333333', v_t10, v_t10 + interval '1 hour', v_t10 + interval '2 days',
+  values ('33333333-3333-3333-3333-333333333333', v_t10, v_t10 + interval '1 hour', v_t10 + interval '2 days',
           'shipped@seed.local', 'Петър', 'Стоянов', '+359888000003',
           'Варна', 'ул. Тестова 3', '9000',
           2570, 0, 'shipped', 'card', 'speedy-address',
           'SEED-SP-3', v_t10 + interval '1 hour', 'pi_seed_3', v_t10 + interval '1 hour');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('3333333333', 1,
+  values ('33333333-3333-3333-3333-333333333333', 1,
           'egg-origin-white-chocolate-raspberry-box', 'EGO-WCR-12', 'Бял Шоколад с Малини Кутия', 1, 2570);
 
-  insert into inventory_log (sku, type, quantity, order_id, created_by, created_at) values
-    ('EGO-WCR-12', 'order_out', 1, '3333333333', 'seed', v_t10 + interval '1 hour');
+  perform reserve_inventory('EGO-WCR-12', 1, '33333333-3333-3333-3333-333333333333');
 
   -- ─ Order 4: delivered (card) — ~10.5 days ago triggers cross_sell ──
   -- email window (delivered_at between -11d and -10d). For review_request
@@ -140,7 +128,7 @@ begin
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at,
                       marketing_consent)
-  values ('4444444444',
+  values ('44444444-4444-4444-4444-444444444444',
           now() - interval '11 days', now() - interval '11 days',
           now() - interval '10 days 18 hours', now() - interval '10 days 12 hours',
           'delivered@seed.local', 'Светлана', 'Тодорова', '+359888000004',
@@ -150,29 +138,27 @@ begin
           true);
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('4444444444', 1,
+  values ('44444444-4444-4444-4444-444444444444', 1,
           'egg-origin-dark-chocolate-box', 'EGO-DC-12', 'Тъмен Шоколад Кутия', 2, 2570);
 
-  insert into inventory_log (sku, type, quantity, order_id, created_by, created_at) values
-    ('EGO-DC-12', 'order_out', 2, '4444444444', 'seed', now() - interval '11 days');
+  perform reserve_inventory('EGO-DC-12', 2, '44444444-4444-4444-4444-444444444444');
 
   -- ─ Order 5: cancelled (COD) — reserve + restore for clean books ────
-  insert into orders (id, created_at, confirmed_at, cancelled_at, cancellation_reason,
+  insert into orders (id, created_at, cancelled_at, cancellation_reason,
                       email, first_name, last_name, phone, city, address, postal_code,
                       total_amount, shipping_fee, cod_fee, status, payment_method, logistics_partner)
-  values ('5555555555', v_t10, v_t10 + interval '1 hour', v_t10 + interval '4 hours',
+  values ('55555555-5555-5555-5555-555555555555', v_t10, v_t10 + interval '4 hours',
           'клиент промени мнение',
           'cancelled@seed.local', 'Георги', 'Димитров', '+359888000005',
           'Стара Загора', 'ул. Тестова 5', '6000',
           2770, 500, 200, 'cancelled', 'cod', 'speedy-address');
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('5555555555', 1,
+  values ('55555555-5555-5555-5555-555555555555', 1,
           'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
 
-  insert into inventory_log (sku, type, quantity, order_id, created_by, created_at) values
-    ('EGO-MIX-12', 'order_out',    1, '5555555555', 'seed', v_t10 + interval '1 hour'),
-    ('EGO-MIX-12', 'cancellation', 1, '5555555555', 'seed', v_t10 + interval '4 hours');
+  perform reserve_inventory('EGO-MIX-12', 1, '55555555-5555-5555-5555-555555555555');
+  perform restore_inventory('EGO-MIX-12', 1, '55555555-5555-5555-5555-555555555555');
 
   -- ─ Order 6: delivered ~3.5 days ago — review_request cron window ───
   -- (delivered_at >= now - 4d AND delivered_at < now - 3d)
@@ -181,7 +167,7 @@ begin
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at,
                       marketing_consent)
-  values ('6666666666',
+  values ('66666666-6666-6666-6666-666666666666',
           now() - interval '4 days', now() - interval '4 days',
           now() - interval '3 days 18 hours', now() - interval '3 days 12 hours',
           'review-window@seed.local', 'Анна', 'Колева', '+359888000006',
@@ -191,11 +177,10 @@ begin
           true);
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('6666666666', 1,
+  values ('66666666-6666-6666-6666-666666666666', 1,
           'egg-origin-white-chocolate-raspberry-box', 'EGO-WCR-12', 'Бял Шоколад с Малини Кутия', 1, 2570);
 
-  insert into inventory_log (sku, type, quantity, order_id, created_by, created_at) values
-    ('EGO-WCR-12', 'order_out', 1, '6666666666', 'seed', now() - interval '4 days');
+  perform reserve_inventory('EGO-WCR-12', 1, '66666666-6666-6666-6666-666666666666');
 
   -- ─ Order 7: delivered ~15 days ago — outside BOTH cron windows ─────
   -- Verifies the cron correctly skips orders past the cross_sell window.
@@ -204,7 +189,7 @@ begin
                       total_amount, shipping_fee, status, payment_method, logistics_partner,
                       tracking_number, seller_settled_at, stripe_payment_intent_id, order_confirmation_sent_at,
                       marketing_consent)
-  values ('7777777777',
+  values ('77777777-7777-7777-7777-777777777777',
           now() - interval '16 days', now() - interval '16 days',
           now() - interval '15 days 12 hours', now() - interval '15 days 6 hours',
           'past-window@seed.local', 'Никола', 'Маринов', '+359888000007',
@@ -214,11 +199,10 @@ begin
           true);
 
   insert into order_items (order_id, line_no, product_id, sku, product_name, quantity, unit_price_cents)
-  values ('7777777777', 1,
+  values ('77777777-7777-7777-7777-777777777777', 1,
           'egg-origin-mix-box', 'EGO-MIX-12', 'Микс Кутия', 1, 2570);
 
-  insert into inventory_log (sku, type, quantity, order_id, created_by, created_at) values
-    ('EGO-MIX-12', 'order_out', 1, '7777777777', 'seed', now() - interval '16 days');
+  perform reserve_inventory('EGO-MIX-12', 1, '77777777-7777-7777-7777-777777777777');
 end;
 $$;
 

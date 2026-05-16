@@ -7,7 +7,7 @@ import { getDashboardStats, type DashboardStats } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT } from "@/lib/orders"
+import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT, formatOrderId } from "@/lib/orders"
 
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -174,7 +174,7 @@ export default function AdminDashboardPage() {
                         {order.first_name} {order.last_name}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        #{order.id.slice(0, 8)} &middot;{" "}
+                        {formatOrderId(order.id)} &middot;{" "}
                         {new Date(order.created_at).toLocaleDateString("bg-BG", {
                           day: "2-digit",
                           month: "2-digit",

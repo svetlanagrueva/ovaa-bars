@@ -32,7 +32,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(() => Promise.resolve(mockSupabase)),
 }))
 
-const VALID_ORDER_ID = "11111111-1111-1111-1111-111111111111"
+const VALID_ORDER_ID = "1111111111"
 
 // Default "before" snapshot the action reads first — speedy-address order,
 // so most tests can target moving it to econt-office.

@@ -16,7 +16,7 @@ vi.mock("@/lib/email-sender", () => ({
   sendDeliveryEmail: (...args: any[]) => mockSendDeliveryEmail(...args),
 }))
 
-const validUUID = "11111111-1111-1111-1111-111111111111"
+const validUUID = "1111111111"
 
 describe("delivery-confirmation", () => {
   beforeEach(() => {
@@ -99,7 +99,7 @@ describe("delivery-confirmation", () => {
       const selectChain = {
         eq: vi.fn(() => selectChain),
         limit: vi.fn(() => Promise.resolve({
-          data: [{ id: validUUID }, { id: "22222222-2222-2222-2222-222222222222" }],
+          data: [{ id: validUUID }, { id: "2222222222" }],
           error: null,
         })),
       }

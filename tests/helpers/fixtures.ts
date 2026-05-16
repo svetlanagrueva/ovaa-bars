@@ -35,4 +35,12 @@ export const validCartSubtotal = 5140
 export const singleCartItem = [{ productId: "egg-origin-dark-chocolate-box", quantity: 1 }]
 export const singleCartSubtotal = 2570
 
+// Synthetic 10-char lowercase-hex order id used as a stable test fixture.
+// Format matches the orders.id CHECK (`^[0-9a-f]{10}$`).
+export const validOrderId = "abc1234567"
+
+// Synthetic UUID used as a stable test fixture for uuid columns
+// (refunds.id, withdrawals.id, invoices.id, product_batches.id, sale/promo
+// IDs, idempotency keys). Order IDs use `validOrderId` instead — they're
+// 10-char hex, not uuids.
 export const validUUID = "550e8400-e29b-41d4-a716-446655440000"

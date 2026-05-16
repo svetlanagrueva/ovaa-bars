@@ -4,7 +4,7 @@ import { useEffect, useState, use } from "react"
 import Link from "next/link"
 import { getOrder, updateOrderStatus, setInvoiceNumber, markInvoiceSent, addAdminNote, generateShipment, cancelShipment, getShipmentDefaults, recordCodSettlement, markCodConfirmed, updateOrderContact, updateOrderQuantity, addOrderItem, removeOrderItem, getProductsForOrderEdit, recordRefund, updateRefundAnnotation, recordStockMovement, recordComplaint, resolveComplaint, recordOrderOutcome, resendOrderConfirmationEmail, resendShippingEmail, resendDeliveryEmail, getOrderComplaints, createWithdrawal, getBatchAllocation, type OrderDetail, type OrderRefund, type Invoice, type Complaint, type ShipmentFormData, type ShipmentDisplayInfo, type Withdrawal, type WithdrawalRequestedVia, type BatchAllocationLine } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/products"
-import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT } from "@/lib/orders"
+import { hasCustomerPaid, getFinancialStatus, FINANCIAL_STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT, formatOrderId } from "@/lib/orders"
 import { getDeliveryLabel } from "@/lib/delivery"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -320,7 +320,7 @@ export default function AdminOrderDetailPage({
       </div>
 
       <div className="mb-6 flex items-center gap-3">
-        <h1 className="text-2xl font-bold">Поръчка #{order.id.slice(0, 8)}</h1>
+        <h1 className="text-2xl font-bold">Поръчка {formatOrderId(order.id)}</h1>
         <Badge variant={ORDER_STATUS_BADGE_VARIANT[order.status] || "outline"}>
           {ORDER_STATUS_LABELS[order.status] || order.status}
         </Badge>

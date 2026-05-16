@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createSupabaseMock, resetSupabaseMock, mockThenableResult } from "./helpers/supabase-mock"
-import { validUUID } from "./helpers/fixtures"
+import { validOrderId, validUUID } from "./helpers/fixtures"
 
 // Helper: minimal Stripe refund shape for the verification check.
 // Defaults match the "happy path" in most recordRefund tests; individual
@@ -265,7 +265,7 @@ describe("admin actions", () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { getOrder } = await import("@/app/actions/admin")
 
-      await expect(getOrder(validUUID)).rejects.toThrow(
+      await expect(getOrder(validOrderId)).rejects.toThrow(
         "Unauthorized"
       )
     })
@@ -285,7 +285,7 @@ describe("admin actions", () => {
       //   3. order_audit_events (thenable)
       //   4. invoices for this order (thenable)
       //   5. withdrawals for this order (thenable)
-      const fakeOrder = { id: validUUID, status: "pending" }
+      const fakeOrder = { id: validOrderId, status: "pending" }
       mockSupabase.single.mockResolvedValue({ data: fakeOrder, error: null })
       let callIndex = 0
       mockSupabase.from = vi.fn(() => {
@@ -295,7 +295,7 @@ describe("admin actions", () => {
       })
 
       const { getOrder } = await import("@/app/actions/admin")
-      const result = await getOrder(validUUID)
+      const result = await getOrder(validOrderId)
 
       expect(result).toEqual({
         ...fakeOrder,
@@ -315,13 +315,12 @@ describe("admin actions", () => {
       const { getOrder } = await import("@/app/actions/admin")
 
       await expect(
-        getOrder(validUUID)
+        getOrder(validOrderId)
       ).rejects.toThrow("Order not found")
     })
   })
 
   describe("updateOrderStatus", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -536,7 +535,6 @@ describe("admin actions", () => {
   })
 
   describe("addAdminNote", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -687,6 +685,9 @@ describe("admin actions", () => {
   })
 
   describe("endSale", () => {
+    // sales.id is uuid; orders.id is 10-char hex. Use a real UUID literal
+    // here so the validator passes; validOrderId was repurposed as a 10-char
+    // order id fixture.
     const validId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
@@ -1121,7 +1122,6 @@ describe("admin actions", () => {
   })
 
   describe("markCodConfirmed", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1240,7 +1240,6 @@ describe("admin actions", () => {
   })
 
   describe("updateOrderContact", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1350,7 +1349,6 @@ describe("admin actions", () => {
   })
 
   describe("updateOrderQuantity", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1521,7 +1519,6 @@ describe("admin actions", () => {
   })
 
   describe("resendOrderConfirmationEmail", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1582,7 +1579,6 @@ describe("admin actions", () => {
   })
 
   describe("resendShippingEmail", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1655,7 +1651,6 @@ describe("admin actions", () => {
   })
 
   describe("resendDeliveryEmail", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1719,7 +1714,6 @@ describe("admin actions", () => {
   })
 
   describe("recordCodSettlement", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -1865,7 +1859,7 @@ describe("admin actions", () => {
     it("requires seller_settled_at — rejects when missing", async () => {
       const { recordCodSettlement } = await import("@/app/actions/admin")
       await expect(
-        recordCodSettlement(validUUID, { settledAt: "" } as any)
+        recordCodSettlement(validOrderId, { settledAt: "" } as any)
       ).rejects.toThrow("Датата на плащане е задължителна")
     })
 
@@ -1958,7 +1952,6 @@ describe("admin actions", () => {
   })
 
   describe("updateOrderStatus — timestamps and side effects", () => {
-    const validOrderId = validUUID
 
     it("sets shipped_at and tracking_number when marking as shipped", async () => {
       mockSupabase.single.mockResolvedValueOnce({
@@ -2059,7 +2052,7 @@ describe("admin actions", () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { getShipmentDefaults } = await import("@/app/actions/admin")
 
-      await expect(getShipmentDefaults(validUUID)).rejects.toThrow("Unauthorized")
+      await expect(getShipmentDefaults(validOrderId)).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
@@ -2071,7 +2064,7 @@ describe("admin actions", () => {
     it("returns form data and display info for Econt office order", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: {
-          id: validUUID,
+          id: validOrderId,
           first_name: "Ivan",
           last_name: "Petrov",
           phone: "+359888123456",
@@ -2093,7 +2086,7 @@ describe("admin actions", () => {
       ]))
 
       const { getShipmentDefaults } = await import("@/app/actions/admin")
-      const result = await getShipmentDefaults(validUUID)
+      const result = await getShipmentDefaults(validOrderId)
 
       expect(result.form.recipientName).toBe("Ivan Petrov")
       expect(result.form.recipientOfficeCode).toBe("1056")
@@ -2108,7 +2101,7 @@ describe("admin actions", () => {
     it("returns form data for Speedy address order", async () => {
       mockSupabase.single.mockResolvedValueOnce({
         data: {
-          id: validUUID,
+          id: validOrderId,
           first_name: "Maria",
           last_name: "Ivanova",
           phone: "+359899111222",
@@ -2130,7 +2123,7 @@ describe("admin actions", () => {
       ]))
 
       const { getShipmentDefaults } = await import("@/app/actions/admin")
-      const result = await getShipmentDefaults(validUUID)
+      const result = await getShipmentDefaults(validOrderId)
 
       expect(result.form.recipientName).toBe("Maria Ivanova")
       expect(result.form.recipientCity).toBe("Plovdiv")
@@ -2169,7 +2162,7 @@ describe("admin actions", () => {
       mockValidateAdminSession.mockResolvedValue(false)
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("Unauthorized")
+      await expect(generateShipment(validOrderId, validForm)).rejects.toThrow("Unauthorized")
     })
 
     it("rejects invalid UUID", async () => {
@@ -2181,37 +2174,37 @@ describe("admin actions", () => {
     it("rejects weight below 0.1 kg", async () => {
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, { ...validForm, weight: 0.05 })).rejects.toThrow("между 0.1 и 50")
+      await expect(generateShipment(validOrderId, { ...validForm, weight: 0.05 })).rejects.toThrow("между 0.1 и 50")
     })
 
     it("rejects weight above 50 kg", async () => {
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, { ...validForm, weight: 51 })).rejects.toThrow("между 0.1 и 50")
+      await expect(generateShipment(validOrderId, { ...validForm, weight: 51 })).rejects.toThrow("между 0.1 и 50")
     })
 
     it("rejects empty recipient name", async () => {
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, { ...validForm, recipientName: "" })).rejects.toThrow("Името на получателя")
+      await expect(generateShipment(validOrderId, { ...validForm, recipientName: "" })).rejects.toThrow("Името на получателя")
     })
 
     it("rejects empty recipient phone", async () => {
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, { ...validForm, recipientPhone: "  " })).rejects.toThrow("Телефонът на получателя")
+      await expect(generateShipment(validOrderId, { ...validForm, recipientPhone: "  " })).rejects.toThrow("Телефонът на получателя")
     })
 
     it("rejects empty contents", async () => {
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, { ...validForm, contents: "" })).rejects.toThrow("Съдържанието е задължително")
+      await expect(generateShipment(validOrderId, { ...validForm, contents: "" })).rejects.toThrow("Съдържанието е задължително")
     })
 
     it("rejects contents over 200 chars", async () => {
       const { generateShipment } = await import("@/app/actions/admin")
 
-      await expect(generateShipment(validUUID, { ...validForm, contents: "x".repeat(201) })).rejects.toThrow("Съдържанието е твърде дълго")
+      await expect(generateShipment(validOrderId, { ...validForm, contents: "x".repeat(201) })).rejects.toThrow("Съдържанието е твърде дълго")
     })
 
     it("creates Econt shipment for econt-office order", async () => {
@@ -2222,7 +2215,7 @@ describe("admin actions", () => {
         select: vi.fn(() => lockChain),
         single: vi.fn(() => Promise.resolve({
           data: {
-            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            id: validOrderId, status: "confirmed", tracking_number: "__generating__",
             logistics_partner: "econt-office", payment_method: "card", total_amount: 2570,
           },
           error: null,
@@ -2232,7 +2225,7 @@ describe("admin actions", () => {
       mockEcontCreateShipment.mockResolvedValueOnce({ trackingNumber: "ECONT999", pdfUrl: null })
 
       const { generateShipment } = await import("@/app/actions/admin")
-      const result = await generateShipment(validUUID, validForm)
+      const result = await generateShipment(validOrderId, validForm)
 
       expect(result.trackingNumber).toBe("ECONT999")
       expect(mockEcontCreateShipment).toHaveBeenCalledWith(
@@ -2251,7 +2244,7 @@ describe("admin actions", () => {
         select: vi.fn(() => lockChain),
         single: vi.fn(() => Promise.resolve({
           data: {
-            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            id: validOrderId, status: "confirmed", tracking_number: "__generating__",
             logistics_partner: "speedy-office", payment_method: "cod", total_amount: 5000,
           },
           error: null,
@@ -2261,7 +2254,7 @@ describe("admin actions", () => {
       mockSpeedyCreateShipment.mockResolvedValueOnce({ trackingNumber: "SPD456", shipmentId: "2" })
 
       const { generateShipment } = await import("@/app/actions/admin")
-      const result = await generateShipment(validUUID, validForm)
+      const result = await generateShipment(validOrderId, validForm)
 
       expect(result.trackingNumber).toBe("SPD456")
       expect(mockSpeedyCreateShipment).toHaveBeenCalledWith(
@@ -2280,7 +2273,7 @@ describe("admin actions", () => {
         select: vi.fn(() => lockChain),
         single: vi.fn(() => Promise.resolve({
           data: {
-            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            id: validOrderId, status: "confirmed", tracking_number: "__generating__",
             logistics_partner: "econt-office", payment_method: "cod", total_amount: 3000,
           },
           error: null,
@@ -2289,7 +2282,7 @@ describe("admin actions", () => {
       mockSupabase.update = vi.fn(() => lockChain)
 
       const { generateShipment } = await import("@/app/actions/admin")
-      await generateShipment(validUUID, validForm)
+      await generateShipment(validOrderId, validForm)
 
       // COD amount should be 30.00 EUR (from order.total_amount / 100), not whatever the form has
       expect(mockEcontCreateShipment).toHaveBeenCalledWith(
@@ -2304,7 +2297,7 @@ describe("admin actions", () => {
         select: vi.fn(() => lockChain),
         single: vi.fn(() => Promise.resolve({
           data: {
-            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            id: validOrderId, status: "confirmed", tracking_number: "__generating__",
             logistics_partner: "econt-office", payment_method: "card", total_amount: 3000,
           },
           error: null,
@@ -2313,7 +2306,7 @@ describe("admin actions", () => {
       mockSupabase.update = vi.fn(() => lockChain)
 
       const { generateShipment } = await import("@/app/actions/admin")
-      await generateShipment(validUUID, validForm)
+      await generateShipment(validOrderId, validForm)
 
       expect(mockEcontCreateShipment).toHaveBeenCalledWith(
         expect.objectContaining({ codAmount: undefined })
@@ -2336,7 +2329,7 @@ describe("admin actions", () => {
       })
 
       const { generateShipment } = await import("@/app/actions/admin")
-      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("потвърдени поръчки")
+      await expect(generateShipment(validOrderId, validForm)).rejects.toThrow("потвърдени поръчки")
     })
 
     it("rejects when order already has tracking number", async () => {
@@ -2353,7 +2346,7 @@ describe("admin actions", () => {
       })
 
       const { generateShipment } = await import("@/app/actions/admin")
-      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("вече има товарителница")
+      await expect(generateShipment(validOrderId, validForm)).rejects.toThrow("вече има товарителница")
     })
 
     it("rolls back lock when courier API fails", async () => {
@@ -2363,7 +2356,7 @@ describe("admin actions", () => {
         select: vi.fn(() => lockChain),
         single: vi.fn(() => Promise.resolve({
           data: {
-            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            id: validOrderId, status: "confirmed", tracking_number: "__generating__",
             logistics_partner: "econt-office", payment_method: "card", total_amount: 2570,
           },
           error: null,
@@ -2373,7 +2366,7 @@ describe("admin actions", () => {
       mockEcontCreateShipment.mockRejectedValueOnce(new Error("Econt API timeout"))
 
       const { generateShipment } = await import("@/app/actions/admin")
-      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("Econt API timeout")
+      await expect(generateShipment(validOrderId, validForm)).rejects.toThrow("Econt API timeout")
 
       // Verify rollback was called — update was called at least twice (lock + rollback)
       expect(mockSupabase.update).toHaveBeenCalledTimes(2)
@@ -2389,7 +2382,7 @@ describe("admin actions", () => {
         select: vi.fn(() => lockChain),
         single: vi.fn(() => Promise.resolve({
           data: {
-            id: validUUID, status: "confirmed", tracking_number: "__generating__",
+            id: validOrderId, status: "confirmed", tracking_number: "__generating__",
             logistics_partner: "econt-office", payment_method: "card", total_amount: 2570,
           },
           error: null,
@@ -2403,7 +2396,7 @@ describe("admin actions", () => {
       })
 
       const { generateShipment } = await import("@/app/actions/admin")
-      await expect(generateShipment(validUUID, validForm)).rejects.toThrow("не можа да бъде запазена")
+      await expect(generateShipment(validOrderId, validForm)).rejects.toThrow("не можа да бъде запазена")
     })
   })
 
@@ -2624,7 +2617,7 @@ describe("admin actions", () => {
         referenceType: "return",
         referenceId: "RET-001",
         batchId: "BATCH-003",
-        orderId: validUUID,
+        orderId: validOrderId,
       })
 
       expect(result).toEqual({ success: true })
@@ -2632,7 +2625,7 @@ describe("admin actions", () => {
         expect.objectContaining({
           type: "return_in",
           batch_id: "BATCH-003",
-          order_id: validUUID,
+          order_id: validOrderId,
           reference_type: "return",
         }),
       )
@@ -2663,7 +2656,7 @@ describe("admin actions", () => {
           quantity: 1,
           referenceType: "return",
           referenceId: "refund-abc",
-          orderId: validUUID,
+          orderId: validOrderId,
         }),
       ).rejects.toThrow("не е част от тази поръчка")
     })
@@ -2689,7 +2682,7 @@ describe("admin actions", () => {
           quantity: 1, // prior 2 + 1 > shipped 2
           referenceType: "return",
           referenceId: "refund-abc",
-          orderId: validUUID,
+          orderId: validOrderId,
         }),
       ).rejects.toThrow("Не можете да върнете/бракувате повече бройки")
     })
@@ -2716,7 +2709,7 @@ describe("admin actions", () => {
           quantity: 3,
           referenceType: "return",
           referenceId: "refund-abc",
-          orderId: validUUID,
+          orderId: validOrderId,
         }),
       ).rejects.toThrow("Не можете да върнете")
     })
@@ -2769,7 +2762,7 @@ describe("admin actions", () => {
           quantity: 1,
           referenceType: "return",
           referenceId: "refund-abc",
-          orderId: validUUID,
+          orderId: validOrderId,
           notes: "Opened on arrival",
         }),
       ).rejects.toThrow("Не можете да върнете")
@@ -2796,7 +2789,7 @@ describe("admin actions", () => {
         quantity: 1,
         referenceType: "return",
         referenceId: "refund-abc",
-        orderId: validUUID,
+        orderId: validOrderId,
       })
 
       expect(result).toEqual({ success: true })
@@ -2804,7 +2797,6 @@ describe("admin actions", () => {
   })
 
   describe("recordRefund", () => {
-    const validOrderId = validUUID
     const validClientKey = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     // recordRefund DB-call sequence (post invoices-table refactor):
@@ -3190,7 +3182,7 @@ describe("admin actions", () => {
 
     it("rejects idempotency key that belongs to a different order", async () => {
       setupRecordRefundMocks({
-        existingByIdempotencyKey: [{ id: "some-id", order_id: "00000000-0000-0000-0000-000000000001" }],
+        existingByIdempotencyKey: [{ id: "some-id", order_id: "0000000001" }],
       })
 
       const { recordRefund } = await import("@/app/actions/admin")
@@ -3671,7 +3663,6 @@ describe("admin actions", () => {
   })
 
   describe("recordOrderOutcome", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -3770,7 +3761,6 @@ describe("admin actions", () => {
   })
 
   describe("recordComplaint", () => {
-    const validOrderId = validUUID
 
     it("throws Unauthorized when not authenticated", async () => {
       mockValidateAdminSession.mockResolvedValue(false)
@@ -3981,7 +3971,7 @@ describe("admin actions", () => {
           quantity: 2,
           sku: validSku,
           orders: {
-            id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            id: "aaaaaaaaaa",
             created_at: "2026-04-10T10:00:00Z",
             shipped_at: "2026-04-11T10:00:00Z",
             delivered_at: null,
@@ -4001,7 +3991,7 @@ describe("admin actions", () => {
           quantity: 3,
           sku: validSku,
           orders: {
-            id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            id: "bbbbbbbbbb",
             created_at: "2026-04-12T10:00:00Z",
             shipped_at: "2026-04-13T10:00:00Z",
             delivered_at: "2026-04-14T15:00:00Z",
@@ -4035,15 +4025,14 @@ describe("admin actions", () => {
       // Sort order: confirmed → shipped → delivered. Both here are shipped
       // and delivered, so shipped (Ivan) sorts before delivered (Maria).
       expect(result[0]).toMatchObject({
-        orderId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        shortId: "aaaaaaaa",
+        orderId: "aaaaaaaaaa",
         status: "shipped",
         firstName: "Ivan",
         quantity: 2,
         trackingNumber: "SPEEDY-1",
       })
       expect(result[1]).toMatchObject({
-        orderId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        orderId: "bbbbbbbbbb",
         status: "delivered",
         quantity: 3,
         address: null,
@@ -4082,9 +4071,9 @@ describe("admin actions", () => {
         tracking_number: null, logistics_partner: null,
       }
       const rows = [
-        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "11111111-1111-1111-1111-111111111111", created_at: "2026-04-14T10:00:00Z", shipped_at: "2026-04-15T10:00:00Z", delivered_at: "2026-04-16T10:00:00Z", status: "delivered" } },
-        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "22222222-2222-2222-2222-222222222222", created_at: "2026-04-10T10:00:00Z", shipped_at: null, delivered_at: null, status: "confirmed" } },
-        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "33333333-3333-3333-3333-333333333333", created_at: "2026-04-12T10:00:00Z", shipped_at: "2026-04-13T10:00:00Z", delivered_at: null, status: "shipped" } },
+        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "1111111111", created_at: "2026-04-14T10:00:00Z", shipped_at: "2026-04-15T10:00:00Z", delivered_at: "2026-04-16T10:00:00Z", status: "delivered" } },
+        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "2222222222", created_at: "2026-04-10T10:00:00Z", shipped_at: null, delivered_at: null, status: "confirmed" } },
+        { quantity: 1, sku: validSku, orders: { ...baseOrder, id: "3333333333", created_at: "2026-04-12T10:00:00Z", shipped_at: "2026-04-13T10:00:00Z", delivered_at: null, status: "shipped" } },
       ]
       setupChain(rows)
 
@@ -4103,7 +4092,6 @@ describe("admin actions", () => {
 
   // ─── Withdrawals (право на отказ) ─────────────────────────────────────────
   describe("withdrawals", () => {
-    const validOrderId = validUUID
     const validWithdrawalId = "11111111-1111-1111-1111-111111111111"
 
     describe("createWithdrawal", () => {
@@ -4321,7 +4309,6 @@ describe("admin actions", () => {
   // ─── Batch traceability ─────────────────────────────────────────────────
   describe("batch traceability", () => {
     const validBatchId = "11111111-1111-1111-1111-111111111111"
-    const validOrderId = validUUID
 
     describe("recallBatch", () => {
       it("rejects invalid UUID", async () => {

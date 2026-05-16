@@ -72,7 +72,7 @@ import {
   sendWithdrawalRejectedEmail,
 } from "@/lib/email-sender"
 
-const VALID_ORDER_ID = "11111111-2222-3333-4444-555555555555"
+const VALID_ORDER_ID = "1122334455"
 
 const sampleOrder = {
   id: VALID_ORDER_ID,
@@ -153,7 +153,7 @@ describe("sendOrderConfirmationEmail", () => {
       expect.objectContaining({
         from: "Egg Origin <noreply@eggorigin.com>",
         to: "customer@example.com",
-        subject: `Поръчка #${VALID_ORDER_ID.slice(0, 8)} - Потвърждение`,
+        subject: `Поръчка #${VALID_ORDER_ID.toUpperCase()} - Потвърждение`,
         html: "<order-confirmation-html />",
         text: "order-confirmation-text",
       }),
@@ -256,7 +256,7 @@ describe("sendDeliveryEmail", () => {
       expect.objectContaining({
         from: "Egg Origin <noreply@eggorigin.com>",
         to: "customer@example.com",
-        subject: `Поръчка #${VALID_ORDER_ID.slice(0, 8)} - Доставена`,
+        subject: `Поръчка #${VALID_ORDER_ID.toUpperCase()} - Доставена`,
         html: "<delivery-html />",
         text: "delivery-text",
       }),
@@ -353,7 +353,7 @@ describe("notifyAdminNewOrder", () => {
     expect(call.to).toBe("admin@eggorigin.com")
     expect(call.from).toBe("Egg Origin <noreply@eggorigin.com>")
     expect(call.subject).toContain("Нова поръчка")
-    expect(call.subject).toContain(VALID_ORDER_ID.slice(0, 8))
+    expect(call.subject).toContain(VALID_ORDER_ID.toUpperCase())
     expect(call.html).toBe("<admin-new-order-html />")
     expect(call.text).toBe("admin-new-order-text")
 

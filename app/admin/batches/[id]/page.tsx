@@ -11,6 +11,7 @@ import {
   type BatchAffectedOrder,
 } from "@/app/actions/admin"
 import { PRODUCTS } from "@/lib/products"
+import { formatOrderId } from "@/lib/orders"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -66,7 +67,7 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
       "Изпратена на", "Доставена на", "Количество от партида", "Товарителница",
     ]
     const rows = affected.map((a) => [
-      a.order_id.slice(0, 8),
+      a.order_id.toUpperCase(),
       a.order_status,
       `${a.customer_first_name} ${a.customer_last_name}`,
       a.customer_email,
@@ -195,7 +196,7 @@ export default function BatchDetailPage({ params }: { params: Promise<{ id: stri
                   <TableRow key={a.order_id}>
                     <TableCell>
                       <Link href={`/admin/orders/${a.order_id}`} className="font-mono text-xs text-blue-600 hover:underline">
-                        #{a.order_id.slice(0, 8)}
+                        {formatOrderId(a.order_id)}
                       </Link>
                       {a.shipped_at && (
                         <div className="text-[10px] text-muted-foreground">

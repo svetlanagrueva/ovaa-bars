@@ -58,7 +58,13 @@ create sequence if not exists withdrawal_ref_seq start 1;
 -- type='credit_note' rows per order). EGN is never collected — ЗДДС does
 -- not require it for individual retail invoices.
 create table if not exists orders (
-  id uuid primary key default gen_random_uuid(),
+  -- 10-char lowercase hex, randomly generated. Displayed uppercased with a
+  -- '#' prefix in customer-facing and admin UIs. 16^10 ≈ 1.1T values —
+  -- birthday-collision probability at 10k orders is ~10⁻⁸, but order-insert
+  -- paths still wrap in a 3-attempt retry on unique_violation as a backstop.
+  id text primary key
+    default lower(encode(gen_random_bytes(5), 'hex'))
+    check (id ~ '^[0-9a-f]{10}$'),
   created_at timestamptz default now(),
 
   -- Customer info
@@ -136,7 +142,7 @@ create table if not exists orders (
 -- Normalized line items. Replaced the earlier orders.items JSONB.
 create table if not exists order_items (
   id                 bigint generated always as identity primary key,
-  order_id           uuid not null references orders(id) on delete cascade,
+  order_id           text not null references orders(id) on delete cascade,
   line_no            integer not null,
   product_id         text not null,
   sku                text not null,
@@ -211,7 +217,7 @@ create table if not exists inventory_log (
   quantity        integer not null check (quantity > 0),
   batch_id        text,
   expiry_date     date,
-  order_id        uuid references orders(id) on delete set null,
+  order_id        text references orders(id) on delete set null,
   notes           text,
   reference_type  text check (reference_type in ('order', 'invoice', 'return', 'internal')),
   reference_id    text,
@@ -278,7 +284,7 @@ create table if not exists inventory_current (
 -- Mutations blocked by triggers below.
 create table if not exists order_audit_events (
   id          bigint generated always as identity primary key,
-  order_id    uuid not null references orders(id),
+  order_id    text not null references orders(id),
   event_type  text not null,
   actor       text not null default 'admin',
   payload     jsonb not null default '{}',
@@ -298,7 +304,7 @@ create table if not exists order_audit_events (
 -- refunds.withdrawal_id → withdrawals.id).
 create table if not exists refunds (
   id                       uuid        primary key default gen_random_uuid(),
-  order_id                 uuid        not null references orders(id) on delete cascade,
+  order_id                 text        not null references orders(id) on delete cascade,
   stripe_refund_id         text,
   client_idempotency_key   uuid,
   amount_cents             integer     not null check (amount_cents > 0),
@@ -348,7 +354,7 @@ create table if not exists refunds (
 --                          ↘ rejected
 create table if not exists withdrawals (
   id              uuid primary key default gen_random_uuid(),
-  order_id        uuid not null references orders(id) on delete restrict,
+  order_id        text not null references orders(id) on delete restrict,
   withdrawal_ref  text not null unique,         -- WD-YYYY-NNNN
 
   -- Intake
@@ -470,7 +476,7 @@ alter table refunds
 -- never reverted, never re-set). DELETE blocked.
 create table if not exists invoices (
   id                     uuid primary key default gen_random_uuid(),
-  order_id               uuid not null references orders(id) on delete restrict,
+  order_id               text not null references orders(id) on delete restrict,
   type                   text not null check (type in ('invoice', 'credit_note')),
 
   -- Credit note linkage (only set for type='credit_note')
@@ -661,7 +667,7 @@ create table if not exists email_unsubscribes (
 -- One row per (order, email_type). Status: pending → sending → sent / failed / skipped.
 create table if not exists marketing_email_log (
   id bigint generated always as identity primary key,
-  order_id uuid not null references orders(id) on delete cascade,
+  order_id text not null references orders(id) on delete cascade,
   email_type text not null check (email_type in ('review_request', 'cross_sell')),
   email text not null,
   status text not null default 'pending'
@@ -681,7 +687,7 @@ create table if not exists marketing_email_log (
 -- as RCL-YYYY-NNNN via complaint_ref_seq (server-side composes the format).
 create table if not exists complaints (
   id                  bigint generated always as identity primary key,
-  order_id            uuid not null references orders(id),
+  order_id            text not null references orders(id),
   complaint_ref       text not null unique,
   reported_at         timestamptz not null default now(),
   defect_description  text not null,
@@ -1034,7 +1040,7 @@ $$;
 create or replace function reserve_inventory(
   p_sku      text,
   p_quantity integer,
-  p_order_id uuid
+  p_order_id text
 )
 returns integer
 language plpgsql
@@ -1071,7 +1077,7 @@ $$;
 create or replace function restore_inventory(
   p_sku      text,
   p_quantity integer,
-  p_order_id uuid
+  p_order_id text
 )
 returns integer
 language plpgsql
@@ -1291,7 +1297,7 @@ $$;
 -- Explicit calls for domain events that aren't column diffs. Allow-list
 -- enforced — adding a new outcome type requires a migration to extend it.
 create or replace function record_order_outcome(
-  p_order_id uuid,
+  p_order_id text,
   p_outcome_type text,
   p_payload jsonb default '{}',
   p_actor text default 'admin'
@@ -1382,7 +1388,7 @@ $$;
 -- ─── Orders: force_status_override RPC ──────────────────────────────────────
 -- Data-repair path. Audited (≥20-char reason required) before the bypass.
 create or replace function force_status_override(
-  p_order_id uuid,
+  p_order_id text,
   p_new_status text,
   p_reason text,
   p_actor text default 'admin'
@@ -1438,7 +1444,7 @@ $$;
 -- Atomic JSONB append. Replaces a prior fetch-modify-update pattern that
 -- silently dropped concurrent notes. Row-level lock serializes appenders.
 create or replace function add_admin_note(
-  p_order_id uuid,
+  p_order_id text,
   p_text text,
   p_author text default 'admin'
 )
@@ -1480,7 +1486,7 @@ $$;
 -- cod_fee, discount_amount) stays frozen — admin must cancel + reorder if
 -- fees need recomputing.
 create or replace function edit_order_quantity(
-  p_order_id uuid,
+  p_order_id text,
   p_sku      text,
   p_new_quantity integer
 )
@@ -1559,7 +1565,7 @@ $$;
 -- INSERT a new row with the next line_no, recompute orders.total_amount.
 -- Fees stay frozen (same precedent). Returns new total_amount.
 create or replace function add_order_item(
-  p_order_id           uuid,
+  p_order_id           text,
   p_sku                text,
   p_product_id         text,
   p_product_name       text,
@@ -1653,7 +1659,7 @@ $$;
 -- chk_total_amount check would block it anyway, but the friendly error is
 -- better than "violates check constraint").
 create or replace function remove_order_item(
-  p_order_id uuid,
+  p_order_id text,
   p_sku      text
 )
 returns integer
@@ -1736,7 +1742,7 @@ $$;
 
 -- ─── Orders: confirm_delivery RPC ───────────────────────────────────────────
 -- Atomic delivered-status update. Idempotent — guard on status='shipped'.
-create or replace function confirm_delivery(p_order_id uuid, p_delivered_at timestamptz)
+create or replace function confirm_delivery(p_order_id text, p_delivered_at timestamptz)
 returns setof orders
 language sql
 set search_path = public, pg_temp
@@ -2174,7 +2180,7 @@ language plpgsql
 set search_path = public, pg_temp
 as $$
 declare
-  v_order_id uuid;
+  v_order_id text;
   v_old_status text;
 begin
   if p_new_status not in ('requested', 'approved', 'goods_received', 'rejected', 'completed') then
@@ -2308,8 +2314,8 @@ language plpgsql
 set search_path = public, pg_temp
 as $$
 declare
-  v_refund_order_id uuid;
-  v_item_order_id   uuid;
+  v_refund_order_id text;
+  v_item_order_id   text;
 begin
   select order_id into v_refund_order_id from public.refunds where id = new.refund_id;
   select order_id into v_item_order_id   from public.order_items where id = new.order_item_id;
@@ -2586,7 +2592,7 @@ $$;
 -- intercept allocations before the courier label is printed.
 create or replace function affected_orders_for_batch(p_batch_id uuid)
 returns table (
-  order_id          uuid,
+  order_id          text,
   order_status      text,
   customer_email    text,
   customer_first_name text,
@@ -2633,7 +2639,7 @@ $$;
 -- App layer pre-validates FEFO compliance + expired-override reasons for
 -- friendly errors; the RPC is the safety net.
 create or replace function public.save_batch_allocation(
-  p_order_id    uuid,
+  p_order_id    text,
   p_allocations jsonb
 )
 returns void
@@ -2752,7 +2758,7 @@ $$;
 create or replace function claim_marketing_emails(p_now timestamptz, p_limit integer default 50)
 returns table (
   out_log_id bigint,
-  out_order_id uuid,
+  out_order_id text,
   out_email text,
   out_first_name text,
   out_items jsonb,

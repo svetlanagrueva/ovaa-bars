@@ -114,3 +114,16 @@ export const ORDER_STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" 
   delivered: "secondary",
   cancelled: "destructive",
 }
+
+// Order IDs are stored as 10-char lowercase hex (see orders.id default in
+// the initial schema). Mirrors the DB `CHECK (id ~ '^[0-9a-f]{10}$')`.
+// Case-insensitive so we can validate user input pasted in either case
+// before passing through `.toLowerCase()` for the DB lookup.
+export const ORDER_ID_REGEX = /^[0-9a-f]{10}$/i
+
+// Display formatter: `#A1B2C3D4E5`. Use this everywhere the order id is
+// shown to a human (success page, admin pages, email subjects) so the
+// format is changed in one place.
+export function formatOrderId(id: string): string {
+  return `#${id.toUpperCase()}`
+}

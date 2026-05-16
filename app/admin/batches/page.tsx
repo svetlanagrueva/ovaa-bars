@@ -11,6 +11,7 @@ import {
   type RecallCandidate,
 } from "@/app/actions/admin"
 import { PRODUCTS } from "@/lib/products"
+import { formatOrderId } from "@/lib/orders"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -114,7 +115,7 @@ export default function AdminBatchesPage() {
       delivered: "Доставена",
     }
     const rows = recallResult.map((r) => [
-      r.shortId,
+      r.orderId.toUpperCase(),
       new Date(r.createdAt).toLocaleDateString("bg-BG"),
       statusLabel[r.status],
       r.shippedAt ? new Date(r.shippedAt).toLocaleDateString("bg-BG") : "",
@@ -331,7 +332,7 @@ export default function AdminBatchesPage() {
                           <TableRow key={r.orderId}>
                             <TableCell className="text-xs font-mono">
                               <Link href={`/admin/orders/${r.orderId}`} className="text-blue-600 hover:underline">
-                                #{r.shortId}
+                                {formatOrderId(r.orderId)}
                               </Link>
                             </TableCell>
                             <TableCell className="text-xs">

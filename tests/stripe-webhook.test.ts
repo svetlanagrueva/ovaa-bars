@@ -58,7 +58,7 @@ vi.mock("@/lib/env", () => ({
 import { POST } from "@/app/api/webhooks/stripe/route"
 import { stripe } from "@/lib/stripe"
 
-const VALID_ORDER_ID = "11111111-2222-3333-4444-555555555555"
+const VALID_ORDER_ID = "1122334455"
 const VALID_PI_ID = "pi_test_intent_123"
 
 // Build a Request the route can consume. The body is opaque to the route

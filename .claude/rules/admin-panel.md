@@ -30,6 +30,7 @@
 ## Orders
 - Pagination: 100 per page, with total count
 - Filters: status tabs, text search (ID/name/email), date range, invoice filter (all/requested/issued/pending), payment filter (all/awaiting-settlement/settled)
+- **Search by order ID**: accepts the customer-visible form (`#A1B2C3D4E5` or `a1b2c3d4e5`). `applyOrderFilters` regex `^#?[0-9a-f]{10}$/i` strips the `#`, lowercases, and does an indexed `eq("id", ...)`. Same shape in `applyInvoiceFilters` against `order_id`. No prefix matching — the ID a customer sees IS the stored ID (see `technical-decisions.md` § Order ID format).
 - URL params supported: `?status=pending`, `?invoiceFilter=pending`, `?paymentFilter=awaiting-settlement`
 - CSV export fetches ALL matching results via `getAllOrders` (batches of 1000)
 - CSV columns: ID, date, name, email, phone, city, products revenue, promo discount, shipping fee, COD fee, total, payment, delivery, status, invoice #, invoice date

@@ -13,6 +13,7 @@ import {
   type WithdrawalResolutionType,
   type WithdrawalWithOrderContext,
 } from "@/app/actions/admin"
+import { formatOrderId } from "@/lib/orders"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -98,7 +99,7 @@ export default function AdminWithdrawalDetailPage({ params }: { params: Promise<
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Заявка за връщане</p>
           <h1 className="mt-1 text-2xl font-bold font-mono">{w.withdrawal_ref}</h1>
           <Link href={`/admin/orders/${w.order_id}`} className="text-sm text-blue-600 hover:underline">
-            ← Към поръчка #{w.order_id.slice(0, 8)}
+            ← Към поръчка {formatOrderId(w.order_id)}
           </Link>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs uppercase tracking-wide ${STATUS_BADGE[w.status]}`}>

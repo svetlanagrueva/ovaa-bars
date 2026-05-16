@@ -9,6 +9,7 @@ import { COD_FEE, MAX_QUANTITY, calculateShippingPrice } from "@/lib/constants"
 import { getDeliveryLabel, getCarrierName } from "@/lib/delivery"
 import { sendOrderConfirmationEmail, notifyAdminNewOrder } from "@/lib/email-sender"
 import { sanitizeError } from "@/lib/logger"
+import { ORDER_ID_REGEX } from "@/lib/orders"
 import type Stripe from "stripe"
 
 interface CartItem {
@@ -215,6 +216,26 @@ async function validateCartItems(cartItems: CartItem[]) {
       priceInCents: product.priceInCents,
     }
   })
+}
+
+// Insert into `orders` with an automatic retry on 10-char PK collision.
+// orders.id is `lower(encode(gen_random_bytes(5), 'hex'))` — 16^10 ≈ 1.1T
+// values, birthday probability ~10⁻⁸ at 10k rows. The loop is a backstop,
+// not a hot path. Postgres unique_violation surfaces as code '23505'.
+async function insertOrderWithRetry<T extends { id: string }>(
+  attempt: () => PromiseLike<{ data: T | null; error: { code?: string; message?: string } | null }>,
+  context: string,
+): Promise<T> {
+  for (let i = 0; i < 3; i++) {
+    const { data, error } = await attempt()
+    if (!error && data) return data
+    if (error && error.code !== "23505") {
+      console.error(`Failed to create order (${context}):`, sanitizeError(error))
+      throw new Error("Failed to create order")
+    }
+    // PK collision — retry with a freshly-defaulted id.
+  }
+  throw new Error(`Failed to create order after 3 collision retries (${context})`)
 }
 
 // Insert one order_items row per validated cart line. line_no is the 1-based
@@ -608,41 +629,40 @@ export async function createCheckoutSession(data: CheckoutData) {
 
   const supabase = await createClient()
 
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      email: customerInfo.email.trim().toLowerCase(),
-      first_name: customerInfo.firstName,
-      last_name: customerInfo.lastName,
-      phone: customerInfo.phone,
-      city: customerInfo.city,
-      address: customerInfo.address || "",
-      postal_code: customerInfo.postalCode || "",
-      notes: customerInfo.notes || "",
-      logistics_partner: deliveryMethod,
-      total_amount: totalAmount,
-      shipping_fee: shippingPrice,
-      cod_fee: 0,
-      status: "pending",
-      payment_method: "card",
-      econt_office_id: econtOffice?.id ?? null,
-      econt_office_code: econtOffice?.code ?? null,
-      econt_office_name: econtOffice?.name ?? null,
-      econt_office_address: econtOffice?.fullAddress ?? null,
-      speedy_office_id: speedyOffice?.id ?? null,
-      speedy_office_name: speedyOffice?.name ?? null,
-      speedy_office_address: speedyOffice?.fullAddress ?? null,
-      promo_code: promo?.code ?? null,
-      discount_amount: discountAmount,
-      marketing_consent: data.marketingConsent || false,
-    })
-    .select()
-    .single()
-
-  if (orderError) {
-    console.error("Failed to create order:", sanitizeError(orderError))
-    throw new Error("Failed to create order")
-  }
+  const order = await insertOrderWithRetry(
+    () =>
+      supabase
+        .from("orders")
+        .insert({
+          email: customerInfo.email.trim().toLowerCase(),
+          first_name: customerInfo.firstName,
+          last_name: customerInfo.lastName,
+          phone: customerInfo.phone,
+          city: customerInfo.city,
+          address: customerInfo.address || "",
+          postal_code: customerInfo.postalCode || "",
+          notes: customerInfo.notes || "",
+          logistics_partner: deliveryMethod,
+          total_amount: totalAmount,
+          shipping_fee: shippingPrice,
+          cod_fee: 0,
+          status: "pending",
+          payment_method: "card",
+          econt_office_id: econtOffice?.id ?? null,
+          econt_office_code: econtOffice?.code ?? null,
+          econt_office_name: econtOffice?.name ?? null,
+          econt_office_address: econtOffice?.fullAddress ?? null,
+          speedy_office_id: speedyOffice?.id ?? null,
+          speedy_office_name: speedyOffice?.name ?? null,
+          speedy_office_address: speedyOffice?.fullAddress ?? null,
+          promo_code: promo?.code ?? null,
+          discount_amount: discountAmount,
+          marketing_consent: data.marketingConsent || false,
+        })
+        .select()
+        .single(),
+    "card",
+  )
 
   // Persist order_items rows. Cascade on orders delete cleans them up on rollback.
   try {
@@ -771,9 +791,7 @@ async function fetchTrackingItems(
 }
 
 export async function confirmOrder(orderId: string): Promise<ConfirmOrderResult> {
-  // Validate orderId is a UUID
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!uuidRegex.test(orderId)) {
+  if (!ORDER_ID_REGEX.test(orderId)) {
     throw new Error("Invalid order ID")
   }
 
@@ -911,42 +929,41 @@ export async function createCODOrder(data: CODOrderData) {
 
   const supabase = await createClient()
 
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      email: customerInfo.email.trim().toLowerCase(),
-      first_name: customerInfo.firstName,
-      last_name: customerInfo.lastName,
-      phone: customerInfo.phone,
-      city: customerInfo.city,
-      address: customerInfo.address || "",
-      postal_code: customerInfo.postalCode || "",
-      notes: customerInfo.notes || "",
-      logistics_partner: deliveryMethod,
-      total_amount: totalAmount,
-      shipping_fee: shippingPrice,
-      cod_fee: codFee,
-      status: "confirmed",
-      confirmed_at: new Date().toISOString(),
-      payment_method: "cod",
-      econt_office_id: econtOffice?.id ?? null,
-      econt_office_code: econtOffice?.code ?? null,
-      econt_office_name: econtOffice?.name ?? null,
-      econt_office_address: econtOffice?.fullAddress ?? null,
-      speedy_office_id: speedyOffice?.id ?? null,
-      speedy_office_name: speedyOffice?.name ?? null,
-      speedy_office_address: speedyOffice?.fullAddress ?? null,
-      promo_code: promo?.code ?? null,
-      discount_amount: discountAmount,
-      marketing_consent: data.marketingConsent || false,
-    })
-    .select()
-    .single()
-
-  if (orderError) {
-    console.error("Failed to create COD order:", sanitizeError(orderError))
-    throw new Error("Failed to create order")
-  }
+  const order = await insertOrderWithRetry(
+    () =>
+      supabase
+        .from("orders")
+        .insert({
+          email: customerInfo.email.trim().toLowerCase(),
+          first_name: customerInfo.firstName,
+          last_name: customerInfo.lastName,
+          phone: customerInfo.phone,
+          city: customerInfo.city,
+          address: customerInfo.address || "",
+          postal_code: customerInfo.postalCode || "",
+          notes: customerInfo.notes || "",
+          logistics_partner: deliveryMethod,
+          total_amount: totalAmount,
+          shipping_fee: shippingPrice,
+          cod_fee: codFee,
+          status: "confirmed",
+          confirmed_at: new Date().toISOString(),
+          payment_method: "cod",
+          econt_office_id: econtOffice?.id ?? null,
+          econt_office_code: econtOffice?.code ?? null,
+          econt_office_name: econtOffice?.name ?? null,
+          econt_office_address: econtOffice?.fullAddress ?? null,
+          speedy_office_id: speedyOffice?.id ?? null,
+          speedy_office_name: speedyOffice?.name ?? null,
+          speedy_office_address: speedyOffice?.fullAddress ?? null,
+          promo_code: promo?.code ?? null,
+          discount_amount: discountAmount,
+          marketing_consent: data.marketingConsent || false,
+        })
+        .select()
+        .single(),
+    "cod",
+  )
 
   // Persist order_items rows. Cascade on orders delete cleans them up on rollback.
   try {

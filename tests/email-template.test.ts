@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { buildOrderConfirmationEmail } from "@/lib/email-template"
 
 const baseEmailData = {
-  orderId: "550e8400-e29b-41d4-a716-446655440000",
+  orderId: "abc1234567",
   firstName: "Иван",
   items: [{ productId: "egg-origin-dark-chocolate-box", productName: "Dark Chocolate Box", quantity: 1, priceInCents: 2570 }],
   subtotal: 2570,

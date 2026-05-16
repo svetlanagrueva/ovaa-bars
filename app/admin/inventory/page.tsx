@@ -12,6 +12,7 @@ import {
   type ProductBatchWithAvailability,
 } from "@/app/actions/admin"
 import { PRODUCTS } from "@/lib/products"
+import { formatOrderId } from "@/lib/orders"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -610,7 +611,7 @@ export default function AdminInventoryPage() {
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {entry.batch_id ?? (entry.order_id
-                        ? <a href={`/admin/orders/${entry.order_id}`} className="text-blue-600 hover:underline font-mono">#{entry.order_id.slice(0, 8)}</a>
+                        ? <a href={`/admin/orders/${entry.order_id}`} className="text-blue-600 hover:underline font-mono">{formatOrderId(entry.order_id)}</a>
                         : "—"
                       )}
                     </TableCell>

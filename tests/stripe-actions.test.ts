@@ -237,21 +237,21 @@ describe("confirmOrder", () => {
 
   it("returns minimal data if already confirmed", async () => {
     const confirmedOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "confirmed",
       total_amount: 2570,
       items: [],
     }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    const result = await confirmOrder("a1b2c3d4e5")
     expect(result).toEqual({ status: "confirmed", totalCents: 2570, items: [] })
     expect(mockSupabase.update).not.toHaveBeenCalled()
   })
 
   it("returns tracking items from order_items table", async () => {
     const confirmedOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "confirmed",
       total_amount: 5140,
     }
@@ -260,7 +260,7 @@ describe("confirmOrder", () => {
       { sku: "EGO-DC-12", quantity: 2, unit_price_cents: 2570 },
     ]))
 
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    const result = await confirmOrder("a1b2c3d4e5")
     expect(result.items).toEqual([
       { sku: "EGO-DC-12", quantity: 2, priceInCents: 2570 },
     ])
@@ -268,14 +268,14 @@ describe("confirmOrder", () => {
 
   it("returns empty items array when order_items query fails or is empty", async () => {
     const confirmedOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "confirmed",
       total_amount: 0,
     }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
     mockSupabase.order.mockReturnValueOnce(mockThenableResult(null, { message: "fetch failed" }))
 
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    const result = await confirmOrder("a1b2c3d4e5")
     expect(result.items).toEqual([])
     expect(result.totalCents).toBe(0)
   })
@@ -283,12 +283,12 @@ describe("confirmOrder", () => {
   it("throws when order not found", async () => {
     mockSupabase.single.mockResolvedValueOnce({ data: null, error: { message: "Not found" } })
 
-    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Unable to confirm order")
+    await expect(confirmOrder("a1b2c3d4e5")).rejects.toThrow("Unable to confirm order")
   })
 
   it("verifies Stripe payment via session retrieve for card orders", async () => {
     const pendingOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "card",
       stripe_session_id: "cs_test_abc",
@@ -302,14 +302,14 @@ describe("confirmOrder", () => {
     const confirmedOrder = { ...pendingOrder, status: "confirmed" }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    const result = await confirmOrder("a1b2c3d4e5")
     expect(result.status).toBe("confirmed")
     expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith("cs_test_abc")
   })
 
   it("sets seller_settled_at, receipt URL, and payment_intent_id when confirming card payment", async () => {
     const pendingOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "card",
       stripe_session_id: "cs_test_paid",
@@ -326,7 +326,7 @@ describe("confirmOrder", () => {
       amount_received: 5140,
     } as never)
 
-    await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    await confirmOrder("a1b2c3d4e5")
 
     expect(mockSupabase.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -345,7 +345,7 @@ describe("confirmOrder", () => {
 
   it("still confirms order when PaymentIntent retrieval fails", async () => {
     const pendingOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "card",
       stripe_session_id: "cs_test_fallback",
@@ -359,7 +359,7 @@ describe("confirmOrder", () => {
 
     vi.mocked(stripe.paymentIntents.retrieve).mockRejectedValueOnce(new Error("Stripe API error"))
 
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    const result = await confirmOrder("a1b2c3d4e5")
 
     expect(result.status).toBe("confirmed")
     // Order should still be confirmed with seller_settled_at, just without receipt URL
@@ -378,14 +378,14 @@ describe("confirmOrder", () => {
   it("does not set seller_settled_at for COD orders in confirmOrder", async () => {
     // COD orders come through as already confirmed, but test the branch
     const pendingCodOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "cod",
       stripe_session_id: null,
     }
     mockSupabase.single.mockResolvedValueOnce({ data: pendingCodOrder, error: null })
 
-    await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    await confirmOrder("a1b2c3d4e5")
 
     const updateArg = mockSupabase.update.mock.calls[0][0]
     expect(updateArg).not.toHaveProperty("seller_settled_at")
@@ -394,7 +394,7 @@ describe("confirmOrder", () => {
 
   it("rejects card order when payment not verified", async () => {
     const pendingOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "card",
       stripe_session_id: "cs_test_def",
@@ -405,19 +405,19 @@ describe("confirmOrder", () => {
       payment_status: "unpaid",
     } as never)
 
-    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Unable to confirm order")
+    await expect(confirmOrder("a1b2c3d4e5")).rejects.toThrow("Unable to confirm order")
   })
 
   it("rejects card order when no stripe session ID stored", async () => {
     const pendingOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "card",
       stripe_session_id: null,
     }
     mockSupabase.single.mockResolvedValueOnce({ data: pendingOrder, error: null })
 
-    await expect(confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).rejects.toThrow("Unable to confirm order")
+    await expect(confirmOrder("a1b2c3d4e5")).rejects.toThrow("Unable to confirm order")
   })
 })
 
@@ -632,7 +632,7 @@ describe("input validation", () => {
 
   it("confirmOrder returns only status, no PII", async () => {
     const pendingOrder = {
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      id: "a1b2c3d4e5",
       status: "pending",
       payment_method: "card",
       stripe_session_id: "cs_test_xyz",
@@ -647,7 +647,7 @@ describe("input validation", () => {
     const confirmedOrder = { ...pendingOrder, status: "confirmed" }
     mockSupabase.single.mockResolvedValueOnce({ data: confirmedOrder, error: null })
 
-    const result = await confirmOrder("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    const result = await confirmOrder("a1b2c3d4e5")
     expect(result.status).toBe("confirmed")
     expect(result).not.toHaveProperty("email")
     expect(result).not.toHaveProperty("first_name")

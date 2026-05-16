@@ -1,5 +1,6 @@
 import { PRODUCTS, formatPrice } from "@/lib/products"
 import { getBaseUrl } from "@/lib/constants"
+import { formatOrderId } from "@/lib/orders"
 
 // ── Shared types ──
 
@@ -271,7 +272,7 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
   const baseUrl = getBaseUrl()
   const paidToday = data.paymentMethod === "card" ? data.totalAmount : 0
   const toBePaid = data.paymentMethod === "cod" ? data.totalAmount : 0
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
 
   const discountRowHtml =
     data.discountAmount > 0
@@ -301,7 +302,7 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
     ${section(`
       <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Благодарим Ви за поръчката!</h2>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
-        Поръчка <strong>#${shortId}</strong> от ${formatDate(data.date)}<br/>
+        Поръчка <strong>${shortId}</strong> от ${formatDate(data.date)}<br/>
         Ще получите известие от куриера, когато покупките Ви са на път към Вас.
       </p>
     `)}
@@ -338,8 +339,8 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
 
   const html = emailShell({
     content,
-    orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
-    preheaderText: `Поръчка #${data.orderId.slice(0, 8)} — ${formatPrice(data.totalAmount)}`,
+    orderLabel: `Поръчка ${formatOrderId(data.orderId)}`,
+    preheaderText: `Поръчка ${formatOrderId(data.orderId)} — ${formatPrice(data.totalAmount)}`,
   })
 
   const discountText = data.discountAmount > 0
@@ -350,7 +351,7 @@ export function buildOrderConfirmationEmail(data: OrderEmailData): { html: strin
   const text = `
 Благодарим Ви за поръчката!
 
-Поръчка #${data.orderId.slice(0, 8)} от ${formatDate(data.date)}
+Поръчка ${formatOrderId(data.orderId)} от ${formatDate(data.date)}
 
 Детайли на поръчката:
 ${itemsPlainText(data.items)}
@@ -377,7 +378,7 @@ export function buildShippingEmail(data: ShippingEmailData): { html: string; tex
   const baseUrl = getBaseUrl()
   const safeFirstName = escapeHtml(data.firstName)
   const safeCarrier = escapeHtml(data.carrierName)
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
 
   const trackingHtml = data.trackingNumber
     ? `<p style="color: #999; font-size: 14px; margin: 20px 0 0;">${safeCarrier} номер за проследяване: <strong style="color: #555;">${escapeHtml(data.trackingNumber)}</strong></p>`
@@ -387,7 +388,7 @@ export function buildShippingEmail(data: ShippingEmailData): { html: string; tex
     ${section(`
       <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Поръчката Ви е на път!</h2>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
-        Здравейте ${safeFirstName}, Вашата поръчка <strong>#${shortId}</strong> е изпратена с ${safeCarrier}.<br/>
+        Здравейте ${safeFirstName}, Вашата поръчка <strong>${shortId}</strong> е изпратена с ${safeCarrier}.<br/>
         Ще получите известие от куриера за доставката.
       </p>
       ${trackingHtml}
@@ -401,8 +402,8 @@ export function buildShippingEmail(data: ShippingEmailData): { html: string; tex
 
   const html = emailShell({
     content,
-    orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
-    preheaderText: `Поръчка #${data.orderId.slice(0, 8)} е изпратена с ${data.carrierName}`,
+    orderLabel: `Поръчка ${formatOrderId(data.orderId)}`,
+    preheaderText: `Поръчка ${formatOrderId(data.orderId)} е изпратена с ${data.carrierName}`,
   })
 
   const trackingText = data.trackingNumber
@@ -412,7 +413,7 @@ export function buildShippingEmail(data: ShippingEmailData): { html: string; tex
   const text = `
 Поръчката Ви е на път!
 
-Здравейте ${data.firstName}, Вашата поръчка #${data.orderId.slice(0, 8)} е изпратена с ${data.carrierName}.
+Здравейте ${data.firstName}, Вашата поръчка ${formatOrderId(data.orderId)} е изпратена с ${data.carrierName}.
 ${trackingText}
 Продукти:
 ${itemsPlainText(data.items)}
@@ -431,13 +432,13 @@ ${itemsPlainText(data.items)}
 export function buildDeliveryEmail(data: DeliveryEmailData): { html: string; text: string } {
   const baseUrl = getBaseUrl()
   const safeFirstName = escapeHtml(data.firstName)
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
 
   const content = `
     ${section(`
       <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Поръчката Ви е доставена!</h2>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
-        Здравейте ${safeFirstName}, Вашата поръчка <strong>#${shortId}</strong> е доставена успешно.
+        Здравейте ${safeFirstName}, Вашата поръчка <strong>${shortId}</strong> е доставена успешно.
       </p>
       <p style="color: #999; font-size: 14px; margin: 16px 0 0;">
         Още не сте получили пратката си? Свържете се с нас на <a href="mailto:info@eggorigin.com" style="color: ${BRAND_COLOR};">info@eggorigin.com</a>
@@ -453,14 +454,14 @@ export function buildDeliveryEmail(data: DeliveryEmailData): { html: string; tex
 
   const html = emailShell({
     content,
-    orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
-    preheaderText: `Поръчка #${data.orderId.slice(0, 8)} е доставена успешно`,
+    orderLabel: `Поръчка ${formatOrderId(data.orderId)}`,
+    preheaderText: `Поръчка ${formatOrderId(data.orderId)} е доставена успешно`,
   })
 
   const text = `
 Поръчката Ви е доставена!
 
-Здравейте ${data.firstName}, Вашата поръчка #${data.orderId.slice(0, 8)} е доставена успешно.
+Здравейте ${data.firstName}, Вашата поръчка ${formatOrderId(data.orderId)} е доставена успешно.
 
 Артикули:
 ${itemsPlainText(data.items)}
@@ -499,7 +500,7 @@ export function buildReviewRequestEmail(data: ReviewEmailData): { html: string; 
 
   const html = emailShell({
     content,
-    orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
+    orderLabel: `Поръчка ${formatOrderId(data.orderId)}`,
     preheaderText: `Как Ви се стори поръчката от Egg Origin?`,
     isMarketing: true,
     unsubscribeUrl: data.unsubscribeUrl,
@@ -708,13 +709,13 @@ function adminInfoRow(label: string, value: string): string {
 
 export function buildAdminNewOrderEmail(data: AdminNewOrderEmailData): { html: string; text: string } {
   const baseUrl = getBaseUrl()
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
   const paymentLabel = data.paymentMethod === "card" ? "Карта" : "Наложен платеж"
   const customerName = `${data.firstName} ${data.lastName}`.trim()
 
   const content = `
     ${section(`
-      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Нова поръчка #${shortId}</h2>
+      <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Нова поръчка ${shortId}</h2>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
         Получена е нова поръчка на стойност <strong>${formatPrice(data.totalAmount)}</strong>.
       </p>
@@ -743,14 +744,14 @@ export function buildAdminNewOrderEmail(data: AdminNewOrderEmailData): { html: s
 
   const html = emailShell({
     content,
-    orderLabel: `Поръчка #${data.orderId.slice(0, 8)}`,
-    preheaderText: `Нова поръчка #${data.orderId.slice(0, 8)} — ${formatPrice(data.totalAmount)}`,
+    orderLabel: `Поръчка ${formatOrderId(data.orderId)}`,
+    preheaderText: `Нова поръчка ${formatOrderId(data.orderId)} — ${formatPrice(data.totalAmount)}`,
   })
 
   const text = `
 Нова поръчка!
 
-Поръчка: #${data.orderId.slice(0, 8)}
+Поръчка: ${formatOrderId(data.orderId)}
 Клиент: ${customerName || "—"}
 Имейл: ${data.customerEmail}
 Телефон: ${data.phone || "—"}
@@ -791,7 +792,7 @@ export interface WithdrawalEmailDataRejected {
 }
 
 export function buildWithdrawalReceivedEmail(data: WithdrawalEmailDataReceived): { html: string; text: string } {
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
   const ref = escapeHtml(data.withdrawalRef)
 
   const content = `
@@ -808,7 +809,7 @@ export function buildWithdrawalReceivedEmail(data: WithdrawalEmailDataReceived):
         </tr>
         <tr>
           <td style="font-family: ${FONT_STACK}; color: #999; font-size: 14px; padding: 6px 0;">Поръчка:</td>
-          <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;" align="right"><strong>#${shortId}</strong></td>
+          <td style="font-family: ${FONT_STACK}; color: #333; font-size: 14px; padding: 6px 0;" align="right"><strong>${shortId}</strong></td>
         </tr>
       </table>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 24px 0 0;">
@@ -829,7 +830,7 @@ export function buildWithdrawalReceivedEmail(data: WithdrawalEmailDataReceived):
 Здравейте, благодарим Ви за обратната връзка. Регистрирахме Вашата заявка за упражняване на правото на отказ по чл. 50 ЗЗП.
 
 Референция на заявката: ${data.withdrawalRef}
-Поръчка: #${data.orderId.slice(0, 8)}
+Поръчка: ${formatOrderId(data.orderId)}
 
 Ще прегледаме заявката и ще Ви информираме за следващите стъпки в най-кратък срок (обикновено в рамките на 1–2 работни дни).
 
@@ -841,7 +842,7 @@ export function buildWithdrawalReceivedEmail(data: WithdrawalEmailDataReceived):
 }
 
 export function buildWithdrawalApprovedEmail(data: WithdrawalEmailDataApproved): { html: string; text: string } {
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
   const ref = escapeHtml(data.withdrawalRef)
 
   const instructions = data.returnRequired
@@ -867,7 +868,7 @@ export function buildWithdrawalApprovedEmail(data: WithdrawalEmailDataApproved):
     ${section(`
       <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Заявката Ви е одобрена</h2>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0;">
-        Здравейте, заявката Ви за връщане <strong>${ref}</strong> по поръчка <strong>#${shortId}</strong>
+        Здравейте, заявката Ви за връщане <strong>${ref}</strong> по поръчка <strong>${shortId}</strong>
         е одобрена.
       </p>
     `)}
@@ -886,7 +887,7 @@ export function buildWithdrawalApprovedEmail(data: WithdrawalEmailDataApproved):
     ? `
 Заявката Ви е одобрена
 
-Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)} е одобрена.
+Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка ${formatOrderId(data.orderId)} е одобрена.
 
 Моля върнете стоката на адреса по-долу в рамките на 14 дни. Запазете товарителницата като доказателство за изпращане. След получаване и преглед ще извършим възстановяването.
 
@@ -901,7 +902,7 @@ ${getSellerAddress()}
     : `
 Заявката Ви е одобрена
 
-Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)} е одобрена.
+Здравейте, заявката Ви за връщане ${data.withdrawalRef} по поръчка ${formatOrderId(data.orderId)} е одобрена.
 
 В този случай не е необходимо да връщате продукта. Ще извършим възстановяването в рамките на 14 дни по същия начин на плащане.
 
@@ -913,7 +914,7 @@ ${getSellerAddress()}
 }
 
 export function buildWithdrawalRejectedEmail(data: WithdrawalEmailDataRejected): { html: string; text: string } {
-  const shortId = escapeHtml(data.orderId.slice(0, 8))
+  const shortId = formatOrderId(data.orderId)
   const ref = escapeHtml(data.withdrawalRef)
   const reason = escapeHtml(data.rejectionReason)
 
@@ -922,7 +923,7 @@ export function buildWithdrawalRejectedEmail(data: WithdrawalEmailDataRejected):
       <h2 style="font-weight: normal; font-size: 24px; margin: 0 0 10px;">Заявката Ви не може да бъде одобрена</h2>
       <p style="color: #777; line-height: 150%; font-size: 16px; margin: 0 0 16px;">
         Здравейте, разгледахме заявката Ви за връщане <strong>${ref}</strong> по поръчка
-        <strong>#${shortId}</strong>, но за съжаление не можем да я одобрим.
+        <strong>${shortId}</strong>, но за съжаление не можем да я одобрим.
       </p>
       <p style="color: #555; line-height: 150%; font-size: 14px; margin: 0; padding: 16px; background: #fdf3f3; border-radius: 6px;">
         <strong>Причина:</strong><br />
@@ -944,7 +945,7 @@ export function buildWithdrawalRejectedEmail(data: WithdrawalEmailDataRejected):
   const text = `
 Заявката Ви не може да бъде одобрена
 
-Здравейте, разгледахме заявката Ви за връщане ${data.withdrawalRef} по поръчка #${data.orderId.slice(0, 8)}, но за съжаление не можем да я одобрим.
+Здравейте, разгледахме заявката Ви за връщане ${data.withdrawalRef} по поръчка ${formatOrderId(data.orderId)}, но за съжаление не можем да я одобрим.
 
 Причина:
 ${data.rejectionReason}

@@ -6,7 +6,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Search, Download } from "lucide-react"
 import { getOrders, getAllOrders, type OrderSummary } from "@/app/actions/admin"
-import { getFinancialStatus, getFinancialStatusLabel, ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT } from "@/lib/orders"
+import { getFinancialStatus, getFinancialStatusLabel, ORDER_STATUS_LABELS, ORDER_STATUS_BADGE_VARIANT, formatOrderId } from "@/lib/orders"
 import { formatPrice } from "@/lib/products"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -126,7 +126,7 @@ function AdminOrdersPage() {
       const rows = allOrders.map((o) => {
         const productRevenue = o.total_amount - (o.shipping_fee || 0) - (o.cod_fee || 0) + (o.discount_amount || 0)
         return [
-          o.id.slice(0, 8),
+          o.id.toUpperCase(),
           new Date(o.created_at).toLocaleDateString("bg-BG"),
           `${o.first_name} ${o.last_name}`,
           o.email,
@@ -196,7 +196,7 @@ function AdminOrdersPage() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="search"
-              placeholder="ID, име или имейл..."
+              placeholder="#A1B2C3D4E5, име или имейл..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(0) }}
               className="pl-9"
@@ -286,7 +286,7 @@ function AdminOrdersPage() {
                       href={`/admin/orders/${order.id}`}
                       className="font-mono text-sm text-blue-600 hover:underline"
                     >
-                      #{order.id.slice(0, 8)}
+                      {formatOrderId(order.id)}
                     </Link>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
